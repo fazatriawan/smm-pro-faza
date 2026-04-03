@@ -1,15 +1,20 @@
 const router = require('express').Router();
 const multer = require('multer');
-const path = require('path');
+const fs = require('fs');
 const { protect } = require('../middleware/auth');
 const { Post, SocialAccount } = require('../models');
 const { publishPost } = require('../services/publishService');
+const { uploadToCloudinary } = require('../services/uploadService');
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, process.env.UPLOAD_PATH || './uploads'),
+  destination: (req, file, cb) => {
+    const uploadPath = process.env.UPLOAD_PATH || './uploads';
+    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`)
 });
-const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_FILE_SIZE) || 100 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
 router.get('/', protect, async (req, res) => {
   try {
@@ -35,7 +40,21 @@ router.post('/', protect, upload.array('media', 10), async (req, res) => {
     const accounts = await SocialAccount.find({ _id: { $in: parsedIds }, isActive: true });
     if (!accounts.length) return res.status(400).json({ message: 'Tidak ada akun valid yang dipilih' });
 
-    const mediaUrls = (req.files || []).map(f => `/uploads/${f.filename}`);
+    // Upload ke Cloudinary kalau ada file
+    let mediaUrls = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const cloudUrl = await uploadToCloudinary(file.path);
+          mediaUrls.push(cloudUrl);
+          // Hapus file lokal setelah upload ke Cloudinary
+          fs.unlink(file.path, () => {});
+        } catch (uploadErr) {
+          console.error('Upload error:', uploadErr.message);
+        }
+      }
+    }
+
     const targetAccounts = accounts.map(a => ({ account: a._id, status: 'pending' }));
 
     const postData = {
