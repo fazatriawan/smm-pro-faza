@@ -1,5 +1,12 @@
 const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
 const { Post, SocialAccount } = require('../models');
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 async function publishPost(postId) {
   const post = await Post.findById(postId).populate('targetAccounts.account');
@@ -16,7 +23,40 @@ async function publishPost(postId) {
   const anySent = results.some(r => r.status === 'fulfilled');
   post.status = allSent ? 'completed' : anySent ? 'partial' : 'failed';
   await post.save();
+
+  // Hapus media dari Cloudinary setelah semua terkirim
+  if (post.mediaUrls && post.mediaUrls.length > 0) {
+    for (const url of post.mediaUrls) {
+      try {
+        const publicId = extractCloudinaryPublicId(url);
+        if (publicId) {
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
+          console.log(`[Cloudinary] Deleted: ${publicId}`);
+        }
+      } catch (e) {
+        console.log('[Cloudinary] Delete error:', e.message);
+      }
+    }
+  }
+
   return post;
+}
+
+function extractCloudinaryPublicId(url) {
+  try {
+    const parts = url.split('/');
+    const uploadIndex = parts.indexOf('upload');
+    if (uploadIndex === -1) return null;
+    const pathAfterUpload = parts.slice(uploadIndex + 2).join('/');
+    return pathAfterUpload.replace(/\.[^/.]+$/, '');
+  } catch { return null; }
+}
+
+function isVideo(url) {
+  if (!url) return false;
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v'];
+  const urlLower = url.toLowerCase();
+  return videoExtensions.some(ext => urlLower.includes(ext)) || urlLower.includes('/video/');
 }
 
 async function publishToAccount(post, target) {
@@ -64,24 +104,44 @@ async function postToFacebook(account, caption, mediaUrls) {
   const token = account.accessToken;
   const pageId = account.pageId || account.platformUserId;
 
-  if (!token) throw new Error('No access token for Facebook account');
-  if (!pageId) throw new Error('No page ID for Facebook account');
+  if (!token) throw new Error('No access token');
+  if (!pageId) throw new Error('No page ID');
 
   try {
     if (mediaUrls && mediaUrls.length > 0) {
-      const imageUrl = mediaUrls[0].startsWith('http')
-        ? mediaUrls[0]
-        : `${process.env.BACKEND_URL || 'https://smm-pro-faza.onrender.com'}${mediaUrls[0]}`;
+      const mediaUrl = mediaUrls[0];
 
-      const res = await axios.post(
-        `https://graph.facebook.com/v18.0/${pageId}/photos`,
-        { url: imageUrl, message: caption, access_token: token }
-      );
-      return res.data.post_id || res.data.id;
+      if (isVideo(mediaUrl)) {
+        // Post video ke Facebook
+        const res = await axios.post(
+          `https://graph.facebook.com/v18.0/${pageId}/videos`,
+          {
+            file_url: mediaUrl,
+            description: caption,
+            access_token: token
+          }
+        );
+        return res.data.id;
+      } else {
+        // Post gambar ke Facebook
+        const res = await axios.post(
+          `https://graph.facebook.com/v18.0/${pageId}/photos`,
+          {
+            url: mediaUrl,
+            message: caption,
+            access_token: token
+          }
+        );
+        return res.data.post_id || res.data.id;
+      }
     } else {
+      // Post teks saja
       const res = await axios.post(
         `https://graph.facebook.com/v18.0/${pageId}/feed`,
-        { message: caption, access_token: token }
+        {
+          message: caption,
+          access_token: token
+        }
       );
       return res.data.id;
     }
@@ -95,19 +155,40 @@ async function postToInstagram(account, caption, mediaUrls) {
   const token = account.accessToken;
   const userId = account.platformUserId;
 
-  if (!token) throw new Error('No access token for Instagram account');
-  if (!mediaUrls || mediaUrls.length === 0) throw new Error('Instagram membutuhkan gambar atau video');
+  if (!token) throw new Error('No access token');
+  if (!mediaUrls || mediaUrls.length === 0) throw new Error('Instagram membutuhkan media');
 
   try {
-    const imageUrl = mediaUrls[0].startsWith('http')
-      ? mediaUrls[0]
-      : `${process.env.BACKEND_URL || 'https://smm-pro-faza.onrender.com'}${mediaUrls[0]}`;
+    const mediaUrl = mediaUrls[0];
+    let createParams;
+
+    if (isVideo(mediaUrl)) {
+      // Post video/reel ke Instagram
+      createParams = {
+        media_type: 'REELS',
+        video_url: mediaUrl,
+        caption,
+        access_token: token
+      };
+    } else {
+      // Post gambar ke Instagram
+      createParams = {
+        image_url: mediaUrl,
+        caption,
+        access_token: token
+      };
+    }
 
     const createRes = await axios.post(
       `https://graph.instagram.com/v18.0/${userId}/media`,
       null,
-      { params: { image_url: imageUrl, caption, access_token: token } }
+      { params: createParams }
     );
+
+    // Tunggu video diproses (khusus video)
+    if (isVideo(mediaUrl)) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
 
     const publishRes = await axios.post(
       `https://graph.instagram.com/v18.0/${userId}/media_publish`,
