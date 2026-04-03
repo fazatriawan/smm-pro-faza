@@ -11,7 +11,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: Number(process.env.MAX_FILE_SIZE) || 100 * 1024 * 1024 } });
 
-// GET posts (paginated)
 router.get('/', protect, async (req, res) => {
   try {
     const { page = 1, limit = 20, status } = req.query;
@@ -27,43 +26,49 @@ router.get('/', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-// POST create post (bulk)
 router.post('/', protect, upload.array('media', 10), async (req, res) => {
   try {
     const { caption, accountIds, scheduledAt, isImmediate, platformOverrides, hashtags, link } = req.body;
     const parsedIds = JSON.parse(accountIds || '[]');
     const parsedOverrides = platformOverrides ? JSON.parse(platformOverrides) : {};
 
-    // Validate accounts belong to user
     const accounts = await SocialAccount.find({ _id: { $in: parsedIds }, isActive: true });
-    if (!accounts.length) return res.status(400).json({ message: 'No valid accounts selected' });
+    if (!accounts.length) return res.status(400).json({ message: 'Tidak ada akun valid yang dipilih' });
 
     const mediaUrls = (req.files || []).map(f => `/uploads/${f.filename}`);
     const targetAccounts = accounts.map(a => ({ account: a._id, status: 'pending' }));
 
-    const post = await Post.create({
+    const postData = {
       createdBy: req.user._id,
-      caption,
+      caption: caption || '',
       mediaUrls,
       targetAccounts,
-      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
       isImmediate: isImmediate === 'true',
       status: isImmediate === 'true' ? 'sending' : 'scheduled',
       platformOverrides: parsedOverrides,
       hashtags: JSON.parse(hashtags || '[]'),
-      link
-    });
+    };
 
-    // If immediate, publish now
+    if (scheduledAt && scheduledAt !== 'undefined') {
+      postData.scheduledAt = new Date(scheduledAt);
+    }
+    if (link && link !== 'undefined') {
+      postData.link = link;
+    }
+
+    const post = await Post.create(postData);
+
     if (isImmediate === 'true') {
       publishPost(post._id).catch(console.error);
     }
 
     res.status(201).json(post);
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    console.error('Post creation error:', err);
+    res.status(500).json({ message: err.message });
+  }
 });
 
-// GET single post detail
 router.get('/:id', protect, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
@@ -73,7 +78,6 @@ router.get('/:id', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-// DELETE post
 router.delete('/:id', protect, async (req, res) => {
   try {
     const post = await Post.findOneAndDelete({ _id: req.params.id, createdBy: req.user._id });
