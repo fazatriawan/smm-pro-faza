@@ -30,7 +30,7 @@ async function publishPost(postId) {
       try {
         const publicId = extractCloudinaryPublicId(url);
         if (publicId) {
-          await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'video' }).catch(() => cloudinary.uploader.destroy(publicId, { resource_type: 'image' }));
           console.log(`[Cloudinary] Deleted: ${publicId}`);
         }
       } catch (e) {
