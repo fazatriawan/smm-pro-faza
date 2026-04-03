@@ -15,11 +15,13 @@ const notifRoutes = require('./routes/notifications');
 const analyticsRoutes = require('./routes/analytics');
 const amplifyRoutes = require('./routes/amplify');
 const warmupRoutes = require('./routes/warmup');
+const authMetaRoutes = require('./routes/authMeta');
 
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: process.env.FRONTEND_URL, credentials: true }
@@ -44,6 +46,7 @@ app.use('/api/notifications', notifRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/amplify', amplifyRoutes);
 app.use('/api/warmup', warmupRoutes);
+app.use('/api/auth', authMetaRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

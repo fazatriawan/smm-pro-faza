@@ -21,6 +21,7 @@ const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: process.env.FRONTEND_URL, credentials: true }
