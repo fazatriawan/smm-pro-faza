@@ -63,7 +63,7 @@ const PostSchema = new mongoose.Schema({
   }],
   scheduledAt: Date,
   isImmediate: { type: Boolean, default: false },
-  status: { type: String, enum: ['draft', 'scheduled', 'sending', 'completed', 'partial'], default: 'draft' },
+  status: { type: String, enum: ['draft', 'scheduled', 'sending', 'completed', 'partial', 'failed'], default: 'draft' },
   hashtags: [String],
   link: String,
   platformOverrides: {          // per-platform caption override
