@@ -24,7 +24,7 @@ async function publishPost(postId) {
   post.status = allSent ? 'completed' : anySent ? 'partial' : 'failed';
   await post.save();
 
-  // Hapus media dari Cloudinary setelah semua terkirim
+  // Hapus media dari Cloudinary setelah terkirim
   if (post.mediaUrls && post.mediaUrls.length > 0) {
     for (const url of post.mediaUrls) {
       try {
@@ -112,36 +112,42 @@ async function postToFacebook(account, caption, mediaUrls) {
       const mediaUrl = mediaUrls[0];
 
       if (isVideo(mediaUrl)) {
-        // Post video ke Facebook
+        // Post video ke Facebook menggunakan form params
+        const params = new URLSearchParams();
+        params.append('file_url', mediaUrl);
+        params.append('description', caption);
+        params.append('access_token', token);
+
         const res = await axios.post(
           `https://graph.facebook.com/v18.0/${pageId}/videos`,
-          {
-            file_url: mediaUrl,
-            description: caption,
-            access_token: token
-          }
+          params,
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
         );
         return res.data.id;
       } else {
         // Post gambar ke Facebook
+        const params = new URLSearchParams();
+        params.append('url', mediaUrl);
+        params.append('message', caption);
+        params.append('access_token', token);
+
         const res = await axios.post(
           `https://graph.facebook.com/v18.0/${pageId}/photos`,
-          {
-            url: mediaUrl,
-            message: caption,
-            access_token: token
-          }
+          params,
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
         );
         return res.data.post_id || res.data.id;
       }
     } else {
       // Post teks saja
+      const params = new URLSearchParams();
+      params.append('message', caption);
+      params.append('access_token', token);
+
       const res = await axios.post(
         `https://graph.facebook.com/v18.0/${pageId}/feed`,
-        {
-          message: caption,
-          access_token: token
-        }
+        params,
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
       return res.data.id;
     }
@@ -163,7 +169,6 @@ async function postToInstagram(account, caption, mediaUrls) {
     let createParams;
 
     if (isVideo(mediaUrl)) {
-      // Post video/reel ke Instagram
       createParams = {
         media_type: 'REELS',
         video_url: mediaUrl,
@@ -171,7 +176,6 @@ async function postToInstagram(account, caption, mediaUrls) {
         access_token: token
       };
     } else {
-      // Post gambar ke Instagram
       createParams = {
         image_url: mediaUrl,
         caption,
@@ -185,7 +189,6 @@ async function postToInstagram(account, caption, mediaUrls) {
       { params: createParams }
     );
 
-    // Tunggu video diproses (khusus video)
     if (isVideo(mediaUrl)) {
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
