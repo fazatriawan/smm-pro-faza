@@ -15,6 +15,7 @@ const notifRoutes = require('./routes/notifications');
 const analyticsRoutes = require('./routes/analytics');
 const amplifyRoutes = require('./routes/amplify');
 const warmupRoutes = require('./routes/warmup');
+const authMetaRoutes = require('./routes/authMeta');
 
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
@@ -44,6 +45,7 @@ app.use('/api/notifications', notifRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/amplify', amplifyRoutes);
 app.use('/api/warmup', warmupRoutes);
+app.use('/api/auth', authMetaRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
