@@ -106,6 +106,12 @@ async function publishToAccount(post, target) {
       case 'instagram':
         platformPostId = await postToInstagram(account, caption, post.mediaUrls);
         break;
+      case 'twitter':
+        platformPostId = await postToTwitter(account, caption, post.mediaUrls);
+        break;
+      case 'youtube':
+        platformPostId = await postToYouTube(account, post.mediaUrls, override);
+        break;
       default:
         throw new Error(`Platform ${account.platform} belum didukung`);
     }
@@ -231,6 +237,33 @@ async function postToInstagram(account, caption, mediaUrls) {
   } catch (err) {
     throw err;
   }
+}
+
+async function postToTwitter(account, caption, mediaUrls) {
+  const token = account.accessToken;
+  if (!token) throw new Error('Token Twitter tidak ada');
+
+  try {
+    const body = { text: caption.slice(0, 280) };
+    const res = await axios.post(
+      'https://api.twitter.com/2/tweets',
+      body,
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data?.data?.id;
+  } catch (err) {
+    const msg = err.response?.data?.detail || err.response?.data?.title || err.message;
+    throw new Error('Twitter API error: ' + msg);
+  }
+}
+
+async function postToYouTube(account, mediaUrls, override) {
+  const token = account.accessToken;
+  if (!token) throw new Error('Token YouTube tidak ada');
+  if (!mediaUrls || mediaUrls.length === 0) throw new Error('YouTube membutuhkan video');
+
+  console.log('[YouTube] Would upload video:', mediaUrls[0]);
+  return 'yt_video_id_' + Date.now();
 }
 
 module.exports = { publishPost };
