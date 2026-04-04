@@ -49,6 +49,21 @@ export default function UsersPage() {
     }
   };
 
+  const connectFacebookPersonal = async () => {
+    try {
+      setConnecting(true);
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/facebook/personal`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err) {
+      toast.error('Gagal memulai koneksi personal');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   // Group akun berdasarkan platform
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
@@ -80,6 +95,14 @@ export default function UsersPage() {
             style={{ background: '#1877F2' }}
           >
             {connecting ? 'Menghubungkan...' : 'f+ Connect Facebook & Instagram'}
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={connectFacebookPersonal}
+            disabled={connecting}
+            style={{ fontSize: 13 }}
+          >
+            {connecting ? 'Menghubungkan...' : 'f Connect Akun Personal'}
           </button>
         </div>
       </div>
