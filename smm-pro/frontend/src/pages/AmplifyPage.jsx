@@ -43,7 +43,7 @@ export default function AmplifyPage() {
     onError: (err) => toast.error(err.response?.data?.message || 'Gagal')
   });
 
-  const fbAccounts = accounts.filter(a => a.platform === 'facebook');
+  const fbAccounts = accounts.filter(a => a.platform === 'facebook' || a.platform === 'facebook_personal');
 
   const handleSubmit = () => {
     if (!url.trim()) return toast.error('Masukkan URL post target');
