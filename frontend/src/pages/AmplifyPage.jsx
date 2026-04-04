@@ -1,27 +1,60 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { amplifyAPI, accountsAPI } from '../api';
-import { PLATFORMS, PlatformPill } from '../utils';
+import { PLATFORMS } from '../utils';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 
-const ACTION_TYPES = [
-  { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
-  { key: 'dislike', icon: '♡', label: 'Dislike', color: '#E24B4A' },
-  { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
-  { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
-  { key: 'subscribe', icon: '◉', label: 'Subscribe', color: '#FF0000' },
+const PLATFORM_ACTIONS = {
+  facebook: [
+    { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+    { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+  ],
+  facebook_personal: [
+    { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+    { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+  ],
+  youtube: [
+    { key: 'like', icon: '👍', label: 'Like', color: '#FF0000' },
+    { key: 'dislike', icon: '👎', label: 'Dislike', color: '#E24B4A' },
+    { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+    { key: 'subscribe', icon: '🔔', label: 'Subscribe', color: '#FF0000' },
+  ],
+  twitter: [
+    { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+    { key: 'comment', icon: '◎', label: 'Reply', color: '#378ADD' },
+    { key: 'share', icon: '↻', label: 'Retweet', color: '#1D9E75' },
+  ],
+  tiktok: [
+    { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+    { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+  ],
+};
+
+const PLATFORM_TABS = [
+  { key: 'facebook', label: 'Facebook', icon: 'FB', color: '#1877F2', bg: '#E6F1FB' },
+  { key: 'youtube', label: 'YouTube', icon: 'YT', color: '#FF0000', bg: '#FAECE7' },
+  { key: 'twitter', label: 'X/Twitter', icon: 'X', color: '#888780', bg: '#F1EFE8' },
+  { key: 'tiktok', label: 'TikTok', icon: 'TT', color: '#639922', bg: '#EAF3DE' },
 ];
+
+const URL_PLACEHOLDERS = {
+  facebook: 'https://www.facebook.com/permalink.php?story_fbid=...&id=...',
+  youtube: 'https://www.youtube.com/watch?v=...',
+  twitter: 'https://twitter.com/user/status/...',
+  tiktok: 'https://www.tiktok.com/@user/video/...',
+};
 
 export default function AmplifyPage() {
   const qc = useQueryClient();
+  const [activePlatform, setActivePlatform] = useState('facebook');
   const [url, setUrl] = useState('');
-  const [selectedActions, setSelectedActions] = useState({ like: true, dislike: false, comment: false, share: false, subscribe: false });
+  const [selectedActions, setSelectedActions] = useState({});
   const [comments, setComments] = useState(['']);
   const [selectedAccounts, setSelectedAccounts] = useState('all');
   const [activeTab, setActiveTab] = useState('create');
-  const [runningJob, setRunningJob] = useState(null);
-  const [progress, setProgress] = useState([]);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
@@ -31,26 +64,44 @@ export default function AmplifyPage() {
   const { data: jobs = [], refetch } = useQuery({
     queryKey: ['amplify-jobs'],
     queryFn: () => amplifyAPI.getAll().then(r => r.data),
-    refetchInterval: runningJob ? 3000 : false
+    refetchInterval: 5000
   });
 
   const createJob = useMutation({
     mutationFn: (data) => amplifyAPI.create(data),
-    onSuccess: (res) => {
+    onSuccess: () => {
       toast.success('Amplifikasi dimulai!');
-      setRunningJob(res.data._id);
       setActiveTab('history');
       qc.invalidateQueries({ queryKey: ['amplify-jobs'] });
     },
     onError: (err) => toast.error(err.response?.data?.message || 'Gagal')
   });
 
-  const fbAccounts = accounts.filter(a => a.platform === 'facebook' || a.platform === 'facebook_personal' || a.platform === 'youtube');
+  const platformAccounts = accounts.filter(a => {
+    if (activePlatform === 'facebook') return a.platform === 'facebook' || a.platform === 'facebook_personal';
+    return a.platform === activePlatform;
+  });
+
+  const currentActions = PLATFORM_ACTIONS[activePlatform] || [];
+
+  const toggleAction = (key) => {
+    setSelectedActions(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handlePlatformChange = (platform) => {
+    setActivePlatform(platform);
+    setSelectedActions({});
+    setUrl('');
+    setComments(['']);
+    setSelectedAccounts('all');
+  };
 
   const handleSubmit = () => {
-    if (!url.trim()) return toast.error('Masukkan URL post target');
-    if (!url.includes('facebook.com')) return toast.error('URL harus dari Facebook');
+    if (!url.trim()) return toast.error('Masukkan URL target');
     if (!Object.values(selectedActions).some(v => v)) return toast.error('Pilih minimal 1 aksi');
+    if (selectedActions.comment && comments.filter(c => c.trim()).length === 0) {
+      return toast.error('Isi minimal 1 template komentar');
+    }
 
     const actions = Object.entries(selectedActions)
       .filter(([_, enabled]) => enabled)
@@ -60,35 +111,18 @@ export default function AmplifyPage() {
         commentTemplates: type === 'comment' ? comments.filter(c => c.trim()) : []
       }));
 
-    if (selectedActions.comment && comments.filter(c => c.trim()).length === 0) {
-      return toast.error('Isi minimal 1 template komentar');
-    }
-
     const accountIds = selectedAccounts === 'all'
-      ? fbAccounts.map(a => a._id)
+      ? platformAccounts.map(a => a._id)
       : [selectedAccounts];
+
+    if (!accountIds.length) return toast.error('Tidak ada akun yang terhubung untuk platform ini');
 
     createJob.mutate({
       targetUrl: url,
-      platform: 'facebook',
+      platform: activePlatform,
       actions,
       accountIds
     });
-  };
-
-  const addComment = () => {
-    if (comments.length >= 10) return toast.error('Maksimal 10 variasi komentar');
-    setComments([...comments, '']);
-  };
-
-  const updateComment = (i, val) => {
-    const updated = [...comments];
-    updated[i] = val;
-    setComments(updated);
-  };
-
-  const removeComment = (i) => {
-    setComments(comments.filter((_, idx) => idx !== i));
   };
 
   const getStatusColor = (status) => {
@@ -121,151 +155,206 @@ export default function AmplifyPage() {
 
       <div className="page-content">
         {activeTab === 'create' ? (
-          <div className="two-col" style={{ alignItems: 'start' }}>
-            <div>
-              {/* URL Target */}
-              <div className="card">
-                <div className="card-title">URL Post Target</div>
-                <input
-                  type="url"
-                  placeholder="https://facebook.com/..."
-                  value={url}
-                  onChange={e => setUrl(e.target.value)}
-                  style={{ marginBottom: 8 }}
-                />
-                {url && url.includes('facebook.com') && (
-                  <div style={{ fontSize: 12, color: '#1D9E75' }}>✓ URL Facebook valid</div>
-                )}
-              </div>
-
-              {/* Pilih Aksi */}
-              <div className="card">
-                <div className="card-title">Pilih Aksi</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
-                  {ACTION_TYPES.map(a => (
-                    <div
-                      key={a.key}
-                      onClick={() => setSelectedActions(prev => ({ ...prev, [a.key]: !prev[a.key] }))}
-                      style={{
-                        textAlign: 'center', padding: '14px 8px', borderRadius: 10,
-                        cursor: 'pointer',
-                        border: `1.5px solid ${selectedActions[a.key] ? a.color : 'transparent'}`,
-                        background: selectedActions[a.key] ? `${a.color}15` : '#f5f4f2',
-                        transition: 'all 0.12s'
-                      }}
-                    >
-                      <div style={{ fontSize: 24, color: selectedActions[a.key] ? a.color : '#aaa' }}>{a.icon}</div>
-                      <div style={{ fontSize: 12, marginTop: 4, fontWeight: 500, color: selectedActions[a.key] ? a.color : '#666' }}>{a.label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Template Komentar */}
-              {selectedActions.comment && (
-                <div className="card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div className="card-title" style={{ margin: 0 }}>Template Komentar</div>
-                    <button className="btn-secondary" style={{ fontSize: 12 }} onClick={addComment}>+ Tambah Variasi</button>
+          <>
+            {/* Platform Tabs */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              {PLATFORM_TABS.map(p => {
+                const count = accounts.filter(a =>
+                  p.key === 'facebook'
+                    ? a.platform === 'facebook' || a.platform === 'facebook_personal'
+                    : a.platform === p.key
+                ).length;
+                return (
+                  <div
+                    key={p.key}
+                    onClick={() => handlePlatformChange(p.key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '8px 16px', borderRadius: 10, cursor: 'pointer',
+                      border: `1.5px solid ${activePlatform === p.key ? p.color : 'transparent'}`,
+                      background: activePlatform === p.key ? p.bg : '#f5f4f2',
+                      transition: 'all 0.12s'
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 11, fontWeight: 700,
+                      color: activePlatform === p.key ? p.color : '#888'
+                    }}>{p.icon}</span>
+                    <span style={{
+                      fontSize: 13, fontWeight: activePlatform === p.key ? 500 : 400,
+                      color: activePlatform === p.key ? p.color : '#666'
+                    }}>{p.label}</span>
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px', borderRadius: 10,
+                      background: activePlatform === p.key ? p.color : '#ddd',
+                      color: '#fff', fontWeight: 600
+                    }}>{count}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>
-                    Setiap akun akan menggunakan komentar berbeda secara bergantian
-                  </div>
-                  {comments.map((c, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                      <div style={{
-                        width: 24, height: 24, borderRadius: '50%',
-                        background: '#EEEDFE', color: '#534AB7',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 11, fontWeight: 600, flexShrink: 0, marginTop: 8
-                      }}>{i + 1}</div>
-                      <input
-                        type="text"
-                        placeholder={`Variasi komentar ${i + 1}...`}
-                        value={c}
-                        onChange={e => updateComment(i, e.target.value)}
-                        style={{ flex: 1 }}
-                      />
-                      {comments.length > 1 && (
-                        <button
-                          onClick={() => removeComment(i)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E24B4A', fontSize: 16, padding: '0 4px' }}
-                        >×</button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Pilih Akun */}
-              <div className="card">
-                <div className="card-title">Akun yang Digunakan</div>
-                <select value={selectedAccounts} onChange={e => setSelectedAccounts(e.target.value)}>
-                  <option value="all">Semua {fbAccounts.length} akun Facebook</option>
-                  {fbAccounts.map(a => (
-                    <option key={a._id} value={a._id}>{a.label}</option>
-                  ))}
-                </select>
-                <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
-                  ⚡ Jeda 30-60 detik antar akun untuk keamanan
-                </div>
-              </div>
-
-              <button
-                className="btn-primary"
-                style={{ width: '100%', padding: 12, fontSize: 14 }}
-                onClick={handleSubmit}
-                disabled={createJob.isPending}
-              >
-                {createJob.isPending ? '⟳ Memulai...' : '↑ Jalankan Amplifikasi'}
-              </button>
+                );
+              })}
             </div>
 
-            {/* Preview */}
-            <div>
-              <div className="card">
-                <div className="card-title">Preview Job</div>
-                <div style={{ fontSize: 13, marginBottom: 12 }}>
-                  <div style={{ marginBottom: 8 }}>
-                    <span style={{ color: '#888', fontSize: 12 }}>Target:</span>
-                    <div style={{ fontSize: 12, color: '#185FA5', wordBreak: 'break-all', marginTop: 2 }}>
+            <div className="two-col" style={{ alignItems: 'start' }}>
+              <div>
+                {/* URL */}
+                <div className="card">
+                  <div className="card-title">URL Target {PLATFORM_TABS.find(p => p.key === activePlatform)?.label}</div>
+                  <input
+                    type="url"
+                    placeholder={URL_PLACEHOLDERS[activePlatform]}
+                    value={url}
+                    onChange={e => setUrl(e.target.value)}
+                  />
+                  {platformAccounts.length === 0 && (
+                    <div style={{ marginTop: 8, padding: '8px 12px', background: '#FCEBEB', borderRadius: 8, fontSize: 12, color: '#A32D2D' }}>
+                      ⚠ Belum ada akun {PLATFORM_TABS.find(p => p.key === activePlatform)?.label} terhubung. Hubungkan di menu Akun & User.
+                    </div>
+                  )}
+                </div>
+
+                {/* Aksi */}
+                <div className="card">
+                  <div className="card-title">Pilih Aksi</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${currentActions.length}, 1fr)`, gap: 8 }}>
+                    {currentActions.map(a => (
+                      <div
+                        key={a.key}
+                        onClick={() => toggleAction(a.key)}
+                        style={{
+                          textAlign: 'center', padding: '12px 8px', borderRadius: 10,
+                          cursor: 'pointer',
+                          border: `1.5px solid ${selectedActions[a.key] ? a.color : 'transparent'}`,
+                          background: selectedActions[a.key] ? `${a.color}15` : '#f5f4f2',
+                          transition: 'all 0.12s'
+                        }}
+                      >
+                        <div style={{ fontSize: 20 }}>{a.icon}</div>
+                        <div style={{
+                          fontSize: 11, marginTop: 4, fontWeight: 500,
+                          color: selectedActions[a.key] ? a.color : '#666'
+                        }}>{a.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Template Komentar */}
+                {selectedActions.comment && (
+                  <div className="card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <div className="card-title" style={{ margin: 0 }}>Template Komentar</div>
+                      <button className="btn-secondary" style={{ fontSize: 12 }}
+                        onClick={() => setComments([...comments, ''])}>+ Tambah</button>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+                      Setiap akun akan menggunakan komentar berbeda secara bergantian
+                    </div>
+                    {comments.map((c, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: '50%',
+                          background: '#EEEDFE', color: '#534AB7',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 10, fontWeight: 600, flexShrink: 0
+                        }}>{i+1}</div>
+                        <input
+                          type="text"
+                          placeholder={`Variasi komentar ${i+1}...`}
+                          value={c}
+                          onChange={e => {
+                            const updated = [...comments];
+                            updated[i] = e.target.value;
+                            setComments(updated);
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                        {comments.length > 1 && (
+                          <button onClick={() => setComments(comments.filter((_, idx) => idx !== i))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E24B4A', fontSize: 18 }}>×</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Pilih Akun */}
+                <div className="card">
+                  <div className="card-title">Akun yang Digunakan</div>
+                  <select value={selectedAccounts} onChange={e => setSelectedAccounts(e.target.value)}>
+                    <option value="all">Semua {platformAccounts.length} akun {PLATFORM_TABS.find(p=>p.key===activePlatform)?.label}</option>
+                    {platformAccounts.map(a => (
+                      <option key={a._id} value={a._id}>{a.label}</option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
+                    ⚡ Jeda 30-60 detik antar akun untuk keamanan
+                  </div>
+                </div>
+
+                <button
+                  className="btn-primary"
+                  style={{ width: '100%', padding: 12, fontSize: 14 }}
+                  onClick={handleSubmit}
+                  disabled={createJob.isPending || platformAccounts.length === 0}
+                >
+                  {createJob.isPending ? '⟳ Memulai...' : '↑ Jalankan Amplifikasi'}
+                </button>
+              </div>
+
+              {/* Preview */}
+              <div>
+                <div className="card">
+                  <div className="card-title">Preview</div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Platform:</div>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {PLATFORM_TABS.find(p => p.key === activePlatform)?.label}
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>URL Target:</div>
+                    <div style={{ fontSize: 12, color: '#185FA5', wordBreak: 'break-all' }}>
                       {url || '—'}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <span style={{ color: '#888', fontSize: 12 }}>Aksi:</span>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      {ACTION_TYPES.filter(a => selectedActions[a.key]).map(a => (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Aksi:</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {currentActions.filter(a => selectedActions[a.key]).map(a => (
                         <span key={a.key} style={{
                           fontSize: 11, padding: '2px 8px', borderRadius: 20,
                           background: `${a.color}15`, color: a.color, fontWeight: 500
                         }}>{a.icon} {a.label}</span>
                       ))}
+                      {!Object.values(selectedActions).some(v => v) && (
+                        <span style={{ fontSize: 12, color: '#aaa' }}>Belum ada aksi dipilih</span>
+                      )}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <span style={{ color: '#888', fontSize: 12 }}>Akun:</span>
-                    <div style={{ fontSize: 12, fontWeight: 500, marginTop: 2 }}>
-                      {selectedAccounts === 'all' ? `${fbAccounts.length} akun Facebook` : '1 akun dipilih'}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Akun:</div>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {selectedAccounts === 'all' ? `${platformAccounts.length} akun` : '1 akun dipilih'}
                     </div>
                   </div>
-                  {selectedActions.comment && comments.filter(c=>c.trim()).length > 0 && (
+                  {selectedActions.comment && comments.filter(c => c.trim()).length > 0 && (
                     <div>
-                      <span style={{ color: '#888', fontSize: 12 }}>Variasi komentar:</span>
-                      {comments.filter(c=>c.trim()).map((c, i) => (
-                        <div key={i} style={{ fontSize: 12, padding: '4px 8px', background: '#f5f4f2', borderRadius: 6, marginTop: 4 }}>
-                          {i+1}. {c}
-                        </div>
+                      <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Variasi komentar:</div>
+                      {comments.filter(c => c.trim()).map((c, i) => (
+                        <div key={i} style={{
+                          fontSize: 12, padding: '4px 8px',
+                          background: '#f5f4f2', borderRadius: 6, marginBottom: 4
+                        }}>{i+1}. {c}</div>
                       ))}
                     </div>
                   )}
-                </div>
-                <div style={{ background: '#FAEEDA', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: '#633806' }}>
-                  ⚠ Amplifikasi menggunakan API resmi Facebook. Jeda otomatis diterapkan antar aksi untuk keamanan akun.
+                  <div style={{ marginTop: 12, padding: '8px 12px', background: '#FAEEDA', borderRadius: 8, fontSize: 12, color: '#633806' }}>
+                    ⚠ Amplifikasi menggunakan API resmi. Jeda otomatis antar aksi diterapkan untuk keamanan akun.
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </>
         ) : (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -276,13 +365,13 @@ export default function AmplifyPage() {
               <div className="empty-state">Belum ada job amplifikasi</div>
             ) : jobs.map(job => (
               <div key={job._id} style={{ padding: '12px 0', borderBottom: '0.5px solid rgba(0,0,0,0.06)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, color: '#185FA5', marginBottom: 2, wordBreak: 'break-all' }}>
+                    <div style={{ fontSize: 12, color: '#185FA5', wordBreak: 'break-all', marginBottom: 2 }}>
                       {job.targetUrl}
                     </div>
                     <div style={{ fontSize: 11, color: '#aaa' }}>
-                      {dayjs(job.createdAt).format('DD/MM HH:mm')} · {job.actions?.map(a => a.type).join(', ')}
+                      {dayjs(job.createdAt).format('DD/MM HH:mm')} · {job.platform} · {job.actions?.map(a => a.type).join(', ')}
                     </div>
                   </div>
                   <span style={{
@@ -293,26 +382,22 @@ export default function AmplifyPage() {
                     {getStatusLabel(job.status)}
                   </span>
                 </div>
-
-                {/* Progress per akun */}
                 {job.results && job.results.length > 0 && (
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '8px 12px' }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
-                      {job.results.filter(r => r.success).length}/{job.results.length} berhasil
+                      ✓ {job.results.filter(r => r.success).length} berhasil · ✗ {job.results.filter(r => !r.success).length} gagal
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {job.accounts?.map((acc, i) => {
-                        const result = job.results?.find(r => r.account === acc._id || r.account === acc);
-                        return (
-                          <span key={i} style={{
-                            fontSize: 10, padding: '2px 6px', borderRadius: 10,
-                            background: result?.success ? '#EAF3DE' : result ? '#FCEBEB' : '#f0efec',
-                            color: result?.success ? '#3B6D11' : result ? '#A32D2D' : '#888'
-                          }}>
-                            {result?.success ? '✓' : result ? '✗' : '◷'} {acc.label || acc}
-                          </span>
-                        );
-                      })}
+                      {job.results.map((r, i) => (
+                        <span key={i} style={{
+                          fontSize: 10, padding: '2px 6px', borderRadius: 10,
+                          background: r.success ? '#EAF3DE' : '#FCEBEB',
+                          color: r.success ? '#3B6D11' : '#A32D2D'
+                        }}>
+                          {r.success ? '✓' : '✗'} {r.action}
+                          {r.error && ` - ${r.error.slice(0, 30)}`}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 )}
