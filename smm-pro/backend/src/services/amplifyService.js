@@ -107,14 +107,20 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   switch (action.type) {
     case 'like':
-      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token);
+      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token, 'like');
       return await likePost(actorId, postId, token);
+    case 'dislike':
+      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token, 'dislike');
+      throw new Error('Dislike hanya tersedia untuk YouTube');
     case 'comment':
       const commentText = getRandomComment(action.commentTemplates, accountIndex);
       if (account.platform === 'youtube') return await commentYoutube(targetUrl, token, commentText);
       return await commentPost(actorId, postId, token, commentText);
     case 'share':
       return await sharePost(actorId, postId, token, isPersonal);
+    case 'subscribe':
+      if (account.platform === 'youtube') return await subscribeYoutube(targetUrl, token);
+      throw new Error('Subscribe hanya tersedia untuk YouTube');
     default:
       throw new Error('Aksi tidak dikenal: ' + action.type);
   }
@@ -165,7 +171,7 @@ async function sharePost(pageId, postId, token) {
   }
 }
 
-async function likeYoutube(url, token) {
+async function likeYoutube(url, token, rating = 'like') {
   try {
     const videoId = extractYoutubeVideoId(url);
     if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
@@ -173,13 +179,41 @@ async function likeYoutube(url, token) {
     await axios.post(
       'https://www.googleapis.com/youtube/v3/videos/rate',
       null,
-      { params: { id: videoId, rating: 'like' },
+      { params: { id: videoId, rating },
         headers: { Authorization: 'Bearer ' + token } }
     );
     return { success: true };
   } catch (err) {
     const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('YouTube like gagal: ' + msg);
+    throw new Error('YouTube ' + rating + ' gagal: ' + msg);
+  }
+}
+
+async function subscribeYoutube(url, token) {
+  try {
+    // Extract channel ID dari URL video
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
+
+    // Ambil channel ID dari video
+    const videoRes = await axios.get(
+      'https://www.googleapis.com/youtube/v3/videos',
+      { params: { part: 'snippet', id: videoId },
+        headers: { Authorization: 'Bearer ' + token } }
+    );
+    const channelId = videoRes.data.items?.[0]?.snippet?.channelId;
+    if (!channelId) throw new Error('Channel ID tidak ditemukan');
+
+    // Subscribe ke channel
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/subscriptions?part=snippet',
+      { snippet: { resourceId: { kind: 'youtube#channel', channelId } } },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error('YouTube subscribe gagal: ' + msg);
   }
 }
 

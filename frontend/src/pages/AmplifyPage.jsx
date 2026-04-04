@@ -7,14 +7,16 @@ import dayjs from 'dayjs';
 
 const ACTION_TYPES = [
   { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+  { key: 'dislike', icon: '♡', label: 'Dislike', color: '#E24B4A' },
   { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
   { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+  { key: 'subscribe', icon: '◉', label: 'Subscribe', color: '#FF0000' },
 ];
 
 export default function AmplifyPage() {
   const qc = useQueryClient();
   const [url, setUrl] = useState('');
-  const [selectedActions, setSelectedActions] = useState({ like: true, comment: false, share: false });
+  const [selectedActions, setSelectedActions] = useState({ like: true, dislike: false, comment: false, share: false, subscribe: false });
   const [comments, setComments] = useState(['']);
   const [selectedAccounts, setSelectedAccounts] = useState('all');
   const [activeTab, setActiveTab] = useState('create');
