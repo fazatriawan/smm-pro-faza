@@ -40,18 +40,28 @@ router.post('/', protect, upload.array('media', 10), async (req, res) => {
     const accounts = await SocialAccount.find({ _id: { $in: parsedIds }, isActive: true });
     if (!accounts.length) return res.status(400).json({ message: 'Tidak ada akun valid yang dipilih' });
 
-    // Upload ke Cloudinary kalau ada file
+    // Upload logic:
+    // - Immediate: upload ke Cloudinary sekarang
+    // - Scheduled: simpan path lokal dulu, upload nanti saat publish
     let mediaUrls = [];
     if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        try {
-          const cloudUrl = await uploadToCloudinary(file.path);
-          mediaUrls.push(cloudUrl);
-          // Hapus file lokal setelah upload ke Cloudinary
-          fs.unlink(file.path, () => {});
-        } catch (uploadErr) {
-          console.error('Upload error:', uploadErr.message);
+      if (isImmediate === 'true') {
+        // Upload langsung ke Cloudinary
+        for (const file of req.files) {
+          try {
+            const cloudUrl = await uploadToCloudinary(file.path);
+            mediaUrls.push(cloudUrl);
+            fs.unlink(file.path, () => {});
+          } catch (uploadErr) {
+            console.error('Upload error:', uploadErr.message);
+          }
         }
+      } else {
+        // Simpan path lokal untuk post terjadwal
+        for (const file of req.files) {
+          mediaUrls.push(file.path);
+        }
+        console.log('[Scheduler] Media saved locally for scheduled post:', mediaUrls);
       }
     }
 

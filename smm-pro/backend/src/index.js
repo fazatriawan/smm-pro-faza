@@ -18,6 +18,7 @@ const warmupRoutes = require('./routes/warmup');
 const authMetaRoutes = require('./routes/authMeta');
 const authYoutubeRoutes = require('./routes/authYoutube');
 const authTwitterRoutes = require('./routes/authTwitter');
+const { startScheduler } = require('./cron/scheduler');
 
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
