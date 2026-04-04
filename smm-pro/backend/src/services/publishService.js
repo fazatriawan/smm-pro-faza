@@ -24,19 +24,22 @@ async function publishPost(postId) {
   post.status = allSent ? 'completed' : anySent ? 'partial' : 'failed';
   await post.save();
 
-  // Hapus media dari Cloudinary setelah terkirim
+  // Hapus media dari Cloudinary setelah 5 menit
   if (post.mediaUrls && post.mediaUrls.length > 0) {
-    for (const url of post.mediaUrls) {
-      try {
-        const publicId = extractCloudinaryPublicId(url);
-        if (publicId) {
-          await cloudinary.uploader.destroy(publicId, { resource_type: 'video' }).catch(() => cloudinary.uploader.destroy(publicId, { resource_type: 'image' }));
-          console.log(`[Cloudinary] Deleted: ${publicId}`);
+    setTimeout(async () => {
+      for (const url of post.mediaUrls) {
+        try {
+          const publicId = extractCloudinaryPublicId(url);
+          if (publicId) {
+            await cloudinary.uploader.destroy(publicId, { resource_type: 'video' })
+              .catch(() => cloudinary.uploader.destroy(publicId, { resource_type: 'image' }));
+            console.log(`[Cloudinary] Deleted: ${publicId}`);
+          }
+        } catch (e) {
+          console.log('[Cloudinary] Delete error:', e.message);
         }
-      } catch (e) {
-        console.log('[Cloudinary] Delete error:', e.message);
       }
-    }
+    }, 5 * 60 * 1000);
   }
 
   return post;
@@ -57,6 +60,35 @@ function isVideo(url) {
   const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v'];
   const urlLower = url.toLowerCase();
   return videoExtensions.some(ext => urlLower.includes(ext)) || urlLower.includes('/video/');
+}
+
+// Parse Facebook error jadi pesan yang lebih mudah dipahami
+function parseFacebookError(err) {
+  const fbErr = err.response?.data?.error;
+  if (!fbErr) return err.message;
+
+  const code = fbErr.code;
+  const msg = fbErr.message || '';
+
+  switch (code) {
+    case 200:
+      return 'Tidak punya izin posting di Page ini — pastikan role Admin';
+    case 100:
+      if (msg.includes('video')) return 'Tidak ada izin publish video di Page ini';
+      return `Parameter tidak valid: ${msg}`;
+    case 190:
+      return 'Token expired atau tidak valid — perlu reconnect akun';
+    case 368:
+      return 'Akun dibatasi sementara oleh Facebook';
+    case 32:
+      return 'Rate limit — terlalu banyak request, coba lagi nanti';
+    case 4:
+      return 'Rate limit aplikasi — coba lagi dalam beberapa menit';
+    case 341:
+      return 'Limit posting harian tercapai';
+    default:
+      return `Facebook error #${code}: ${msg.slice(0, 100)}`;
+  }
 }
 
 async function publishToAccount(post, target) {
@@ -88,15 +120,16 @@ async function publishToAccount(post, target) {
     );
     return platformPostId;
   } catch (err) {
-    console.error(`Failed to post to ${account.platform}:`, err.message);
+    const errorMsg = parseFacebookError(err);
+    console.error(`Failed to post to ${account.platform} (${account.label}): ${errorMsg}`);
     await Post.updateOne(
       { _id: post._id, 'targetAccounts._id': target._id },
       { $set: {
         'targetAccounts.$.status': 'failed',
-        'targetAccounts.$.error': err.message
+        'targetAccounts.$.error': errorMsg
       }}
     );
-    throw err;
+    throw new Error(errorMsg);
   }
 }
 
@@ -104,15 +137,14 @@ async function postToFacebook(account, caption, mediaUrls) {
   const token = account.accessToken;
   const pageId = account.pageId || account.platformUserId;
 
-  if (!token) throw new Error('No access token');
-  if (!pageId) throw new Error('No page ID');
+  if (!token) throw new Error('Token tidak ada — perlu reconnect akun');
+  if (!pageId) throw new Error('Page ID tidak ada');
 
   try {
     if (mediaUrls && mediaUrls.length > 0) {
       const mediaUrl = mediaUrls[0];
 
       if (isVideo(mediaUrl)) {
-        // Post video ke Facebook menggunakan form params
         const params = new URLSearchParams();
         params.append('file_url', mediaUrl);
         params.append('description', caption);
@@ -125,7 +157,6 @@ async function postToFacebook(account, caption, mediaUrls) {
         );
         return res.data.id;
       } else {
-        // Post gambar ke Facebook
         const params = new URLSearchParams();
         params.append('url', mediaUrl);
         params.append('message', caption);
@@ -139,7 +170,6 @@ async function postToFacebook(account, caption, mediaUrls) {
         return res.data.post_id || res.data.id;
       }
     } else {
-      // Post teks saja
       const params = new URLSearchParams();
       params.append('message', caption);
       params.append('access_token', token);
@@ -152,8 +182,7 @@ async function postToFacebook(account, caption, mediaUrls) {
       return res.data.id;
     }
   } catch (err) {
-    const fbError = err.response?.data?.error?.message || err.message;
-    throw new Error(`Facebook API error: ${fbError}`);
+    throw err;
   }
 }
 
@@ -161,7 +190,7 @@ async function postToInstagram(account, caption, mediaUrls) {
   const token = account.accessToken;
   const userId = account.platformUserId;
 
-  if (!token) throw new Error('No access token');
+  if (!token) throw new Error('Token tidak ada — perlu reconnect akun');
   if (!mediaUrls || mediaUrls.length === 0) throw new Error('Instagram membutuhkan media');
 
   try {
@@ -200,8 +229,7 @@ async function postToInstagram(account, caption, mediaUrls) {
     );
     return publishRes.data.id;
   } catch (err) {
-    const igError = err.response?.data?.error?.message || err.message;
-    throw new Error(`Instagram API error: ${igError}`);
+    throw err;
   }
 }
 
