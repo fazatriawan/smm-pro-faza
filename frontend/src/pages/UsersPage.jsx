@@ -65,6 +65,12 @@ export default function UsersPage() {
   };
 
   // Group akun berdasarkan platform
+  // Tambahkan facebook_personal ke PLATFORMS display
+  const PLATFORMS_EXTENDED = {
+    ...PLATFORMS,
+    facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' }
+  };
+
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
     acc[a.platform].push(a);
@@ -119,7 +125,7 @@ export default function UsersPage() {
         </div>
 
         {/* Akun per Platform */}
-        {Object.entries(PLATFORMS).map(([key, p]) => {
+        {Object.entries(PLATFORMS_EXTENDED).map(([key, p]) => {
           const platformAccounts = displayAccounts.filter(a => a.platform === key);
           if (platformAccounts.length === 0) return null;
           return (
