@@ -100,10 +100,64 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   if (!token) throw new Error('Token tidak ada');
 
+  console.log('[Amplify] Action:', action.type, 'Platform:', account.platform, 'URL:', targetUrl);
+
+  // YouTube tidak butuh Facebook Post ID
+  if (account.platform === 'youtube') {
+    switch (action.type) {
+      case 'like': return await likeYoutube(targetUrl, token, 'like');
+      case 'dislike': return await likeYoutube(targetUrl, token, 'dislike');
+      case 'comment':
+        const ytComment = getRandomComment(action.commentTemplates, accountIndex);
+        return await commentYoutube(targetUrl, token, ytComment);
+      case 'subscribe': return await subscribeYoutube(targetUrl, token);
+      case 'save': return await saveYoutube(targetUrl, token);
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk YouTube');
+    }
+  }
+
+  // Instagram tidak butuh Facebook Post ID
+  if (account.platform === 'instagram') {
+    switch (action.type) {
+      case 'like': return await likeInstagram(targetUrl, token);
+      case 'comment':
+        const igComment = getRandomComment(action.commentTemplates, accountIndex);
+        return await commentInstagram(targetUrl, token, igComment);
+      case 'save': return await saveInstagram(targetUrl, token);
+      case 'follow': return await followInstagram(targetUrl, token);
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Instagram');
+    }
+  }
+
+  // Twitter
+  if (account.platform === 'twitter') {
+    switch (action.type) {
+      case 'like': return await likeTweet(targetUrl, token, actorId);
+      case 'comment':
+        const twComment = getRandomComment(action.commentTemplates, accountIndex);
+        return await replyTweet(targetUrl, token, twComment);
+      case 'share': return await retweetTweet(targetUrl, token, actorId);
+      case 'bookmark': return await bookmarkTweet(targetUrl, token, actorId);
+      case 'follow': return await followTwitter(targetUrl, token, actorId);
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Twitter');
+    }
+  }
+
+  // TikTok
+  if (account.platform === 'tiktok') {
+    switch (action.type) {
+      case 'repost': return await repostTiktok(targetUrl, token);
+      case 'share': return await shareTiktok(targetUrl, token);
+      case 'follow': return await followTiktok(targetUrl, token);
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk TikTok');
+    }
+  }
+
+  // Facebook — butuh Post ID
   const postId = extractFacebookPostId(targetUrl);
   if (!postId) throw new Error('Tidak bisa extract Post ID dari URL: ' + targetUrl);
 
-  console.log('[Amplify] PostID:', postId, 'Action:', action.type, 'Actor:', actorId, 'isPersonal:', isPersonal);
+  console.log('[Amplify] PostID:', postId, 'Actor:', actorId);
 
   switch (action.type) {
     case 'like':
