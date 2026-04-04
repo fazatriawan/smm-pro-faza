@@ -31,8 +31,7 @@ router.get('/facebook', protect, (req, res) => {
 router.get('/facebook/personal', protect, (req, res) => {
   const scopes = [
     'public_profile',
-    'user_posts',
-    'pages_show_list',
+    'email',
   ].join(',');
 
   const state = req.user._id.toString() + ':personal';
