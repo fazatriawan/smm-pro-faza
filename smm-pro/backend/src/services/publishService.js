@@ -110,7 +110,7 @@ async function publishToAccount(post, target) {
         platformPostId = await postToTwitter(account, caption, post.mediaUrls);
         break;
       case 'youtube':
-        platformPostId = await postToYouTube(account, post.mediaUrls, override);
+        platformPostId = await postToYouTube(account, caption, post.mediaUrls);
         break;
       default:
         throw new Error(`Platform ${account.platform} belum didukung`);
@@ -257,13 +257,66 @@ async function postToTwitter(account, caption, mediaUrls) {
   }
 }
 
-async function postToYouTube(account, mediaUrls, override) {
+async function postToYouTube(account, caption, mediaUrls) {
   const token = account.accessToken;
   if (!token) throw new Error('Token YouTube tidak ada');
   if (!mediaUrls || mediaUrls.length === 0) throw new Error('YouTube membutuhkan video');
 
-  console.log('[YouTube] Would upload video:', mediaUrls[0]);
-  return 'yt_video_id_' + Date.now();
+  try {
+    const videoUrl = mediaUrls[0];
+    const title = caption.slice(0, 100) || 'Video';
+    const description = caption || '';
+
+    // Download video dari Cloudinary
+    const videoRes = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+    const videoBuffer = Buffer.from(videoRes.data);
+    const videoSize = videoBuffer.length;
+
+    // Step 1 — Inisiasi resumable upload
+    const initRes = await axios.post(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+      {
+        snippet: {
+          title,
+          description,
+          tags: ['shorts'],
+          categoryId: '22'
+        },
+        status: {
+          privacyStatus: 'public',
+          selfDeclaredMadeForKids: false
+        }
+      },
+      {
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Type': 'video/mp4',
+          'X-Upload-Content-Length': videoSize
+        }
+      }
+    );
+
+    const uploadUrl = initRes.headers.location;
+    if (!uploadUrl) throw new Error('Upload URL tidak ditemukan');
+
+    // Step 2 — Upload video
+    const uploadRes = await axios.put(uploadUrl, videoBuffer, {
+      headers: {
+        'Content-Type': 'video/mp4',
+        'Content-Length': videoSize
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+
+    const videoId = uploadRes.data?.id;
+    console.log('[YouTube] Video uploaded:', videoId);
+    return videoId;
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error('YouTube upload gagal: ' + msg);
+  }
 }
 
 module.exports = { publishPost };
