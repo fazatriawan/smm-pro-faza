@@ -133,7 +133,7 @@ const AmplifyJobSchema = new mongoose.Schema({
   targetUrl: { type: String, required: true },
   platform: String,
   actions: [{
-    type: { type: String, enum: ['like', 'comment', 'share', 'repost', 'save'] },
+    type: { type: String, enum: ['like', 'dislike', 'comment', 'share', 'repost', 'save', 'subscribe', 'follow', 'bookmark'] },
     enabled: Boolean,
     commentTemplates: [String]
   }],
