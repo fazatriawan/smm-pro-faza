@@ -95,23 +95,24 @@ function getRandomComment(templates, index) {
 
 async function executeAction(account, targetUrl, action, accountIndex) {
   const token = account.accessToken;
-  const pageId = account.pageId || account.platformUserId;
+  const isPersonal = account.platform === 'facebook_personal';
+  const actorId = account.platformUserId;
 
   if (!token) throw new Error('Token tidak ada');
 
   const postId = extractFacebookPostId(targetUrl);
   if (!postId) throw new Error('Tidak bisa extract Post ID dari URL: ' + targetUrl);
 
-  console.log('[Amplify] PostID:', postId, 'Action:', action.type, 'PageID:', pageId);
+  console.log('[Amplify] PostID:', postId, 'Action:', action.type, 'Actor:', actorId, 'isPersonal:', isPersonal);
 
   switch (action.type) {
     case 'like':
-      return await likePost(pageId, postId, token);
+      return await likePost(actorId, postId, token);
     case 'comment':
       const commentText = getRandomComment(action.commentTemplates, accountIndex);
-      return await commentPost(pageId, postId, token, commentText);
+      return await commentPost(actorId, postId, token, commentText);
     case 'share':
-      return await sharePost(pageId, postId, token);
+      return await sharePost(actorId, postId, token, isPersonal);
     default:
       throw new Error('Aksi tidak dikenal: ' + action.type);
   }
