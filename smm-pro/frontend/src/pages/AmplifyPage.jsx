@@ -10,31 +10,47 @@ const PLATFORM_ACTIONS = {
     { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
     { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
     { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+    { key: 'save', icon: '◈', label: 'Save', color: '#7F77DD' },
   ],
   facebook_personal: [
     { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
     { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
     { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+    { key: 'save', icon: '◈', label: 'Save', color: '#7F77DD' },
   ],
   youtube: [
     { key: 'like', icon: '👍', label: 'Like', color: '#FF0000' },
     { key: 'dislike', icon: '👎', label: 'Dislike', color: '#E24B4A' },
     { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
     { key: 'subscribe', icon: '🔔', label: 'Subscribe', color: '#FF0000' },
+    { key: 'save', icon: '◈', label: 'Save to Playlist', color: '#7F77DD' },
+  ],
+  instagram: [
+    { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
+    { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+    { key: 'save', icon: '◈', label: 'Save', color: '#7F77DD' },
+    { key: 'follow', icon: '◉', label: 'Follow', color: '#1D9E75' },
   ],
   twitter: [
     { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
     { key: 'comment', icon: '◎', label: 'Reply', color: '#378ADD' },
     { key: 'share', icon: '↻', label: 'Retweet', color: '#1D9E75' },
+    { key: 'bookmark', icon: '◈', label: 'Bookmark', color: '#7F77DD' },
+    { key: 'follow', icon: '◉', label: 'Follow', color: '#1D9E75' },
   ],
   tiktok: [
     { key: 'like', icon: '♥', label: 'Like', color: '#D4537E' },
     { key: 'comment', icon: '◎', label: 'Komentar', color: '#378ADD' },
+    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75' },
+    { key: 'repost', icon: '↻', label: 'Repost', color: '#639922' },
+    { key: 'save', icon: '◈', label: 'Favorit', color: '#7F77DD' },
+    { key: 'follow', icon: '◉', label: 'Follow', color: '#1D9E75' },
   ],
 };
 
 const PLATFORM_TABS = [
   { key: 'facebook', label: 'Facebook', icon: 'FB', color: '#1877F2', bg: '#E6F1FB' },
+  { key: 'instagram', label: 'Instagram', icon: 'IG', color: '#D4537E', bg: '#FBEAF0' },
   { key: 'youtube', label: 'YouTube', icon: 'YT', color: '#FF0000', bg: '#FAECE7' },
   { key: 'twitter', label: 'X/Twitter', icon: 'X', color: '#888780', bg: '#F1EFE8' },
   { key: 'tiktok', label: 'TikTok', icon: 'TT', color: '#639922', bg: '#EAF3DE' },
@@ -42,6 +58,7 @@ const PLATFORM_TABS = [
 
 const URL_PLACEHOLDERS = {
   facebook: 'https://www.facebook.com/permalink.php?story_fbid=...&id=...',
+  instagram: 'https://www.instagram.com/p/...',
   youtube: 'https://www.youtube.com/watch?v=...',
   twitter: 'https://twitter.com/user/status/...',
   tiktok: 'https://www.tiktok.com/@user/video/...',
@@ -79,6 +96,7 @@ export default function AmplifyPage() {
 
   const platformAccounts = accounts.filter(a => {
     if (activePlatform === 'facebook') return a.platform === 'facebook' || a.platform === 'facebook_personal';
+    if (activePlatform === 'instagram') return a.platform === 'instagram';
     return a.platform === activePlatform;
   });
 
