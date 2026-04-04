@@ -17,6 +17,7 @@ const amplifyRoutes = require('./routes/amplify');
 const warmupRoutes = require('./routes/warmup');
 const authMetaRoutes = require('./routes/authMeta');
 const authYoutubeRoutes = require('./routes/authYoutube');
+const authTwitterRoutes = require('./routes/authTwitter');
 
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
@@ -49,6 +50,7 @@ app.use('/api/amplify', amplifyRoutes);
 app.use('/api/warmup', warmupRoutes);
 app.use('/api/auth', authMetaRoutes);
 app.use('/api/auth', authYoutubeRoutes);
+app.use('/api/auth', authTwitterRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

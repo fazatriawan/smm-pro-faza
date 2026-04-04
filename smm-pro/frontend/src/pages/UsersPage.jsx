@@ -23,6 +23,11 @@ export default function UsersPage() {
   // Cek kalau baru connect dari OAuth
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'twitter') {
+      toast.success('Twitter/X berhasil terhubung!');
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      window.history.replaceState({}, '', '/users');
+    }
     if (params.get('connected') === 'youtube') {
       toast.success('YouTube berhasil terhubung!');
       qc.invalidateQueries({ queryKey: ['accounts'] });
@@ -84,6 +89,21 @@ export default function UsersPage() {
     }
   };
 
+  const connectTwitter = async () => {
+    try {
+      setConnecting(true);
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/twitter`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err) {
+      toast.error('Gagal memulai koneksi Twitter');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   // Group akun berdasarkan platform
   // Tambahkan facebook_personal ke PLATFORMS display
   const PLATFORMS_EXTENDED = {
@@ -137,6 +157,14 @@ export default function UsersPage() {
             style={{ fontSize: 13, background: '#FF0000', color: '#fff', border: 'none' }}
           >
             {connecting ? 'Menghubungkan...' : '▶ Connect YouTube'}
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={connectTwitter}
+            disabled={connecting}
+            style={{ fontSize: 13, background: '#000', color: '#fff', border: 'none' }}
+          >
+            {connecting ? 'Menghubungkan...' : 'X Connect Twitter'}
           </button>
         </div>
       </div>
