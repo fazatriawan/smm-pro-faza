@@ -195,6 +195,7 @@ function extractFacebookPostId(url) {
 
     // Format: facebook.com/story_fbid=123&id=456
     const storyMatch = url.match(/story_fbid=(\d+)/);
+    const reelMatch = url.match(/\/reel\/(\d+)/);
     if (storyMatch) return storyMatch[1];
 
     return null;
