@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { parseError } = require('../utils/errorHandler');
 const cloudinary = require('cloudinary').v2;
 const { Post, SocialAccount } = require('../models');
 
@@ -127,15 +128,18 @@ async function publishToAccount(post, target) {
     return platformPostId;
   } catch (err) {
     const errorMsg = parseFacebookError(err);
-    console.error(`Failed to post to ${account.platform} (${account.label}): ${errorMsg}`);
+    const parsed = parseError(account.platform, err);
+    console.error(`Failed to post to ${account.platform} (${account.label}): ${parsed.friendlyMessage}`);
     await Post.updateOne(
       { _id: post._id, 'targetAccounts._id': target._id },
       { $set: {
         'targetAccounts.$.status': 'failed',
-        'targetAccounts.$.error': errorMsg
+        'targetAccounts.$.error': parsed.friendlyMessage,
+        'targetAccounts.$.errorMessage': parsed.friendlyMessage,
+        'targetAccounts.$.actionNeeded': parsed.actionNeeded
       }}
     );
-    throw new Error(errorMsg);
+    throw new Error(parsed.friendlyMessage);
   }
 }
 
