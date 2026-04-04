@@ -59,3 +59,17 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 module.exports = router;
+
+// PATCH update access token
+router.patch('/:id', protect, async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    const account = await SocialAccount.findOneAndUpdate(
+      { _id: req.params.id },
+      { $set: { accessToken } },
+      { new: true }
+    );
+    if (!account) return res.status(404).json({ message: 'Account not found' });
+    res.json(account);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
