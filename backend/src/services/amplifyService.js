@@ -78,6 +78,10 @@ function extractFacebookPostId(url) {
     const shareMatch = url.match(/\/share\/p\/([A-Za-z0-9]+)/);
     if (shareMatch) return shareMatch[1];
 
+    const storyFbidMatch = url.match(/story_fbid=([A-Za-z0-9]+)/);
+    const pageIdMatch = url.match(/id=(\d+)/);
+    if (storyFbidMatch && pageIdMatch) return pageIdMatch[1] + '_' + storyFbidMatch[1];
+
     return null;
   } catch {
     return null;
