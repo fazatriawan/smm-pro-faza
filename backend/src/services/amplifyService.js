@@ -107,9 +107,11 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   switch (action.type) {
     case 'like':
+      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token);
       return await likePost(actorId, postId, token);
     case 'comment':
       const commentText = getRandomComment(action.commentTemplates, accountIndex);
+      if (account.platform === 'youtube') return await commentYoutube(targetUrl, token, commentText);
       return await commentPost(actorId, postId, token, commentText);
     case 'share':
       return await sharePost(actorId, postId, token, isPersonal);
@@ -161,6 +163,64 @@ async function sharePost(pageId, postId, token) {
     const msg = err.response?.data?.error?.message || err.message;
     throw new Error('Share gagal: ' + msg);
   }
+}
+
+async function likeYoutube(url, token) {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
+
+    await axios.post(
+      'https://www.googleapis.com/youtube/v3/videos/rate',
+      null,
+      { params: { id: videoId, rating: 'like' },
+        headers: { Authorization: 'Bearer ' + token } }
+    );
+    return { success: true };
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error('YouTube like gagal: ' + msg);
+  }
+}
+
+async function commentYoutube(url, token, message) {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
+
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet',
+      {
+        snippet: {
+          videoId,
+          topLevelComment: {
+            snippet: { textOriginal: message }
+          }
+        }
+      },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error('YouTube komen gagal: ' + msg);
+  }
+}
+
+function extractYoutubeVideoId(url) {
+  try {
+    const patterns = [
+      /youtube\.com\/watch\?v=([^&]+)/,
+      /youtu\.be\/([^?]+)/,
+      /youtube\.com\/shorts\/([^?]+)/,
+      /youtube\.com\/embed\/([^?]+)/,
+    ];
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match) return match[1];
+    }
+    return null;
+  } catch { return null; }
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
