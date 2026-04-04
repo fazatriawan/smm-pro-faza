@@ -23,6 +23,11 @@ export default function UsersPage() {
   // Cek kalau baru connect dari OAuth
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'youtube') {
+      toast.success('YouTube berhasil terhubung!');
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      window.history.replaceState({}, '', '/users');
+    }
     if (params.get('connected') === 'facebook') {
       toast.success('Facebook & Instagram berhasil terhubung!');
       qc.invalidateQueries({ queryKey: ['accounts'] });
@@ -59,6 +64,21 @@ export default function UsersPage() {
       if (data.url) window.location.href = data.url;
     } catch (err) {
       toast.error('Gagal memulai koneksi personal');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const connectYoutube = async () => {
+    try {
+      setConnecting(true);
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/youtube`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (err) {
+      toast.error('Gagal memulai koneksi YouTube');
     } finally {
       setConnecting(false);
     }
@@ -109,6 +129,14 @@ export default function UsersPage() {
             style={{ fontSize: 13 }}
           >
             {connecting ? 'Menghubungkan...' : 'f Connect Akun Personal'}
+          </button>
+          <button
+            className="btn-secondary"
+            onClick={connectYoutube}
+            disabled={connecting}
+            style={{ fontSize: 13, background: '#FF0000', color: '#fff', border: 'none' }}
+          >
+            {connecting ? 'Menghubungkan...' : '▶ Connect YouTube'}
           </button>
         </div>
       </div>
