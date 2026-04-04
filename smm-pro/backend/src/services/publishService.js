@@ -262,6 +262,12 @@ async function postToYouTube(account, caption, mediaUrls) {
   if (!token) throw new Error('Token YouTube tidak ada');
   if (!mediaUrls || mediaUrls.length === 0) throw new Error('YouTube membutuhkan video');
 
+  // Validasi harus video
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v'];
+  const mediaUrl = mediaUrls[0].toLowerCase();
+  const isVideo = videoExtensions.some(ext => mediaUrl.includes(ext)) || mediaUrl.includes('/video/');
+  if (!isVideo) throw new Error('YouTube hanya menerima video, bukan gambar');
+
   try {
     const videoUrl = mediaUrls[0];
     const title = caption.slice(0, 100) || 'Video';
