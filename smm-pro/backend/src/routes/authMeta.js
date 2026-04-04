@@ -29,10 +29,7 @@ router.get('/facebook', protect, (req, res) => {
 
 // Step 1B — Redirect ke Facebook login (Personal)
 router.get('/facebook/personal', protect, (req, res) => {
-  const scopes = [
-    'public_profile',
-    'email',
-  ].join(',');
+  const scopes = 'public_profile';
 
   const state = req.user._id.toString() + ':personal';
   const url = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(META_REDIRECT_URI)}&scope=${scopes}&state=${state}`;
