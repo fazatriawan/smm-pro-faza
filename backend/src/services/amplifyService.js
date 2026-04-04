@@ -75,6 +75,9 @@ function extractFacebookPostId(url) {
     const videoMatch = url.match(/\/videos\/(\d+)/);
     if (videoMatch) return videoMatch[1];
 
+    const shareMatch = url.match(/\/share\/p\/([A-Za-z0-9]+)/);
+    if (shareMatch) return shareMatch[1];
+
     return null;
   } catch {
     return null;
