@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { AmplifyJob, SocialAccount } = require('../models');
+const { AmplifyJob } = require('../models');
 
 async function runAmplifyJob(jobId) {
   const job = await AmplifyJob.findById(jobId).populate('accounts');
@@ -18,21 +18,10 @@ async function runAmplifyJob(jobId) {
 
       try {
         await executeAction(account, job.targetUrl, action, i);
-        results.push({
-          account: account._id,
-          action: action.type,
-          success: true,
-          executedAt: new Date()
-        });
+        results.push({ account: account._id, action: action.type, success: true, executedAt: new Date() });
         console.log('[Amplify] SUCCESS:', action.type, 'by', account.label);
       } catch (err) {
-        results.push({
-          account: account._id,
-          action: action.type,
-          success: false,
-          error: err.message,
-          executedAt: new Date()
-        });
+        results.push({ account: account._id, action: action.type, success: false, error: err.message, executedAt: new Date() });
         console.log('[Amplify] FAILED:', action.type, 'by', account.label, '-', err.message);
       }
 
@@ -53,6 +42,84 @@ async function runAmplifyJob(jobId) {
   job.results = results;
   await job.save();
   return job;
+}
+
+async function executeAction(account, targetUrl, action, accountIndex) {
+  const token = account.accessToken;
+  const actorId = account.platformUserId;
+  const isPersonal = account.platform === 'facebook_personal';
+
+  if (!token) throw new Error('Token tidak ada');
+
+  console.log('[Amplify] Action:', action.type, '| Platform:', account.platform, '| URL:', targetUrl);
+
+  // ─── YOUTUBE ───────────────────────────────────────────────
+  if (account.platform === 'youtube') {
+    switch (action.type) {
+      case 'like': return await likeYoutube(targetUrl, token, 'like');
+      case 'dislike': return await likeYoutube(targetUrl, token, 'dislike');
+      case 'comment':
+        return await commentYoutube(targetUrl, token, getRandomComment(action.commentTemplates, accountIndex));
+      case 'subscribe': return await subscribeYoutube(targetUrl, token);
+      case 'save': return await saveYoutube(targetUrl, token);
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk YouTube');
+    }
+  }
+
+  // ─── INSTAGRAM ─────────────────────────────────────────────
+  if (account.platform === 'instagram') {
+    switch (action.type) {
+      case 'like': return await likeInstagram(targetUrl, token);
+      case 'comment':
+        return await commentInstagram(targetUrl, token, getRandomComment(action.commentTemplates, accountIndex));
+      case 'save': return await saveInstagram(targetUrl, token);
+      case 'follow': throw new Error('Follow Instagram via API tidak tersedia');
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Instagram');
+    }
+  }
+
+  // ─── TWITTER ───────────────────────────────────────────────
+  if (account.platform === 'twitter') {
+    switch (action.type) {
+      case 'like': return await likeTweet(targetUrl, token, actorId);
+      case 'comment':
+        return await replyTweet(targetUrl, token, getRandomComment(action.commentTemplates, accountIndex));
+      case 'share': return await retweetTweet(targetUrl, token, actorId);
+      case 'bookmark': return await bookmarkTweet(targetUrl, token, actorId);
+      case 'follow': throw new Error('Follow Twitter belum diimplementasikan');
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Twitter');
+    }
+  }
+
+  // ─── TIKTOK ────────────────────────────────────────────────
+  if (account.platform === 'tiktok') {
+    switch (action.type) {
+      case 'repost': return await repostTiktok(targetUrl, token);
+      case 'share': throw new Error('Share TikTok via API belum tersedia');
+      case 'follow': throw new Error('Follow TikTok via API belum tersedia');
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk TikTok');
+    }
+  }
+
+  // ─── FACEBOOK ──────────────────────────────────────────────
+  const postId = extractFacebookPostId(targetUrl);
+  if (!postId) throw new Error('Tidak bisa extract Post ID dari URL: ' + targetUrl);
+
+  console.log('[Amplify] Facebook PostID:', postId);
+
+  switch (action.type) {
+    case 'like': return await likePost(actorId, postId, token);
+    case 'comment':
+      return await commentPost(actorId, postId, token, getRandomComment(action.commentTemplates, accountIndex));
+    case 'share': return await sharePost(actorId, postId, token, isPersonal);
+    default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Facebook');
+  }
+}
+
+// ─── HELPERS ───────────────────────────────────────────────────────────────
+function getRandomComment(templates, index) {
+  if (!templates || templates.length === 0) return 'Bagus!';
+  return templates[index % templates.length];
 }
 
 function extractFacebookPostId(url) {
@@ -83,103 +150,228 @@ function extractFacebookPostId(url) {
     if (storyFbidMatch && pageIdMatch) return pageIdMatch[1] + '_' + storyFbidMatch[1];
 
     return null;
-  } catch {
-    return null;
+  } catch { return null; }
+}
+
+function extractYoutubeVideoId(url) {
+  const patterns = [
+    /youtube\.com\/watch\?v=([^&]+)/,
+    /youtu\.be\/([^?]+)/,
+    /youtube\.com\/shorts\/([^?]+)/,
+    /youtube\.com\/embed\/([^?]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+// ─── YOUTUBE FUNCTIONS ─────────────────────────────────────────────────────
+async function likeYoutube(url, token, rating = 'like') {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Video ID tidak ditemukan');
+    await axios.post(
+      'https://www.googleapis.com/youtube/v3/videos/rate',
+      null,
+      { params: { id: videoId, rating }, headers: { Authorization: 'Bearer ' + token } }
+    );
+    return { success: true };
+  } catch (err) {
+    throw new Error('YouTube ' + rating + ' gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
-function getRandomComment(templates, index) {
-  if (!templates || templates.length === 0) return 'Bagus!';
-  return templates[index % templates.length];
-}
-
-async function executeAction(account, targetUrl, action, accountIndex) {
-  const token = account.accessToken;
-  const isPersonal = account.platform === 'facebook_personal';
-  const actorId = account.platformUserId;
-
-  if (!token) throw new Error('Token tidak ada');
-
-  console.log('[Amplify] Action:', action.type, 'Platform:', account.platform, 'URL:', targetUrl);
-
-  // YouTube tidak butuh Facebook Post ID
-  if (account.platform === 'youtube') {
-    switch (action.type) {
-      case 'like': return await likeYoutube(targetUrl, token, 'like');
-      case 'dislike': return await likeYoutube(targetUrl, token, 'dislike');
-      case 'comment':
-        const ytComment = getRandomComment(action.commentTemplates, accountIndex);
-        return await commentYoutube(targetUrl, token, ytComment);
-      case 'subscribe': return await subscribeYoutube(targetUrl, token);
-      case 'save': return await saveYoutube(targetUrl, token);
-      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk YouTube');
-    }
-  }
-
-  // Instagram tidak butuh Facebook Post ID
-  if (account.platform === 'instagram') {
-    switch (action.type) {
-      case 'like': return await likeInstagram(targetUrl, token);
-      case 'comment':
-        const igComment = getRandomComment(action.commentTemplates, accountIndex);
-        return await commentInstagram(targetUrl, token, igComment);
-      case 'save': return await saveInstagram(targetUrl, token);
-      case 'follow': return await followInstagram(targetUrl, token);
-      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Instagram');
-    }
-  }
-
-  // Twitter
-  if (account.platform === 'twitter') {
-    switch (action.type) {
-      case 'like': return await likeTweet(targetUrl, token, actorId);
-      case 'comment':
-        const twComment = getRandomComment(action.commentTemplates, accountIndex);
-        return await replyTweet(targetUrl, token, twComment);
-      case 'share': return await retweetTweet(targetUrl, token, actorId);
-      case 'bookmark': return await bookmarkTweet(targetUrl, token, actorId);
-      case 'follow': return await followTwitter(targetUrl, token, actorId);
-      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Twitter');
-    }
-  }
-
-  // TikTok
-  if (account.platform === 'tiktok') {
-    switch (action.type) {
-      case 'repost': return await repostTiktok(targetUrl, token);
-      case 'share': return await shareTiktok(targetUrl, token);
-      case 'follow': return await followTiktok(targetUrl, token);
-      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk TikTok');
-    }
-  }
-
-  // Facebook — butuh Post ID
-  const postId = extractFacebookPostId(targetUrl);
-  if (!postId) throw new Error('Tidak bisa extract Post ID dari URL: ' + targetUrl);
-
-  console.log('[Amplify] PostID:', postId, 'Actor:', actorId);
-
-  switch (action.type) {
-    case 'like':
-      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token, 'like');
-      return await likePost(actorId, postId, token);
-    case 'dislike':
-      if (account.platform === 'youtube') return await likeYoutube(targetUrl, token, 'dislike');
-      throw new Error('Dislike hanya tersedia untuk YouTube');
-    case 'comment':
-      const commentText = getRandomComment(action.commentTemplates, accountIndex);
-      if (account.platform === 'youtube') return await commentYoutube(targetUrl, token, commentText);
-      return await commentPost(actorId, postId, token, commentText);
-    case 'share':
-      return await sharePost(actorId, postId, token, isPersonal);
-    case 'subscribe':
-      if (account.platform === 'youtube') return await subscribeYoutube(targetUrl, token);
-      throw new Error('Subscribe hanya tersedia untuk YouTube');
-    default:
-      throw new Error('Aksi tidak dikenal: ' + action.type);
+async function commentYoutube(url, token, message) {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Video ID tidak ditemukan');
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet',
+      { snippet: { videoId, topLevelComment: { snippet: { textOriginal: message } } } },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('YouTube komen gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
+async function subscribeYoutube(url, token) {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Video ID tidak ditemukan');
+    const videoRes = await axios.get(
+      'https://www.googleapis.com/youtube/v3/videos',
+      { params: { part: 'snippet', id: videoId }, headers: { Authorization: 'Bearer ' + token } }
+    );
+    const channelId = videoRes.data.items?.[0]?.snippet?.channelId;
+    if (!channelId) throw new Error('Channel ID tidak ditemukan');
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/subscriptions?part=snippet',
+      { snippet: { resourceId: { kind: 'youtube#channel', channelId } } },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('YouTube subscribe gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+async function saveYoutube(url, token) {
+  try {
+    const videoId = extractYoutubeVideoId(url);
+    if (!videoId) throw new Error('Video ID tidak ditemukan');
+    const res = await axios.post(
+      'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet',
+      { snippet: { playlistId: 'WL', resourceId: { kind: 'youtube#video', videoId } } },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('YouTube save gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+// ─── INSTAGRAM FUNCTIONS ───────────────────────────────────────────────────
+async function extractInstagramMediaId(url, token) {
+  const match = url.match(/instagram\.com\/p\/([A-Za-z0-9_-]+)/);
+  if (!match) throw new Error('URL Instagram tidak valid');
+  const shortcode = match[1];
+  const res = await axios.get('https://graph.instagram.com/v18.0/me/media', {
+    params: { fields: 'id,shortcode', access_token: token }
+  });
+  const media = res.data.data?.find(m => m.shortcode === shortcode);
+  if (!media) throw new Error('Media tidak ditemukan atau bukan milik akun ini');
+  return media.id;
+}
+
+async function likeInstagram(url, token) {
+  try {
+    const mediaId = await extractInstagramMediaId(url, token);
+    const res = await axios.post(
+      'https://graph.instagram.com/v18.0/' + mediaId + '/likes',
+      null,
+      { params: { access_token: token } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Instagram like gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+async function commentInstagram(url, token, message) {
+  try {
+    const mediaId = await extractInstagramMediaId(url, token);
+    const res = await axios.post(
+      'https://graph.instagram.com/v18.0/' + mediaId + '/comments',
+      null,
+      { params: { message, access_token: token } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Instagram komen gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+async function saveInstagram(url, token) {
+  try {
+    const mediaId = await extractInstagramMediaId(url, token);
+    const res = await axios.post(
+      'https://graph.instagram.com/v18.0/' + mediaId + '/saved',
+      null,
+      { params: { access_token: token } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Instagram save gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+// ─── TWITTER FUNCTIONS ─────────────────────────────────────────────────────
+function extractTwitterTweetId(url) {
+  const match = url.match(/status\/([0-9]+)/);
+  return match ? match[1] : null;
+}
+
+async function likeTweet(url, token, userId) {
+  try {
+    const tweetId = extractTwitterTweetId(url);
+    if (!tweetId) throw new Error('Tweet ID tidak ditemukan');
+    const res = await axios.post(
+      'https://api.twitter.com/2/users/' + userId + '/likes',
+      { tweet_id: tweetId },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Twitter like gagal: ' + (err.response?.data?.detail || err.message));
+  }
+}
+
+async function replyTweet(url, token, message) {
+  try {
+    const tweetId = extractTwitterTweetId(url);
+    if (!tweetId) throw new Error('Tweet ID tidak ditemukan');
+    const res = await axios.post(
+      'https://api.twitter.com/2/tweets',
+      { text: message, reply: { in_reply_to_tweet_id: tweetId } },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Twitter reply gagal: ' + (err.response?.data?.detail || err.message));
+  }
+}
+
+async function retweetTweet(url, token, userId) {
+  try {
+    const tweetId = extractTwitterTweetId(url);
+    if (!tweetId) throw new Error('Tweet ID tidak ditemukan');
+    const res = await axios.post(
+      'https://api.twitter.com/2/users/' + userId + '/retweets',
+      { tweet_id: tweetId },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Retweet gagal: ' + (err.response?.data?.detail || err.message));
+  }
+}
+
+async function bookmarkTweet(url, token, userId) {
+  try {
+    const tweetId = extractTwitterTweetId(url);
+    if (!tweetId) throw new Error('Tweet ID tidak ditemukan');
+    const res = await axios.post(
+      'https://api.twitter.com/2/users/' + userId + '/bookmarks',
+      { tweet_id: tweetId },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Bookmark gagal: ' + (err.response?.data?.detail || err.message));
+  }
+}
+
+// ─── TIKTOK FUNCTIONS ──────────────────────────────────────────────────────
+async function repostTiktok(url, token) {
+  try {
+    const match = url.match(/video\/([0-9]+)/);
+    if (!match) throw new Error('Video ID TikTok tidak ditemukan');
+    const res = await axios.post(
+      'https://open.tiktokapis.com/v2/repost/create/',
+      { item_id: match[1] },
+      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('TikTok repost gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+// ─── FACEBOOK FUNCTIONS ────────────────────────────────────────────────────
 async function likePost(pageId, postId, token) {
   try {
     const res = await axios.post(
@@ -189,8 +381,7 @@ async function likePost(pageId, postId, token) {
     );
     return res.data;
   } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('Like gagal: ' + msg);
+    throw new Error('Like gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
@@ -203,112 +394,21 @@ async function commentPost(pageId, postId, token, message) {
     );
     return res.data;
   } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('Komen gagal: ' + msg);
+    throw new Error('Komen gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
-async function sharePost(pageId, postId, token) {
+async function sharePost(pageId, postId, token, isPersonal) {
   try {
     const res = await axios.post(
       'https://graph.facebook.com/v18.0/' + pageId + '/feed',
       null,
-      { params: {
-        link: 'https://www.facebook.com/' + postId,
-        access_token: token
-      }}
+      { params: { link: 'https://www.facebook.com/' + postId, access_token: token } }
     );
     return res.data;
   } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('Share gagal: ' + msg);
+    throw new Error('Share gagal: ' + (err.response?.data?.error?.message || err.message));
   }
-}
-
-async function likeYoutube(url, token, rating = 'like') {
-  try {
-    const videoId = extractYoutubeVideoId(url);
-    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
-
-    await axios.post(
-      'https://www.googleapis.com/youtube/v3/videos/rate',
-      null,
-      { params: { id: videoId, rating },
-        headers: { Authorization: 'Bearer ' + token } }
-    );
-    return { success: true };
-  } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('YouTube ' + rating + ' gagal: ' + msg);
-  }
-}
-
-async function subscribeYoutube(url, token) {
-  try {
-    // Extract channel ID dari URL video
-    const videoId = extractYoutubeVideoId(url);
-    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
-
-    // Ambil channel ID dari video
-    const videoRes = await axios.get(
-      'https://www.googleapis.com/youtube/v3/videos',
-      { params: { part: 'snippet', id: videoId },
-        headers: { Authorization: 'Bearer ' + token } }
-    );
-    const channelId = videoRes.data.items?.[0]?.snippet?.channelId;
-    if (!channelId) throw new Error('Channel ID tidak ditemukan');
-
-    // Subscribe ke channel
-    const res = await axios.post(
-      'https://www.googleapis.com/youtube/v3/subscriptions?part=snippet',
-      { snippet: { resourceId: { kind: 'youtube#channel', channelId } } },
-      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
-    );
-    return res.data;
-  } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('YouTube subscribe gagal: ' + msg);
-  }
-}
-
-async function commentYoutube(url, token, message) {
-  try {
-    const videoId = extractYoutubeVideoId(url);
-    if (!videoId) throw new Error('Tidak bisa extract Video ID dari URL');
-
-    const res = await axios.post(
-      'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet',
-      {
-        snippet: {
-          videoId,
-          topLevelComment: {
-            snippet: { textOriginal: message }
-          }
-        }
-      },
-      { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } }
-    );
-    return res.data;
-  } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('YouTube komen gagal: ' + msg);
-  }
-}
-
-function extractYoutubeVideoId(url) {
-  try {
-    const patterns = [
-      /youtube\.com\/watch\?v=([^&]+)/,
-      /youtu\.be\/([^?]+)/,
-      /youtube\.com\/shorts\/([^?]+)/,
-      /youtube\.com\/embed\/([^?]+)/,
-    ];
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match) return match[1];
-    }
-    return null;
-  } catch { return null; }
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
