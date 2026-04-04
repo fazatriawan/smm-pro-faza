@@ -25,7 +25,7 @@ const SocialAccountSchema = new mongoose.Schema({
   label: { type: String, required: true },         // e.g. "@brand_official"
   platform: {
     type: String,
-    enum: ['youtube', 'instagram', 'facebook', 'twitter', 'tiktok'],
+    enum: ['youtube', 'instagram', 'facebook', 'facebook_personal', 'twitter', 'tiktok'],
     required: true
   },
   platformUserId: String,
