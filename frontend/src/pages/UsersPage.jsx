@@ -138,7 +138,7 @@ export default function UsersPage() {
     (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
   );
 
-  const [collapsedPlatforms, setCollapsedPlatforms] = useState({});
+  const [collapsedPlatforms, setCollapsedPlatforms] = useState({ facebook: true, instagram: true, youtube: true, twitter: true, tiktok: true, threads: true, facebook_personal: true });
 
   const togglePlatformCollapse = (platform) => {
     setCollapsedPlatforms(prev => ({
