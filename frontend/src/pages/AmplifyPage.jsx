@@ -73,6 +73,7 @@ export default function AmplifyPage() {
   const [selectedAccountIds, setSelectedAccountIds] = useState(new Set());
   const [selectAll, setSelectAll] = useState(true);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
+  const [stoppingJob, setStoppingJob] = useState(null);
   const [activeTab, setActiveTab] = useState('create');
 
   const { data: accounts = [] } = useQuery({
@@ -85,6 +86,19 @@ export default function AmplifyPage() {
     queryFn: () => amplifyAPI.getAll().then(r => r.data),
     refetchInterval: 5000
   });
+
+  const stopJob = async (jobId) => {
+    try {
+      setStoppingJob(jobId);
+      await amplifyAPI.stop(jobId);
+      toast.success('Job berhasil dihentikan!');
+      refetch();
+    } catch (err) {
+      toast.error('Gagal menghentikan job');
+    } finally {
+      setStoppingJob(null);
+    }
+  };
 
   const createJob = useMutation({
     mutationFn: (data) => amplifyAPI.create(data),
@@ -520,13 +534,28 @@ export default function AmplifyPage() {
                       {dayjs(job.createdAt).format('DD/MM HH:mm')} · {job.platform} · {job.actions?.map(a => a.type).join(', ')}
                     </div>
                   </div>
-                  <span style={{
-                    fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 500,
-                    background: `${getStatusColor(job.status)}20`,
-                    color: getStatusColor(job.status)
-                  }}>
-                    {getStatusLabel(job.status)}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 500,
+                      background: `${getStatusColor(job.status)}20`,
+                      color: getStatusColor(job.status)
+                    }}>
+                      {getStatusLabel(job.status)}
+                    </span>
+                    {job.status === 'running' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); stopJob(job._id); }}
+                        disabled={stoppingJob === job._id}
+                        style={{
+                          fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                          background: '#FCEBEB', color: '#E24B4A',
+                          border: '1px solid #E24B4A', cursor: 'pointer', fontWeight: 500
+                        }}
+                      >
+                        {stoppingJob === job._id ? '...' : '⏹ Stop'}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {job.results && job.results.length > 0 && (
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '8px 12px' }}>

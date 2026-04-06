@@ -147,7 +147,7 @@ const AmplifyJobSchema = new mongoose.Schema({
     error: String,
     executedAt: Date
   }],
-  status: { type: String, enum: ['pending', 'running', 'completed', 'failed'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'running', 'completed', 'failed', 'stopped'], default: 'pending' },
 }, { timestamps: true });
 const AmplifyJob = mongoose.model('AmplifyJob', AmplifyJobSchema);
 

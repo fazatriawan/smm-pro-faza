@@ -28,4 +28,20 @@ router.post('/', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
+// Stop job
+router.patch('/:id/stop', protect, async (req, res) => {
+  try {
+    const job = await AmplifyJob.findOneAndUpdate(
+      { _id: req.params.id, status: 'running' },
+      { $set: { status: 'stopped' } },
+      { new: true }
+    );
+    if (!job) return res.status(404).json({ message: 'Job tidak ditemukan atau sudah selesai' });
+    console.log('[Amplify] Job stopped:', req.params.id);
+    res.json({ message: 'Job berhasil dihentikan', job });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

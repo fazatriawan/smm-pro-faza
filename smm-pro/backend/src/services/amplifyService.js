@@ -36,6 +36,13 @@ async function runAmplifyJob(jobId) {
 
     job.results = results;
     await job.save();
+
+    // Cek apakah job sudah di-stop
+    const freshJob = await AmplifyJob.findById(job._id);
+    if (freshJob?.status === 'stopped') {
+      console.log('[Amplify] Job stopped by user:', job._id);
+      return job;
+    }
   }
 
   job.status = 'completed';
