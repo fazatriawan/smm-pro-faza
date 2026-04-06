@@ -138,6 +138,15 @@ export default function UsersPage() {
     (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
   );
 
+  const [collapsedPlatforms, setCollapsedPlatforms] = useState({});
+
+  const togglePlatformCollapse = (platform) => {
+    setCollapsedPlatforms(prev => ({
+      ...prev,
+      [platform]: !prev[platform]
+    }));
+  };
+
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
     acc[a.platform].push(a);
