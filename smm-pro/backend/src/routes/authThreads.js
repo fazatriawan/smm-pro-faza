@@ -3,8 +3,8 @@ const axios = require('axios');
 const { SocialAccount } = require('../models');
 const { protect } = require('../middleware/auth');
 
-const META_APP_ID = process.env.META_APP_ID;
-const META_APP_SECRET = process.env.META_APP_SECRET;
+const META_APP_ID = process.env.THREADS_APP_ID || process.env.META_APP_ID;
+const META_APP_SECRET = process.env.THREADS_APP_SECRET || process.env.META_APP_SECRET;
 const THREADS_REDIRECT_URI = process.env.THREADS_REDIRECT_URI || 'https://smm-pro-faza.onrender.com/api/auth/threads/callback';
 
 // Step 1 — Redirect ke Threads login
