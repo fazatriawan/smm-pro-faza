@@ -171,46 +171,28 @@ export default function UsersPage() {
           <span style={{ fontSize: 12, color: '#888' }}>
             {displayAccounts.length} akun terhubung
           </span>
-          <button
-            className="btn-primary"
-            onClick={connectFacebook}
-            disabled={connecting}
-            style={{ background: '#1877F2' }}
-          >
-            {connecting ? 'Menghubungkan...' : 'f+ Connect Facebook & Instagram'}
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={connectFacebookPersonal}
-            disabled={connecting}
-            style={{ fontSize: 13 }}
-          >
-            {connecting ? 'Menghubungkan...' : 'f Connect Akun Personal'}
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={connectYoutube}
-            disabled={connecting}
-            style={{ fontSize: 13, background: '#FF0000', color: '#fff', border: 'none' }}
-          >
-            {connecting ? 'Menghubungkan...' : '▶ Connect YouTube'}
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={connectTwitter}
-            disabled={connecting}
-            style={{ fontSize: 13, background: '#000', color: '#fff', border: 'none' }}
-          >
-            {connecting ? 'Menghubungkan...' : 'X Connect Twitter'}
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={connectThreads}
-            disabled={connecting}
-            style={{ fontSize: 13, background: '#000', color: '#fff', border: 'none' }}
-          >
-            {connecting ? 'Menghubungkan...' : '@ Connect Threads'}
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button onClick={connectFacebook} disabled={connecting}
+              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#1877F2', color: '#fff', border: 'none' }}>
+              f+ Facebook & Instagram
+            </button>
+            <button onClick={connectFacebookPersonal} disabled={connecting}
+              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#E6F1FB', color: '#1877F2', border: '1px solid #1877F2' }}>
+              f Personal
+            </button>
+            <button onClick={connectYoutube} disabled={connecting}
+              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#FF0000', color: '#fff', border: 'none' }}>
+              ▶ YouTube
+            </button>
+            <button onClick={connectTwitter} disabled={connecting}
+              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#000', color: '#fff', border: 'none' }}>
+              𝕏 Twitter
+            </button>
+            <button onClick={connectThreads} disabled={connecting}
+              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#000', color: '#fff', border: 'none' }}>
+              @ Threads
+            </button>
+          </div>
         </div>
       </div>
 
