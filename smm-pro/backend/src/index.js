@@ -19,9 +19,7 @@ const authMetaRoutes = require('./routes/authMeta');
 const authYoutubeRoutes = require('./routes/authYoutube');
 const authTwitterRoutes = require('./routes/authTwitter');
 const authThreadsRoutes = require('./routes/authThreads');
-const { startScheduler } = require('./cron/scheduler');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
-
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
 
