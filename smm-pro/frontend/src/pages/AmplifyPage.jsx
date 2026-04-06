@@ -70,7 +70,9 @@ export default function AmplifyPage() {
   const [url, setUrl] = useState('');
   const [selectedActions, setSelectedActions] = useState({});
   const [comments, setComments] = useState(['']);
-  const [selectedAccounts, setSelectedAccounts] = useState('all');
+  const [selectedAccountIds, setSelectedAccountIds] = useState(new Set());
+  const [selectAll, setSelectAll] = useState(true);
+  const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   const [activeTab, setActiveTab] = useState('create');
 
   const { data: accounts = [] } = useQuery({
@@ -111,7 +113,38 @@ export default function AmplifyPage() {
     setSelectedActions({});
     setUrl('');
     setComments(['']);
-    setSelectedAccounts('all');
+    setSelectedAccountIds(new Set());
+    setSelectAll(true);
+    setShowAccountDropdown(false);
+  };
+
+  const toggleAccount = (id) => {
+    setSelectedAccountIds(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+    setSelectAll(false);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectAll) {
+      setSelectedAccountIds(new Set());
+      setSelectAll(false);
+    } else {
+      setSelectedAccountIds(new Set(platformAccounts.map(a => a._id)));
+      setSelectAll(true);
+    }
+  };
+
+  const getSelectedCount = () => {
+    if (selectAll) return platformAccounts.length;
+    return [...selectedAccountIds].filter(id => platformAccounts.find(a => a._id === id)).length;
+  };
+
+  const getTargetAccountIds = () => {
+    if (selectAll) return platformAccounts.map(a => a._id);
+    return [...selectedAccountIds].filter(id => platformAccounts.find(a => a._id === id));
   };
 
   const handleSubmit = () => {
@@ -129,11 +162,8 @@ export default function AmplifyPage() {
         commentTemplates: type === 'comment' ? comments.filter(c => c.trim()) : []
       }));
 
-    const accountIds = selectedAccounts === 'all'
-      ? platformAccounts.map(a => a._id)
-      : [selectedAccounts];
-
-    if (!accountIds.length) return toast.error('Tidak ada akun yang terhubung untuk platform ini');
+    const accountIds = getTargetAccountIds();
+    if (!accountIds.length) return toast.error('Pilih minimal 1 akun');
 
     createJob.mutate({
       targetUrl: url,
@@ -295,16 +325,114 @@ export default function AmplifyPage() {
                   </div>
                 )}
 
-                {/* Pilih Akun */}
+                {/* Pilih Akun dengan Ceklis */}
                 <div className="card">
                   <div className="card-title">Akun yang Digunakan</div>
-                  <select value={selectedAccounts} onChange={e => setSelectedAccounts(e.target.value)}>
-                    <option value="all">Semua {platformAccounts.length} akun {PLATFORM_TABS.find(p=>p.key===activePlatform)?.label}</option>
-                    {platformAccounts.map(a => (
-                      <option key={a._id} value={a._id}>{a.label}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: 12, color: '#888', marginTop: 8 }}>
+                  <div style={{ position: 'relative' }}>
+                    <div
+                      onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                      style={{
+                        padding: '10px 14px', border: '1px solid rgba(0,0,0,0.12)',
+                        borderRadius: 8, cursor: 'pointer', display: 'flex',
+                        justifyContent: 'space-between', alignItems: 'center',
+                        background: '#fff', fontSize: 13
+                      }}
+                    >
+                      <span>
+                        {getSelectedCount() === 0
+                          ? 'Pilih akun...'
+                          : `${getSelectedCount()} akun dipilih`}
+                      </span>
+                      <span style={{ color: '#888' }}>{showAccountDropdown ? '▲' : '▼'}</span>
+                    </div>
+
+                    {showAccountDropdown && (
+                      <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0,
+                        background: '#fff', border: '1px solid rgba(0,0,0,0.12)',
+                        borderRadius: 8, zIndex: 100, maxHeight: 250,
+                        overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                        marginTop: 4
+                      }}>
+                        {/* Select All */}
+                        <div
+                          onClick={toggleSelectAll}
+                          style={{
+                            padding: '10px 14px', display: 'flex', alignItems: 'center',
+                            gap: 10, cursor: 'pointer',
+                            borderBottom: '1px solid rgba(0,0,0,0.06)',
+                            background: selectAll ? '#EEEDFE' : '#f9f9f9'
+                          }}
+                        >
+                          <div style={{
+                            width: 16, height: 16, borderRadius: 4,
+                            border: `1.5px solid ${selectAll ? '#7F77DD' : '#ccc'}`,
+                            background: selectAll ? '#7F77DD' : '#fff',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            {selectAll && <span style={{ color: '#fff', fontSize: 10 }}>✓</span>}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: selectAll ? '#534AB7' : '#333' }}>
+                            Semua Akun ({platformAccounts.length})
+                          </span>
+                        </div>
+
+                        {/* List Akun */}
+                        {platformAccounts.map(a => {
+                          const isChecked = selectAll || selectedAccountIds.has(a._id);
+                          const platformColor = PLATFORM_TABS.find(p => p.key === activePlatform)?.color || '#888';
+                          return (
+                            <div
+                              key={a._id}
+                              onClick={() => toggleAccount(a._id)}
+                              style={{
+                                padding: '8px 14px', display: 'flex',
+                                alignItems: 'center', gap: 10, cursor: 'pointer',
+                                background: isChecked ? `${platformColor}08` : '#fff',
+                                borderBottom: '0.5px solid rgba(0,0,0,0.04)'
+                              }}
+                            >
+                              <div style={{
+                                width: 16, height: 16, borderRadius: 4,
+                                border: `1.5px solid ${isChecked ? platformColor : '#ccc'}`,
+                                background: isChecked ? platformColor : '#fff',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0
+                              }}>
+                                {isChecked && <span style={{ color: '#fff', fontSize: 10 }}>✓</span>}
+                              </div>
+                              <span style={{ fontSize: 12, flex: 1 }}>{a.label}</span>
+                            </div>
+                          );
+                        })}
+
+                        {platformAccounts.length === 0 && (
+                          <div style={{ padding: 16, textAlign: 'center', fontSize: 12, color: '#aaa' }}>
+                            Tidak ada akun terhubung untuk platform ini
+                          </div>
+                        )}
+
+                        <div
+                          onClick={() => setShowAccountDropdown(false)}
+                          style={{
+                            padding: '10px 14px', textAlign: 'center',
+                            fontSize: 12, color: '#7F77DD', cursor: 'pointer',
+                            borderTop: '1px solid rgba(0,0,0,0.06)', fontWeight: 500
+                          }}
+                        >
+                          Selesai Pilih ✓
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {getSelectedCount() > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#1D9E75' }}>
+                      ✓ {getSelectedCount()} akun akan menjalankan amplifikasi
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 6 }}>
                     ⚡ Jeda 30-60 detik antar akun untuk keamanan
                   </div>
                 </div>
@@ -352,7 +480,7 @@ export default function AmplifyPage() {
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Akun:</div>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>
-                      {selectedAccounts === 'all' ? `${platformAccounts.length} akun` : '1 akun dipilih'}
+                      {getSelectedCount()} akun dipilih
                     </div>
                   </div>
                   {selectedActions.comment && comments.filter(c => c.trim()).length > 0 && (
