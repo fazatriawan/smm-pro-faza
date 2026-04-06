@@ -18,6 +18,7 @@ const warmupRoutes = require('./routes/warmup');
 const authMetaRoutes = require('./routes/authMeta');
 const authYoutubeRoutes = require('./routes/authYoutube');
 const authTwitterRoutes = require('./routes/authTwitter');
+const authThreadsRoutes = require('./routes/authThreads');
 const { startScheduler } = require('./cron/scheduler');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 
@@ -53,6 +54,7 @@ app.use('/api/warmup', warmupRoutes);
 app.use('/api/auth', authMetaRoutes);
 app.use('/api/auth', authYoutubeRoutes);
 app.use('/api/auth', authTwitterRoutes);
+app.use('/api/auth', authThreadsRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

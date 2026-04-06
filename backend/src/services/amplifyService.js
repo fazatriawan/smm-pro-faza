@@ -111,6 +111,18 @@ async function executeAction(account, targetUrl, action, accountIndex) {
     }
   }
 
+  // ─── THREADS ───────────────────────────────────────────────
+  if (account.platform === 'threads') {
+    switch (action.type) {
+      case 'like': return await likeThreads(targetUrl, token, actorId);
+      case 'comment':
+        return await replyThreads(targetUrl, token, actorId, getRandomComment(action.commentTemplates, accountIndex));
+      case 'repost': return await repostThreads(targetUrl, token, actorId);
+      case 'follow': throw new Error('Follow Threads via API belum tersedia');
+      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Threads');
+    }
+  }
+
   // ─── TIKTOK ────────────────────────────────────────────────
   if (account.platform === 'tiktok') {
     switch (action.type) {
@@ -448,6 +460,71 @@ async function sharePost(pageId, postId, token, isPersonal) {
     return res.data;
   } catch (err) {
     throw new Error('Share gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+// ─── THREADS FUNCTIONS ────────────────────────────────────────────────────
+function extractThreadsPostId(url) {
+  const match = url.match(/threads\.net\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+async function likeThreads(url, token, userId) {
+  try {
+    const postId = extractThreadsPostId(url);
+    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+    const res = await axios.post(
+      `https://graph.threads.net/v1.0/${postId}/likes`,
+      null,
+      { params: { access_token: token } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Threads like gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+async function replyThreads(url, token, userId, message) {
+  try {
+    const postId = extractThreadsPostId(url);
+    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+
+    // Buat reply container
+    const containerRes = await axios.post(
+      `https://graph.threads.net/v1.0/${userId}/threads`,
+      null,
+      { params: {
+        media_type: 'TEXT',
+        text: message,
+        reply_to_id: postId,
+        access_token: token
+      }}
+    );
+
+    // Publish reply
+    const publishRes = await axios.post(
+      `https://graph.threads.net/v1.0/${userId}/threads_publish`,
+      null,
+      { params: { creation_id: containerRes.data.id, access_token: token } }
+    );
+    return publishRes.data;
+  } catch (err) {
+    throw new Error('Threads reply gagal: ' + (err.response?.data?.error?.message || err.message));
+  }
+}
+
+async function repostThreads(url, token, userId) {
+  try {
+    const postId = extractThreadsPostId(url);
+    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+    const res = await axios.post(
+      `https://graph.threads.net/v1.0/${postId}/repost`,
+      null,
+      { params: { access_token: token } }
+    );
+    return res.data;
+  } catch (err) {
+    throw new Error('Threads repost gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 

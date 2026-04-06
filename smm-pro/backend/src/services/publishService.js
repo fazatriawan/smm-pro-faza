@@ -110,6 +110,9 @@ async function publishToAccount(post, target) {
       case 'twitter':
         platformPostId = await postToTwitter(account, caption, post.mediaUrls);
         break;
+      case 'threads':
+        platformPostId = await postToThreads(account, caption, post.mediaUrls);
+        break;
       case 'youtube':
         platformPostId = await postToYouTube(account, caption, post.mediaUrls);
         break;
@@ -240,6 +243,60 @@ async function postToInstagram(account, caption, mediaUrls) {
     return publishRes.data.id;
   } catch (err) {
     throw err;
+  }
+}
+
+async function postToThreads(account, caption, mediaUrls) {
+  const token = account.accessToken;
+  const userId = account.platformUserId;
+  if (!token) throw new Error('Token Threads tidak ada');
+
+  try {
+    let mediaType = 'TEXT';
+    let mediaUrl = null;
+
+    if (mediaUrls && mediaUrls.length > 0) {
+      const url = mediaUrls[0].toLowerCase();
+      const isVideo = ['.mp4','.mov','.avi','.webm'].some(ext => url.includes(ext));
+      mediaType = isVideo ? 'VIDEO' : 'IMAGE';
+      mediaUrl = mediaUrls[0];
+    }
+
+    // Step 1 — Buat container
+    const params = {
+      media_type: mediaType,
+      text: caption,
+      access_token: token
+    };
+    if (mediaUrl) {
+      if (mediaType === 'IMAGE') params.image_url = mediaUrl;
+      if (mediaType === 'VIDEO') params.video_url = mediaUrl;
+    }
+
+    const containerRes = await axios.post(
+      `https://graph.threads.net/v1.0/${userId}/threads`,
+      null,
+      { params }
+    );
+    const containerId = containerRes.data.id;
+    if (!containerId) throw new Error('Container ID tidak ditemukan');
+
+    // Tunggu sebentar untuk video
+    if (mediaType === 'VIDEO') {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+
+    // Step 2 — Publish
+    const publishRes = await axios.post(
+      `https://graph.threads.net/v1.0/${userId}/threads_publish`,
+      null,
+      { params: { creation_id: containerId, access_token: token } }
+    );
+
+    return publishRes.data.id;
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    throw new Error('Threads API error: ' + msg);
   }
 }
 
