@@ -127,8 +127,13 @@ export default function UsersPage() {
   // Group akun berdasarkan platform
   // Tambahkan facebook_personal ke PLATFORMS display
   const PLATFORMS_EXTENDED = {
-    ...PLATFORMS,
-    facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' }
+    facebook: { label: 'Facebook Pages', short: 'FB', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
+    facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
+    instagram: { label: 'Instagram', short: 'IG', color: '#D4537E', bg: '#FBEAF0', text: '#A02060' },
+    threads: { label: 'Threads', short: 'TH', color: '#000000', bg: '#f0efec', text: '#333' },
+    youtube: { label: 'YouTube', short: 'YT', color: '#FF0000', bg: '#FAECE7', text: '#CC0000' },
+    twitter: { label: 'X/Twitter', short: 'X', color: '#888780', bg: '#F1EFE8', text: '#555' },
+    tiktok: { label: 'TikTok', short: 'TT', color: '#639922', bg: '#EAF3DE', text: '#3B6D11' },
   };
 
   // Akun yang bermasalah

@@ -5,7 +5,7 @@ import { PLATFORMS, PlatformPill } from '../utils';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 
-const PLATFORM_KEYS = Object.keys(PLATFORMS);
+const PLATFORM_KEYS = ['facebook', 'instagram', 'youtube', 'twitter', 'tiktok', 'threads'];
 
 export default function BulkPostPage() {
   const qc = useQueryClient();
