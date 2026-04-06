@@ -139,6 +139,7 @@ export default function UsersPage() {
   );
 
   const [collapsedPlatforms, setCollapsedPlatforms] = useState({ facebook: true, instagram: true, youtube: true, twitter: true, tiktok: true, threads: true, facebook_personal: true });
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const togglePlatformCollapse = (platform) => {
     setCollapsedPlatforms(prev => ({
@@ -214,34 +215,51 @@ export default function UsersPage() {
       </div>
 
       <div className="page-content">
-        {/* Banner peringatan akun bermasalah */}
+        {/* Notifikasi Bell */}
         {problematicAccounts.length > 0 && (
-          <div style={{
-            background: '#FCEBEB', border: '1px solid #E24B4A',
-            borderRadius: 10, padding: '12px 16px', marginBottom: 16,
-            display: 'flex', alignItems: 'flex-start', gap: 12
-          }}>
-            <span style={{ fontSize: 20 }}>⚠️</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#A32D2D', marginBottom: 6 }}>
-                {problematicAccounts.length} akun membutuhkan perhatian!
-              </div>
-              {problematicAccounts.map(a => (
-                <div key={a._id} style={{
-                  fontSize: 12, color: '#A32D2D', marginBottom: 4,
-                  display: 'flex', alignItems: 'center', gap: 6
-                }}>
-                  <span>•</span>
-                  <span style={{ fontWeight: 500 }}>{a.label}</span>
-                  <span>—</span>
-                  <span>
-                    {!a.isActive ? 'Akun dinonaktifkan — perlu hubungkan ulang' :
-                     a.tokenError ? a.tokenError :
-                     'Token akan expired dalam 3 hari — perlu hubungkan ulang'}
-                  </span>
-                </div>
-              ))}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              onClick={() => setShowNotifications(!showNotifications)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '8px 14px', borderRadius: 20, cursor: 'pointer',
+                background: '#FCEBEB', border: '1px solid #E24B4A',
+                userSelect: 'none'
+              }}
+            >
+              <span style={{ fontSize: 16 }}>🔔</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#A32D2D' }}>
+                {problematicAccounts.length} akun bermasalah
+              </span>
+              <span style={{ fontSize: 11, color: '#E24B4A' }}>
+                {showNotifications ? '▲' : '▼'}
+              </span>
             </div>
+
+            {showNotifications && (
+              <div style={{
+                marginTop: 8, background: '#FCEBEB',
+                border: '1px solid #E24B4A', borderRadius: 10,
+                padding: '12px 16px'
+              }}>
+                {problematicAccounts.map(a => (
+                  <div key={a._id} style={{
+                    fontSize: 12, color: '#A32D2D', marginBottom: 6,
+                    display: 'flex', alignItems: 'flex-start', gap: 6
+                  }}>
+                    <span>•</span>
+                    <div>
+                      <span style={{ fontWeight: 600 }}>{a.label}</span>
+                      <span style={{ marginLeft: 6 }}>
+                        {!a.isActive ? '— Perlu hubungkan ulang' :
+                         a.tokenError ? '— ' + a.tokenError.slice(0, 60) :
+                         '— Token expired dalam 3 hari'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {/* Info Banner */}
