@@ -55,14 +55,27 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   // ─── YOUTUBE ───────────────────────────────────────────────
   if (account.platform === 'youtube') {
-    switch (action.type) {
-      case 'like': return await likeYoutube(targetUrl, token, 'like');
-      case 'dislike': return await likeYoutube(targetUrl, token, 'dislike');
-      case 'comment':
-        return await commentYoutube(targetUrl, token, getRandomComment(action.commentTemplates, accountIndex));
-      case 'subscribe': return await subscribeYoutube(targetUrl, token);
-      case 'save': return await saveYoutube(targetUrl, token);
-      default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk YouTube');
+    const doYoutubeAction = async (currentToken) => {
+      switch (action.type) {
+        case 'like': return await likeYoutube(targetUrl, currentToken, 'like');
+        case 'dislike': return await likeYoutube(targetUrl, currentToken, 'dislike');
+        case 'comment':
+          return await commentYoutube(targetUrl, currentToken, getRandomComment(action.commentTemplates, accountIndex));
+        case 'subscribe': return await subscribeYoutube(targetUrl, currentToken);
+        case 'save': return await saveYoutube(targetUrl, currentToken);
+        default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk YouTube');
+      }
+    };
+
+    try {
+      return await doYoutubeAction(token);
+    } catch (err) {
+      if (err.status === 401 || (err.message && err.message.includes('authentication credentials'))) {
+        console.log('[Amplify] YouTube token expired, mencoba auto-refresh...');
+        const newToken = await refreshYouTubeToken(account);
+        return await doYoutubeAction(newToken);
+      }
+      throw err;
     }
   }
 
@@ -117,6 +130,26 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 }
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
+async function refreshYouTubeToken(account) {
+  try {
+    const response = await axios.post('https://oauth2.googleapis.com/token', null, {
+      params: {
+        client_id: process.env.YOUTUBE_CLIENT_ID,
+        client_secret: process.env.YOUTUBE_CLIENT_SECRET,
+        refresh_token: account.refreshToken,
+        grant_type: 'refresh_token'
+      }
+    });
+    account.accessToken = response.data.access_token;
+    await account.save();
+    console.log('[Amplify] YouTube token refreshed for:', account.label);
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Gagal refresh token YouTube:', error.response?.data || error.message);
+    throw new Error('Sesi YouTube telah habis. Harap hubungkan ulang akun YouTube di menu Akun & User.');
+  }
+}
+
 function getRandomComment(templates, index) {
   if (!templates || templates.length === 0) return 'Bagus!';
   return templates[index % templates.length];

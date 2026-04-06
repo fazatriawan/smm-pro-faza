@@ -19,10 +19,10 @@ async function runAmplifyJob(jobId) {
       try {
         await executeAction(account, job.targetUrl, action, i);
         results.push({ account: account._id, action: action.type, success: true, executedAt: new Date() });
-        console.log('[Amplify] SUCCESS:', action.type, 'by', account.label || account.platformUserId);
+        console.log('[Amplify] SUCCESS:', action.type, 'by', account.label);
       } catch (err) {
         results.push({ account: account._id, action: action.type, success: false, error: err.message, executedAt: new Date() });
-        console.log('[Amplify] FAILED:', action.type, 'by', account.label || account.platformUserId, '-', err.message);
+        console.log('[Amplify] FAILED:', action.type, 'by', account.label, '-', err.message);
       }
 
       await sleep(2000 + Math.random() * 1000);
@@ -45,7 +45,7 @@ async function runAmplifyJob(jobId) {
 }
 
 async function executeAction(account, targetUrl, action, accountIndex) {
-  let token = account.accessToken;
+  const token = account.accessToken;
   const actorId = account.platformUserId;
   const isPersonal = account.platform === 'facebook_personal';
 
@@ -55,7 +55,6 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   // ─── YOUTUBE ───────────────────────────────────────────────
   if (account.platform === 'youtube') {
-    // Wrapper function agar mudah di-retry
     const doYoutubeAction = async (currentToken) => {
       switch (action.type) {
         case 'like': return await likeYoutube(targetUrl, currentToken, 'like');
@@ -69,16 +68,14 @@ async function executeAction(account, targetUrl, action, accountIndex) {
     };
 
     try {
-      // Percobaan Pertama
       return await doYoutubeAction(token);
     } catch (err) {
-      // Jika error karena Token Expired (401)
-      if (err.status === 401 || err.message.includes('authentication credentials')) {
-        console.log(`[Amplify] Token YouTube expired, mencoba auto-refresh...`);
-        token = await refreshYouTubeToken(account); // Ambil token baru
-        return await doYoutubeAction(token); // Percobaan Kedua dengan token baru
+      if (err.status === 401 || (err.message && err.message.includes('authentication credentials'))) {
+        console.log('[Amplify] YouTube token expired, mencoba auto-refresh...');
+        const newToken = await refreshYouTubeToken(account);
+        return await doYoutubeAction(newToken);
       }
-      throw err; // Lempar error jika bukan karena token expired
+      throw err;
     }
   }
 
@@ -137,19 +134,19 @@ async function refreshYouTubeToken(account) {
   try {
     const response = await axios.post('https://oauth2.googleapis.com/token', null, {
       params: {
-        client_id: process.env.YOUTUBE_CLIENT_ID,        
-        client_secret: process.env.YOUTUBE_CLIENT_SECRET, 
+        client_id: process.env.YOUTUBE_CLIENT_ID,
+        client_secret: process.env.YOUTUBE_CLIENT_SECRET,
         refresh_token: account.refreshToken,
         grant_type: 'refresh_token'
       }
     });
-    
     account.accessToken = response.data.access_token;
     await account.save();
+    console.log('[Amplify] YouTube token refreshed for:', account.label);
     return response.data.access_token;
   } catch (error) {
-    console.error("Gagal refresh token YouTube:", error.response?.data || error.message);
-    throw new Error("Sesi YouTube telah habis permanen. Harap Re-auth di Dashboard.");
+    console.error('Gagal refresh token YouTube:', error.response?.data || error.message);
+    throw new Error('Sesi YouTube telah habis. Harap hubungkan ulang akun YouTube di menu Akun & User.');
   }
 }
 
@@ -215,9 +212,7 @@ async function likeYoutube(url, token, rating = 'like') {
     );
     return { success: true };
   } catch (err) {
-    const customErr = new Error('YouTube ' + rating + ' gagal: ' + (err.response?.data?.error?.message || err.message));
-    customErr.status = err.response?.status; // Simpan status code untuk deteksi 401
-    throw customErr;
+    throw new Error('YouTube ' + rating + ' gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
@@ -232,9 +227,7 @@ async function commentYoutube(url, token, message) {
     );
     return res.data;
   } catch (err) {
-    const customErr = new Error('YouTube komen gagal: ' + (err.response?.data?.error?.message || err.message));
-    customErr.status = err.response?.status;
-    throw customErr;
+    throw new Error('YouTube komen gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
@@ -255,9 +248,7 @@ async function subscribeYoutube(url, token) {
     );
     return res.data;
   } catch (err) {
-    const customErr = new Error('YouTube subscribe gagal: ' + (err.response?.data?.error?.message || err.message));
-    customErr.status = err.response?.status;
-    throw customErr;
+    throw new Error('YouTube subscribe gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
@@ -272,9 +263,7 @@ async function saveYoutube(url, token) {
     );
     return res.data;
   } catch (err) {
-    const customErr = new Error('YouTube save gagal: ' + (err.response?.data?.error?.message || err.message));
-    customErr.status = err.response?.status;
-    throw customErr;
+    throw new Error('YouTube save gagal: ' + (err.response?.data?.error?.message || err.message));
   }
 }
 
