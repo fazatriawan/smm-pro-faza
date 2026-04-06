@@ -111,6 +111,13 @@ export default function UsersPage() {
     facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' }
   };
 
+  // Akun yang bermasalah
+  const problematicAccounts = accounts.filter(a => 
+    !a.isActive || 
+    a.tokenError || 
+    (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
+  );
+
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
     acc[a.platform].push(a);
@@ -170,6 +177,36 @@ export default function UsersPage() {
       </div>
 
       <div className="page-content">
+        {/* Banner peringatan akun bermasalah */}
+        {problematicAccounts.length > 0 && (
+          <div style={{
+            background: '#FCEBEB', border: '1px solid #E24B4A',
+            borderRadius: 10, padding: '12px 16px', marginBottom: 16,
+            display: 'flex', alignItems: 'flex-start', gap: 12
+          }}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#A32D2D', marginBottom: 6 }}>
+                {problematicAccounts.length} akun membutuhkan perhatian!
+              </div>
+              {problematicAccounts.map(a => (
+                <div key={a._id} style={{
+                  fontSize: 12, color: '#A32D2D', marginBottom: 4,
+                  display: 'flex', alignItems: 'center', gap: 6
+                }}>
+                  <span>•</span>
+                  <span style={{ fontWeight: 500 }}>{a.label}</span>
+                  <span>—</span>
+                  <span>
+                    {!a.isActive ? 'Akun dinonaktifkan — perlu hubungkan ulang' :
+                     a.tokenError ? a.tokenError :
+                     'Token akan expired dalam 3 hari — perlu hubungkan ulang'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* Info Banner */}
         <div style={{
           background: '#E6F1FB', borderRadius: 10, padding: '12px 16px',

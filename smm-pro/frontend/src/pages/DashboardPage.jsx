@@ -1,12 +1,19 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { analyticsAPI, postsAPI, scheduleAPI } from '../api';
+import { analyticsAPI, postsAPI, scheduleAPI, accountsAPI } from '../api';
 import { PlatformPill, StatusBadge, formatNumber } from '../utils';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import dayjs from 'dayjs';
 
 export default function DashboardPage() {
   const { data: summary } = useQuery({ queryKey: ['analytics-summary'], queryFn: () => analyticsAPI.getSummary().then(r => r.data) });
+  const { data: accounts = [] } = useQuery({ queryKey: ['accounts'], queryFn: () => accountsAPI ? accountsAPI.getAll().then(r => r.data) : Promise.resolve([]) });
+
+  const problematicAccounts = accounts.filter(a =>
+    !a.isActive ||
+    a.tokenError ||
+    (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
+  );
   const { data: postsData } = useQuery({ queryKey: ['posts-recent'], queryFn: () => postsAPI.getAll({ limit: 5 }).then(r => r.data) });
   const { data: scheduled } = useQuery({ queryKey: ['scheduled-today'], queryFn: () => scheduleAPI.getUpcoming({}).then(r => r.data) });
 
@@ -31,6 +38,30 @@ export default function DashboardPage() {
         </div>
       </div>
       <div className="page-content">
+        {problematicAccounts.length > 0 && (
+          <div style={{
+            background: '#FCEBEB', border: '1px solid #E24B4A',
+            borderRadius: 10, padding: '12px 16px', marginBottom: 16,
+            display: 'flex', alignItems: 'center', gap: 12
+          }}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#A32D2D' }}>
+                {problematicAccounts.length} akun bermasalah —
+              </span>
+              <span style={{ fontSize: 12, color: '#A32D2D', marginLeft: 6 }}>
+                {problematicAccounts.map(a => a.label).join(', ')}
+              </span>
+            </div>
+            <a href="/users" style={{
+              fontSize: 12, padding: '4px 12px', borderRadius: 8,
+              background: '#E24B4A', color: '#fff',
+              textDecoration: 'none', fontWeight: 500, flexShrink: 0
+            }}>
+              Perbaiki →
+            </a>
+          </div>
+        )}
         <div className="stat-grid">
           <div className="stat-card">
             <div className="stat-label">Total Akun</div>
