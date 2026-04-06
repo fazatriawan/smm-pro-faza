@@ -11,9 +11,7 @@ const THREADS_REDIRECT_URI = process.env.THREADS_REDIRECT_URI || 'https://smm-pr
 router.get('/threads', protect, (req, res) => {
   const scopes = [
     'threads_basic',
-    'threads_content_publish',
-    'threads_manage_replies',
-    'threads_read_engagement'
+    'threads_content_publish'
   ].join(',');
 
   const state = req.user._id.toString();
