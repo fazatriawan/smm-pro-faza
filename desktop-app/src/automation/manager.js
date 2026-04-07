@@ -1,7 +1,7 @@
-const { chromium } = require('playwright-extra');
-const StealthPlugin = require('playwright-extra-plugin-stealth');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
-chromium.use(StealthPlugin());
+puppeteer.use(StealthPlugin());
 
 let isRunning = false;
 let currentBrowser = null;
@@ -42,7 +42,7 @@ async function startAutomation(config, settings, onLog) {
 
     try {
       // Buka browser
-      browser = await chromium.launch({
+      browser = await puppeteer.launch({
         headless,
         args: [
           '--no-sandbox',
