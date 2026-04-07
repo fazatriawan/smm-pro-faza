@@ -4,6 +4,7 @@ export const PLATFORMS = {
   facebook:  { label: 'Facebook',  short: 'FB', color: '#378ADD', bg: '#E6F1FB', text: '#185FA5' },
   twitter:   { label: 'X/Twitter', short: 'X',  color: '#888780', bg: '#F1EFE8', text: '#5F5E5A' },
   tiktok:    { label: 'TikTok',    short: 'TT', color: '#639922', bg: '#EAF3DE', text: '#3B6D11' },
+  threads:   { label: 'Threads',   short: 'TH', color: '#000000', bg: '#f0efec', text: '#333333' },
 };
 
 export const PLATFORM_KEYS = Object.keys(PLATFORMS);
