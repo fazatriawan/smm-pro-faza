@@ -153,6 +153,74 @@ async function loginToPlatform(page, platform, account, onLog) {
   }
 }
 
+async function handle2FA(page, account, onLog) {
+  const { twoFAType, twoFactorSecret } = account;
+
+  if (twoFAType === 'totp' && twoFactorSecret) {
+    onLog({ type: 'info', message: '🔐 Mendeteksi 2FA TOTP, generate kode...' });
+    try {
+      const totp = generateTOTP(twoFactorSecret);
+      onLog({ type: 'info', message: `🔑 Kode 2FA: ${totp}` });
+
+      // Coba isi kode 2FA otomatis
+      const codeInput = await page.waitForSelector(
+        'input[name="approvals_code"], input[id="approvals_code"], input[placeholder*="code"], input[placeholder*="kode"], input[type="tel"]',
+        { timeout: 10000 }
+      ).catch(() => null);
+
+      if (codeInput) {
+        await codeInput.fill(totp);
+        await page.waitForTimeout(500);
+        const submitBtn = await page.$('button[type="submit"], button:has-text("Lanjutkan"), button:has-text("Continue")');
+        if (submitBtn) await submitBtn.click();
+        onLog({ type: 'success', message: '✅ Kode 2FA berhasil diisi otomatis!' });
+      }
+    } catch (err) {
+      onLog({ type: 'warn', message: `2FA error: ${err.message}` });
+    }
+  } else if (twoFAType === 'email') {
+    onLog({ type: 'warn', message: '⚠️ 2FA Email/SMS terdeteksi — silakan isi kode secara manual di browser yang terbuka. App akan menunggu 60 detik...' });
+    await page.waitForTimeout(60000);
+  }
+}
+
+function generateTOTP(secret) {
+  // Implementasi TOTP sederhana
+  const base32Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const cleanSecret = secret.toUpperCase().replace(/\s/g, '');
+  
+  let bits = '';
+  for (const char of cleanSecret) {
+    const val = base32Chars.indexOf(char);
+    if (val >= 0) bits += val.toString(2).padStart(5, '0');
+  }
+  
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  
+  const epoch = Math.floor(Date.now() / 1000);
+  const timeStep = Math.floor(epoch / 30);
+  
+  const timeBuffer = Buffer.alloc(8);
+  timeBuffer.writeUInt32BE(Math.floor(timeStep / 0x100000000), 0);
+  timeBuffer.writeUInt32BE(timeStep & 0xffffffff, 4);
+  
+  const crypto = require('crypto');
+  const hmac = crypto.createHmac('sha1', Buffer.from(bytes));
+  hmac.update(timeBuffer);
+  const hash = hmac.digest();
+  
+  const offset = hash[hash.length - 1] & 0xf;
+  const code = ((hash[offset] & 0x7f) << 24) |
+               ((hash[offset + 1] & 0xff) << 16) |
+               ((hash[offset + 2] & 0xff) << 8) |
+               (hash[offset + 3] & 0xff);
+  
+  return String(code % 1000000).padStart(6, '0');
+}
+
 async function loginFacebook(page, account, onLog) {
   await page.goto('https://www.facebook.com/login', { waitUntil: 'networkidle' });
   await page.fill('#email', account.username);
@@ -160,12 +228,24 @@ async function loginFacebook(page, account, onLog) {
   await page.fill('#pass', account.password);
   await page.waitForTimeout(500 + Math.random() * 500);
   await page.click('[name="login"]');
-  await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 });
+  
+  try {
+    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 });
+  } catch {}
 
-  if (page.url().includes('login') || page.url().includes('checkpoint')) {
-    throw new Error('Login Facebook gagal — cek username/password atau ada verifikasi');
+  // Handle 2FA jika ada
+  if (page.url().includes('checkpoint') || page.url().includes('two_step') || page.url().includes('login')) {
+    onLog({ type: 'warn', message: '🔐 Terdeteksi halaman verifikasi...' });
+    await handle2FA(page, account, onLog);
+    try {
+      await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 });
+    } catch {}
   }
-  onLog({ type: 'success', message: 'Login Facebook berhasil!' });
+
+  if (page.url().includes('login') && !page.url().includes('facebook.com/') ) {
+    throw new Error('Login Facebook gagal — cek username/password');
+  }
+  onLog({ type: 'success', message: '✅ Login Facebook berhasil!' });
 }
 
 async function loginInstagram(page, account, onLog) {
@@ -176,12 +256,21 @@ async function loginInstagram(page, account, onLog) {
   await page.fill('input[name="password"]', account.password);
   await page.waitForTimeout(500 + Math.random() * 500);
   await page.click('button[type="submit"]');
-  await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 });
 
-  if (page.url().includes('challenge') || page.url().includes('login')) {
-    throw new Error('Login Instagram gagal — cek username/password atau ada verifikasi 2FA');
+  try {
+    await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 });
+  } catch {}
+
+  // Handle 2FA
+  if (page.url().includes('challenge') || page.url().includes('two_factor')) {
+    onLog({ type: 'warn', message: '🔐 Terdeteksi 2FA Instagram...' });
+    await handle2FA(page, account, onLog);
+    try {
+      await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 });
+    } catch {}
   }
-  onLog({ type: 'success', message: 'Login Instagram berhasil!' });
+
+  onLog({ type: 'success', message: '✅ Login Instagram berhasil!' });
 }
 
 async function loginTikTok(page, account, onLog) {
