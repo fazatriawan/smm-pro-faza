@@ -224,14 +224,20 @@ async function likeYoutube(url, token, rating = 'like') {
   try {
     const videoId = extractYoutubeVideoId(url);
     if (!videoId) throw new Error('Video ID tidak ditemukan');
-    await axios.post(
+    const res = await axios.post(
       'https://www.googleapis.com/youtube/v3/videos/rate',
       null,
       { params: { id: videoId, rating }, headers: { Authorization: 'Bearer ' + token } }
     );
+    // YouTube rate API mengembalikan 204 No Content jika sukses
+    console.log('[Amplify] YouTube ' + rating + ' response status:', res.status);
     return { success: true };
   } catch (err) {
-    throw new Error('YouTube ' + rating + ' gagal: ' + (err.response?.data?.error?.message || err.message));
+    const status = err.response?.status;
+    const msg = err.response?.data?.error?.message || err.message;
+    const customErr = new Error('YouTube ' + rating + ' gagal: ' + msg);
+    customErr.status = status;
+    throw customErr;
   }
 }
 
