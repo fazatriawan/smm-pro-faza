@@ -1,28 +1,27 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // Akun
+  // Accounts
   getAccounts: () => ipcRenderer.invoke('get-accounts'),
-  saveAccount: (account) => ipcRenderer.invoke('save-account', account),
+  saveAccount: (a) => ipcRenderer.invoke('save-account', a),
   deleteAccount: (id) => ipcRenderer.invoke('delete-account', id),
+  clearCookies: (id) => ipcRenderer.invoke('clear-cookies', id),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
-  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
 
   // Logs
   getLogs: () => ipcRenderer.invoke('get-logs'),
   clearLogs: () => ipcRenderer.invoke('clear-logs'),
 
-  // Automation
+  // Features
+  bulkPost: (config) => ipcRenderer.invoke('bulk-post', config),
+  amplify: (config) => ipcRenderer.invoke('amplify', config),
   startAutomation: (config) => ipcRenderer.invoke('start-automation', config),
-  stopAutomation: () => ipcRenderer.invoke('stop-automation'),
+  stopAll: () => ipcRenderer.invoke('stop-all'),
 
-  // Event listener
-  onAutomationLog: (callback) => {
-    ipcRenderer.on('automation-log', (event, log) => callback(log));
-  },
-  onAutomationStatus: (callback) => {
-    ipcRenderer.on('automation-status', (event, status) => callback(status));
-  }
+  // Events
+  onLog: (cb) => ipcRenderer.on('log', (_, log) => cb(log)),
+  onStatus: (cb) => ipcRenderer.on('status', (_, s) => cb(s)),
 });
