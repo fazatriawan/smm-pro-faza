@@ -25,11 +25,11 @@ async function runAmplifyJob(jobId) {
         console.log('[Amplify] FAILED:', action.type, 'by', account.label, '-', err.message);
       }
 
-      await sleep(2000 + Math.random() * 1000);
+      await sleep(1000 + Math.random() * 1000);
     }
 
     if (i < job.accounts.length - 1) {
-      const delay = 30000 + Math.random() * 30000;
+      const delay = 10000 + Math.random() * 10000;
       console.log('[Amplify] Waiting', Math.round(delay/1000), 'seconds...');
       await sleep(delay);
     }

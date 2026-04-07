@@ -20,7 +20,7 @@ router.post('/', protect, async (req, res) => {
       _id: { $in: accountIds }, owner: req.user._id, isActive: true
     });
     const job = await AmplifyJob.create({
-      createdBy: req.user._id, targetUrl, platform, actions,
+      createdBy: req.user._id, targetUrl: targetUrl || (targetUrls && targetUrls[0]), targetUrls: targetUrls || [targetUrl], platform, actions,
       accounts: accounts.map(a => a._id), status: 'pending'
     });
     runAmplifyJob(job._id).catch(console.error);
