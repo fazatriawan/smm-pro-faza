@@ -52,11 +52,21 @@ async function runAmplifyJob(jobId) {
 }
 
 async function executeAction(account, targetUrl, action, accountIndex) {
-  const token = account.accessToken;
+  let token = account.accessToken;
   const actorId = account.platformUserId;
   const isPersonal = account.platform === 'facebook_personal';
 
   if (!token) throw new Error('Token tidak ada');
+
+  // Auto refresh token YouTube sebelum aksi
+  if (account.platform === 'youtube') {
+    try {
+      const newToken = await refreshYouTubeTokenIfNeeded(account);
+      if (newToken) token = newToken;
+    } catch (e) {
+      console.log('[Amplify] Token refresh warning:', e.message);
+    }
+  }
 
   console.log('[Amplify] Action:', action.type, '| Platform:', account.platform, '| URL:', targetUrl);
 
@@ -149,6 +159,23 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 }
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
+async function refreshYouTubeTokenIfNeeded(account) {
+  // Cek apakah token masih valid
+  try {
+    await axios.get('https://www.googleapis.com/youtube/v3/channels', {
+      params: { part: 'id', mine: true },
+      headers: { Authorization: 'Bearer ' + account.accessToken }
+    });
+    return null; // Token masih valid
+  } catch (err) {
+    if (err.response?.status === 401) {
+      console.log('[Amplify] Token expired, refreshing...');
+      return await refreshYouTubeToken(account);
+    }
+    return null;
+  }
+}
+
 async function refreshYouTubeToken(account) {
   try {
     const response = await axios.post('https://oauth2.googleapis.com/token', null, {
