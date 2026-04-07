@@ -15,7 +15,7 @@ router.get('/', protect, async (req, res) => {
 
 router.post('/', protect, async (req, res) => {
   try {
-    const { targetUrl, platform, actions, accountIds } = req.body;
+    const { targetUrl, targetUrls, platform, actions, accountIds } = req.body;
     const accounts = await SocialAccount.find({
       _id: { $in: accountIds }, owner: req.user._id, isActive: true
     });

@@ -67,7 +67,7 @@ const URL_PLACEHOLDERS = {
 export default function AmplifyPage() {
   const qc = useQueryClient();
   const [activePlatform, setActivePlatform] = useState('facebook');
-  const [url, setUrl] = useState('');
+  const [urls, setUrls] = useState(['']);
   const [selectedActions, setSelectedActions] = useState({});
   const [comments, setComments] = useState(['']);
   const [selectedAccountIds, setSelectedAccountIds] = useState(new Set());
@@ -125,7 +125,7 @@ export default function AmplifyPage() {
   const handlePlatformChange = (platform) => {
     setActivePlatform(platform);
     setSelectedActions({});
-    setUrl('');
+    setUrls(['']);
     setComments(['']);
     setSelectedAccountIds(new Set());
     setSelectAll(true);
@@ -162,7 +162,8 @@ export default function AmplifyPage() {
   };
 
   const handleSubmit = () => {
-    if (!url.trim()) return toast.error('Masukkan URL target');
+    const validUrls = urls.filter(u => u.trim());
+    if (!validUrls.length) return toast.error('Masukkan minimal 1 URL target');
     if (!Object.values(selectedActions).some(v => v)) return toast.error('Pilih minimal 1 aksi');
     if (selectedActions.comment && comments.filter(c => c.trim()).length === 0) {
       return toast.error('Isi minimal 1 template komentar');
@@ -180,7 +181,8 @@ export default function AmplifyPage() {
     if (!accountIds.length) return toast.error('Pilih minimal 1 akun');
 
     createJob.mutate({
-      targetUrl: url,
+      targetUrls: validUrls,
+      targetUrl: validUrls[0],
       platform: activePlatform,
       actions,
       accountIds
@@ -258,18 +260,52 @@ export default function AmplifyPage() {
 
             <div className="two-col" style={{ alignItems: 'start' }}>
               <div>
-                {/* URL */}
+                {/* URL Multi */}
                 <div className="card">
-                  <div className="card-title">URL Target {PLATFORM_TABS.find(p => p.key === activePlatform)?.label}</div>
-                  <input
-                    type="url"
-                    placeholder={URL_PLACEHOLDERS[activePlatform]}
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <div className="card-title" style={{ margin: 0 }}>URL Target {PLATFORM_TABS.find(p => p.key === activePlatform)?.label}</div>
+                    <button
+                      className="btn-secondary"
+                      style={{ fontSize: 12 }}
+                      onClick={() => {
+                        if (urls.length < 10) setUrls([...urls, '']);
+                        else toast.error('Maksimal 10 URL');
+                      }}
+                    >+ Tambah URL</button>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+                    Semua akun akan mengamplifikasi semua URL yang dimasukkan
+                  </div>
+                  {urls.map((u, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                      <div style={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: '#EEEDFE', color: '#534AB7',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10, fontWeight: 600, flexShrink: 0
+                      }}>{i+1}</div>
+                      <input
+                        type="url"
+                        placeholder={URL_PLACEHOLDERS[activePlatform]}
+                        value={u}
+                        onChange={e => {
+                          const updated = [...urls];
+                          updated[i] = e.target.value;
+                          setUrls(updated);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      {urls.length > 1 && (
+                        <button
+                          onClick={() => setUrls(urls.filter((_, idx) => idx !== i))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E24B4A', fontSize: 18 }}
+                        >×</button>
+                      )}
+                    </div>
+                  ))}
                   {platformAccounts.length === 0 && (
                     <div style={{ marginTop: 8, padding: '8px 12px', background: '#FCEBEB', borderRadius: 8, fontSize: 12, color: '#A32D2D' }}>
-                      ⚠ Belum ada akun {PLATFORM_TABS.find(p => p.key === activePlatform)?.label} terhubung. Hubungkan di menu Akun & User.
+                      ⚠ Belum ada akun {PLATFORM_TABS.find(p => p.key === activePlatform)?.label} terhubung.
                     </div>
                   )}
                 </div>
@@ -472,10 +508,13 @@ export default function AmplifyPage() {
                     </div>
                   </div>
                   <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>URL Target:</div>
-                    <div style={{ fontSize: 12, color: '#185FA5', wordBreak: 'break-all' }}>
-                      {url || '—'}
-                    </div>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>URL Target ({urls.filter(u=>u.trim()).length}):</div>
+                    {urls.filter(u => u.trim()).map((u, i) => (
+                      <div key={i} style={{ fontSize: 12, color: '#185FA5', wordBreak: 'break-all', marginBottom: 2 }}>
+                        {i+1}. {u.slice(0, 50)}{u.length > 50 ? '...' : ''}
+                      </div>
+                    ))}
+                    {urls.filter(u=>u.trim()).length === 0 && <span style={{ color: '#aaa', fontSize: 12 }}>—</span>}
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Aksi:</div>
