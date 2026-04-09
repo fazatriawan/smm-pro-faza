@@ -849,6 +849,7 @@ async function saveSettings() {
     delayMax: parseInt(document.getElementById('s-delay-max').value),
     restBetweenAccounts: parseInt(document.getElementById('s-rest').value),
     maxActionsPerHour: parseInt(document.getElementById('s-max').value),
+    maxConcurrent: parseInt(document.getElementById('s-concurrent').value),
     apiUrl: document.getElementById('s-api').value.trim()
   };
   await window.api.saveSettings(settings);
