@@ -96,6 +96,15 @@ export default function BulkPostPage() {
     createPost.mutate(fd);
   };
 
+  const retryPost = useMutation({
+    mutationFn: (postId) => postsAPI.retry(postId),
+    onSuccess: () => {
+      toast.success('Retry dimulai!');
+      refetch();
+    },
+    onError: () => toast.error('Gagal retry')
+  });
+
   const exportToExcel = async (postId) => {
     try {
       const token = localStorage.getItem('token');
@@ -453,12 +462,20 @@ export default function BulkPostPage() {
                 {expandedPost === p._id && (
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 8, fontWeight: 500 }}>Detail per akun:</div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
+                      {(p.status === 'failed' || p.status === 'partial') && (
+                        <button
+                          onClick={() => retryPost.mutate(p._id)}
+                          style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#FAEEDA', color: '#633806', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                        >
+                          🔄 Ulangi yang Gagal
+                        </button>
+                      )}
                       <button
                         onClick={() => exportToExcel(p._id)}
                         style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#EAF3DE', color: '#3B6D11', border: 'none', cursor: 'pointer', fontWeight: 500 }}
                       >
-                        📊 Export Excel Post Ini
+                        📊 Export Excel
                       </button>
                     </div>
                     {p.targetAccounts?.map((ta, i) => {

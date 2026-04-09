@@ -107,6 +107,34 @@ router.get('/:id', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
+// Retry post yang gagal
+router.post('/:id/retry', protect, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Post tidak ditemukan' });
+
+    // Reset status akun yang gagal
+    post.targetAccounts = post.targetAccounts.map(ta => {
+      if (ta.status === 'failed') {
+        ta.status = 'pending';
+        ta.error = null;
+        ta.errorMessage = null;
+      }
+      return ta;
+    });
+    post.status = 'sending';
+    await post.save();
+
+    // Jalankan ulang publish
+    const { publishPost } = require('../services/publishService');
+    publishPost(post._id).catch(console.error);
+
+    res.json({ message: 'Retry dimulai', post });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.delete('/:id', protect, async (req, res) => {
   try {
     const post = await Post.findOneAndDelete({ _id: req.params.id, createdBy: req.user._id });
