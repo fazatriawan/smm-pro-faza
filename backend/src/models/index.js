@@ -63,7 +63,7 @@ const PostSchema = new mongoose.Schema({
   }],
   scheduledAt: Date,
   isImmediate: { type: Boolean, default: false },
-  status: { type: String, enum: ['draft', 'scheduled', 'processing', 'completed', 'partial', 'failed'], default: 'draft' },
+  status: { type: String, enum: ['draft', 'scheduled', 'sending', 'processing', 'completed', 'partial', 'failed'], default: 'draft' },
   retryCount: { type: Number, default: 0 },
   maxRetries: { type: Number, default: 3 },
   hashtags: [String],
