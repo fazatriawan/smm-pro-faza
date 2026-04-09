@@ -16,9 +16,20 @@ async function publishPost(postId) {
   post.status = 'sending';
   await post.save();
 
-  const results = await Promise.allSettled(
-    post.targetAccounts.map(target => publishToAccount(post, target))
-  );
+  // Posting satu per satu dengan jeda agar tidak kena rate limit
+  const results = [];
+  for (let i = 0; i < post.targetAccounts.length; i++) {
+    const target = post.targetAccounts[i];
+    const result = await Promise.allSettled([publishToAccount(post, target)]);
+    results.push(result[0]);
+    
+    // Jeda 3-5 detik antar akun
+    if (i < post.targetAccounts.length - 1) {
+      const delay = 3000 + Math.random() * 2000;
+      console.log(`[Publish] Jeda ${Math.round(delay/1000)}s sebelum akun berikutnya...`);
+      await sleep(delay);
+    }
+  }
 
   const allSent = results.every(r => r.status === 'fulfilled');
   const anySent = results.some(r => r.status === 'fulfilled');
@@ -404,3 +415,5 @@ async function postToYouTube(account, caption, mediaUrls) {
 }
 
 module.exports = { publishPost };
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
