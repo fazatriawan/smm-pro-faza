@@ -89,6 +89,10 @@ function setRunning(running) {
   document.getElementById('stop-btn').style.display = running ? 'block' : 'none';
 }
 
+async function openScreenshotFolder() {
+  await window.api.openScreenshotFolder();
+}
+
 async function stopAll() {
   await window.api.stopAll();
   setRunning(false);
@@ -470,9 +474,17 @@ function pageAmplify() {
 
       <div>
         <div class="card">
-          <div class="card-title">Preview</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div class="card-title" style="margin:0">Preview & Log</div>
+            <button class="btn-secondary" style="font-size:12px" onclick="openScreenshotFolder()">
+              📁 Buka Folder Screenshot
+            </button>
+          </div>
           <div style="font-size:12px;color:#888;margin-bottom:8px" id="amp-preview">Pilih platform, URL, aksi, dan akun</div>
-          <div class="log-box" id="live-log" style="height:450px"><div style="color:#555">Menunggu...</div></div>
+          <div style="font-size:11px;color:#1D9E75;margin-bottom:8px;padding:6px;background:#EAF3DE;border-radius:6px">
+            📸 Screenshot otomatis disimpan di: Desktop/SMM-Pro-Screenshots/[tanggal]/
+          </div>
+          <div class="log-box" id="live-log" style="height:400px"><div style="color:#555">Menunggu...</div></div>
         </div>
       </div>
     </div>

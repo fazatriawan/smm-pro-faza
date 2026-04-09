@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const { startAutomation, stopAutomation } = require('../automation/manager');
@@ -110,6 +110,20 @@ ipcMain.handle('start-automation', async (_, config) => {
     isRunning = false;
     return { success: false, error: err.message };
   }
+});
+
+ipcMain.handle('open-screenshot-folder', () => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const today = new Date().toISOString().split('T')[0];
+  const folderPath = path.join(os.homedir(), 'Desktop', 'SMM-Pro-Screenshots', today);
+  // Buat folder jika belum ada
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+  shell.openPath(folderPath);
+  return { success: true };
 });
 
 ipcMain.handle('stop-all', () => {

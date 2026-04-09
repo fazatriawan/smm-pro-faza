@@ -1,5 +1,8 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 puppeteer.use(StealthPlugin());
 
@@ -763,6 +766,37 @@ async function scrollPage(page, onLog) {
     await page.waitForTimeout(500 + Math.random() * 1000);
   }
   onLog({ type: 'success', message: `Scroll ${scrollTimes}x selesai` });
+}
+
+async function takeScreenshot(page, label, action, onLog) {
+  try {
+    // Buat folder Screenshots/YYYY-MM-DD di Desktop
+    const today = new Date().toISOString().split('T')[0];
+    const desktopPath = path.join(os.homedir(), 'Desktop');
+    const screenshotDir = path.join(desktopPath, 'SMM-Pro-Screenshots', today);
+
+    if (!fs.existsSync(screenshotDir)) {
+      fs.mkdirSync(screenshotDir, { recursive: true });
+    }
+
+    // Nama file: platform_akun_aksi_waktu.png
+    const time = new Date().toTimeString().slice(0,8).replace(/:/g, '-');
+    const safeName = (label || 'akun').replace(/[@\s\/\:*?"<>|]/g, '_');
+    const filename = `${safeName}_${action}_${time}.png`;
+    const filepath = path.join(screenshotDir, filename);
+
+    await page.screenshot({
+      path: filepath,
+      fullPage: false,
+      clip: { x: 0, y: 0, width: 1280, height: 720 }
+    });
+
+    onLog({ type: 'success', message: `📸 Screenshot disimpan: SMM-Pro-Screenshots/${today}/${filename}` });
+    return filepath;
+  } catch (err) {
+    onLog({ type: 'warn', message: `Screenshot gagal: ${err.message}` });
+    return null;
+  }
 }
 
 function stopAutomation() {

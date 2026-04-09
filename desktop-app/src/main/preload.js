@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
   amplify: (config) => ipcRenderer.invoke('amplify', config),
   startAutomation: (config) => ipcRenderer.invoke('start-automation', config),
   stopAll: () => ipcRenderer.invoke('stop-all'),
+  openScreenshotFolder: () => ipcRenderer.invoke('open-screenshot-folder'),
 
   // Events
   onLog: (cb) => ipcRenderer.on('log', (_, log) => cb(log)),
