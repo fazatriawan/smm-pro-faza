@@ -20,6 +20,7 @@ const authYoutubeRoutes = require('./routes/authYoutube');
 const authTwitterRoutes = require('./routes/authTwitter');
 const authThreadsRoutes = require('./routes/authThreads');
 const aiRoutes = require('./routes/ai');
+const exportRoutes = require('./routes/export');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
@@ -55,6 +56,7 @@ app.use('/api/auth', authYoutubeRoutes);
 app.use('/api/auth', authTwitterRoutes);
 app.use('/api/auth', authThreadsRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/export', exportRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 

@@ -96,6 +96,46 @@ export default function BulkPostPage() {
     createPost.mutate(fd);
   };
 
+  const exportToExcel = async (postId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/export/bulk-post/${postId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Export gagal');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_BulkPost_${new Date().toLocaleDateString('id-ID').replace(/\//g, '-')}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Laporan Excel berhasil didownload!');
+    } catch (err) {
+      toast.error('Gagal export Excel');
+    }
+  };
+
+  const exportAllToExcel = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/export/bulk-post`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Export gagal');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_BulkPost_Semua_${new Date().toLocaleDateString('id-ID').replace(/\//g, '-')}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Laporan semua post berhasil didownload!');
+    } catch (err) {
+      toast.error('Gagal export Excel');
+    }
+  };
+
   const getPostLink = (platformPostId, platform) => {
     if (!platformPostId) return null;
     switch (platform) {
@@ -365,7 +405,12 @@ export default function BulkPostPage() {
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div className="card-title" style={{ margin: 0 }}>Riwayat Post Bulk</div>
-              <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => refetch()}>↻ Refresh</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => refetch()}>↻ Refresh</button>
+                <button className="btn-secondary" style={{ fontSize: 12, background: '#EAF3DE', color: '#3B6D11' }} onClick={exportAllToExcel}>
+                  📊 Export Semua ke Excel
+                </button>
+              </div>
             </div>
             {(postsData?.posts || []).length === 0 ? (
               <div className="empty-state">Belum ada post</div>
@@ -408,6 +453,14 @@ export default function BulkPostPage() {
                 {expandedPost === p._id && (
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 8, fontWeight: 500 }}>Detail per akun:</div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                      <button
+                        onClick={() => exportToExcel(p._id)}
+                        style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#EAF3DE', color: '#3B6D11', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                      >
+                        📊 Export Excel Post Ini
+                      </button>
+                    </div>
                     {p.targetAccounts?.map((ta, i) => {
                       const link = getPostLink(ta.platformPostId, ta.account?.platform);
                       return (
