@@ -105,6 +105,15 @@ export default function BulkPostPage() {
     onError: () => toast.error('Gagal retry')
   });
 
+  const stopPost = useMutation({
+    mutationFn: (postId) => postsAPI.stop(postId),
+    onSuccess: () => {
+      toast.success('Post berhasil dihentikan!');
+      refetch();
+    },
+    onError: () => toast.error('Gagal menghentikan post')
+  });
+
   const exportToExcel = async (postId) => {
     try {
       const token = localStorage.getItem('token');
@@ -448,13 +457,23 @@ export default function BulkPostPage() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{
-                      fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 500,
-                      background: p.status === 'completed' ? '#EAF3DE' : p.status === 'failed' ? '#FCEBEB' : p.status === 'sending' ? '#E6F1FB' : '#FAEEDA',
-                      color: getStatusColor(p.status)
-                    }}>
-                      {getStatusLabel(p.status)}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 500,
+                        background: p.status === 'completed' ? '#EAF3DE' : p.status === 'failed' ? '#FCEBEB' : p.status === 'sending' || p.status === 'processing' ? '#E6F1FB' : '#FAEEDA',
+                        color: getStatusColor(p.status)
+                      }}>
+                        {p.status === 'sending' || p.status === 'processing' ? '⟳ Mengirim...' : getStatusLabel(p.status)}
+                      </span>
+                      {(p.status === 'sending' || p.status === 'processing') && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); stopPost.mutate(p._id); }}
+                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#FCEBEB', color: '#E24B4A', border: '1px solid #E24B4A', cursor: 'pointer', fontWeight: 500 }}
+                        >
+                          ⏹ Stop
+                        </button>
+                      )}
+                    </div>
                     <span style={{ fontSize: 11, color: '#aaa' }}>{expandedPost === p._id ? '▲' : '▼'}</span>
                   </div>
                 </div>
@@ -463,6 +482,14 @@ export default function BulkPostPage() {
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 8, fontWeight: 500 }}>Detail per akun:</div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
+                      {(p.status === 'sending' || p.status === 'processing') && (
+                        <button
+                          onClick={() => stopPost.mutate(p._id)}
+                          style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#FCEBEB', color: '#A32D2D', border: '1px solid #E24B4A', cursor: 'pointer', fontWeight: 500 }}
+                        >
+                          ⏹ Stop
+                        </button>
+                      )}
                       {(p.status === 'failed' || p.status === 'partial') && (
                         <button
                           onClick={() => retryPost.mutate(p._id)}

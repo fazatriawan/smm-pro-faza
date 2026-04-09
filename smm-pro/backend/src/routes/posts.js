@@ -107,6 +107,22 @@ router.get('/:id', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
+// Stop post yang sedang berjalan
+router.post('/:id/stop', protect, async (req, res) => {
+  try {
+    const post = await Post.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ['sending', 'processing'] } },
+      { $set: { status: 'failed' } },
+      { new: true }
+    );
+    if (!post) return res.status(404).json({ message: 'Post tidak ditemukan atau sudah selesai' });
+    console.log('[BulkPost] Stopped by user:', req.params.id);
+    res.json({ message: 'Post berhasil dihentikan', post });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // Retry post yang gagal
 router.post('/:id/retry', protect, async (req, res) => {
   try {

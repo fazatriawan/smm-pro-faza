@@ -19,10 +19,17 @@ async function publishPost(postId) {
   // Posting satu per satu dengan jeda agar tidak kena rate limit
   const results = [];
   for (let i = 0; i < post.targetAccounts.length; i++) {
+    // Cek apakah post sudah di-stop user
+    const freshPost = await Post.findById(post._id);
+    if (!freshPost || freshPost.status === 'failed') {
+      console.log('[Publish] Post dihentikan oleh user:', post._id);
+      break;
+    }
+
     const target = post.targetAccounts[i];
     const result = await Promise.allSettled([publishToAccount(post, target)]);
     results.push(result[0]);
-    
+
     // Jeda 3-5 detik antar akun
     if (i < post.targetAccounts.length - 1) {
       const delay = 3000 + Math.random() * 2000;
