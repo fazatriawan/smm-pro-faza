@@ -169,34 +169,17 @@ async function postToFacebook(account, caption, mediaUrls) {
       const mediaUrl = mediaUrls[0];
 
       if (isVideo(mediaUrl)) {
-        // Coba endpoint Reels dulu (tidak butuh publish_video)
-        try {
-          const reelParams = new URLSearchParams();
-          reelParams.append('video_url', mediaUrl);
-          reelParams.append('description', caption);
-          reelParams.append('access_token', token);
-          reelParams.append('upload_phase', 'finish');
+        const params = new URLSearchParams();
+        params.append('file_url', mediaUrl);
+        params.append('description', caption);
+        params.append('access_token', token);
 
-          const reelRes = await axios.post(
-            `https://graph.facebook.com/v18.0/${pageId}/video_reels`,
-            reelParams,
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-          );
-          return reelRes.data.video_id || reelRes.data.id;
-        } catch (reelErr) {
-          // Fallback ke link post biasa
-          console.log('[Facebook] Reels gagal, fallback ke link post:', reelErr.response?.data?.error?.message);
-          const params = new URLSearchParams();
-          params.append('message', caption + '\n\n🎥 ' + mediaUrl);
-          params.append('access_token', token);
-
-          const res = await axios.post(
-            `https://graph.facebook.com/v18.0/${pageId}/feed`,
-            params,
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-          );
-          return res.data.id;
-        }
+        const res = await axios.post(
+          `https://graph.facebook.com/v18.0/${pageId}/videos`,
+          params,
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+        return res.data.id;
       } else {
         const params = new URLSearchParams();
         params.append('url', mediaUrl);
