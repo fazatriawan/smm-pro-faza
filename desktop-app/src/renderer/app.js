@@ -12,38 +12,51 @@ const PLATFORMS = {
 
 const ACTIONS = {
   facebook: [
-    { key: 'like', label: '♥ Like', color: '#D4537E' },
+    { key: 'like', label: '👍 Like', color: '#1877F2' },
     { key: 'comment', label: '💬 Komentar', color: '#378ADD' },
     { key: 'share', label: '↗ Share', color: '#1D9E75' },
+    { key: 'scroll', label: '📜 Scroll Feed', color: '#888' },
+    { key: 'add_friend', label: '👤 Add Friend', color: '#7F77DD' },
+    { key: 'follow_page', label: '📌 Follow Page', color: '#E24B4A' },
   ],
   instagram: [
     { key: 'like', label: '❤️ Like', color: '#D4537E' },
     { key: 'comment', label: '💬 Komentar', color: '#378ADD' },
     { key: 'save', label: '🔖 Save', color: '#7F77DD' },
+    { key: 'follow', label: '✅ Follow', color: '#1D9E75' },
+    { key: 'scroll', label: '📜 Scroll Feed', color: '#888' },
+    { key: 'story_view', label: '👁 Lihat Story', color: '#E24B4A' },
   ],
   youtube: [
     { key: 'like', label: '👍 Like', color: '#FF0000' },
     { key: 'dislike', label: '👎 Dislike', color: '#E24B4A' },
     { key: 'comment', label: '💬 Komentar', color: '#378ADD' },
     { key: 'subscribe', label: '🔔 Subscribe', color: '#FF0000' },
-    { key: 'save', label: '📋 Save', color: '#7F77DD' },
+    { key: 'save', label: '📋 Save to Playlist', color: '#7F77DD' },
+    { key: 'scroll', label: '📜 Scroll Feed', color: '#888' },
   ],
   twitter: [
     { key: 'like', label: '❤️ Like', color: '#D4537E' },
     { key: 'retweet', label: '🔄 Retweet', color: '#1D9E75' },
     { key: 'comment', label: '💬 Reply', color: '#378ADD' },
     { key: 'bookmark', label: '🔖 Bookmark', color: '#7F77DD' },
+    { key: 'follow', label: '✅ Follow', color: '#1DA1F2' },
+    { key: 'scroll', label: '📜 Scroll Feed', color: '#888' },
   ],
   tiktok: [
     { key: 'like', label: '❤️ Like', color: '#D4537E' },
     { key: 'comment', label: '💬 Komentar', color: '#378ADD' },
-    { key: 'follow', label: '✅ Follow', color: '#1D9E75' },
-    { key: 'scroll', label: '📜 Scroll', color: '#888' },
+    { key: 'share', label: '↗ Share', color: '#1D9E75' },
+    { key: 'follow', label: '✅ Follow', color: '#7F77DD' },
+    { key: 'save', label: '🔖 Favorit', color: '#EF9F27' },
+    { key: 'scroll', label: '📜 Scroll FYP', color: '#888' },
   ],
   threads: [
     { key: 'like', label: '❤️ Like', color: '#D4537E' },
-    { key: 'reply', label: '💬 Reply', color: '#378ADD' },
+    { key: 'comment', label: '💬 Reply', color: '#378ADD' },
     { key: 'repost', label: '🔄 Repost', color: '#1D9E75' },
+    { key: 'follow', label: '✅ Follow', color: '#7F77DD' },
+    { key: 'scroll', label: '📜 Scroll Feed', color: '#888' },
   ],
 };
 

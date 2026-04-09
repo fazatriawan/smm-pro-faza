@@ -148,9 +148,45 @@ async function loginToPlatform(page, platform, account, onLog) {
     case 'twitter':
       await loginTwitter(page, account, onLog);
       break;
+    case 'youtube':
+      await loginYouTube(page, account, onLog);
+      break;
+    case 'threads':
+      await loginThreads(page, account, onLog);
+      break;
     default:
       throw new Error(`Platform ${platform} belum didukung`);
   }
+}
+
+async function loginYouTube(page, account, onLog) {
+  await page.goto('https://accounts.google.com/signin', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+  await page.fill('input[type="email"]', account.username);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1500);
+  await page.fill('input[type="password"]', account.password);
+  await page.keyboard.press('Enter');
+  try { await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }); } catch {}
+  if (page.url().includes('challenge') || page.url().includes('signin/v2/challenge')) {
+    onLog({ type: 'warn', message: '🔐 Terdeteksi 2FA Google...' });
+    await handle2FA(page, account, onLog);
+    try { await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }); } catch {}
+  }
+  await page.goto('https://www.youtube.com', { waitUntil: 'networkidle' });
+  onLog({ type: 'success', message: '✅ Login YouTube berhasil!' });
+}
+
+async function loginThreads(page, account, onLog) {
+  await page.goto('https://www.threads.net/login', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+  await page.fill('input[autocomplete="username"]', account.username);
+  await page.waitForTimeout(500);
+  await page.fill('input[type="password"]', account.password);
+  await page.waitForTimeout(500);
+  await page.click('div[role="button"]:has-text("Log in"), button:has-text("Log in")');
+  try { await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }); } catch {}
+  onLog({ type: 'success', message: '✅ Login Threads berhasil!' });
 }
 
 async function handle2FA(page, account, onLog) {
@@ -315,6 +351,12 @@ async function performAction(page, platform, action, targetUrl, commentTemplates
     case 'twitter':
       await performTwitterAction(page, action, commentTemplates, onLog);
       break;
+    case 'youtube':
+      await performYouTubeAction(page, action, commentTemplates, onLog);
+      break;
+    case 'threads':
+      await performThreadsAction(page, action, commentTemplates, onLog);
+      break;
   }
 }
 
@@ -322,9 +364,9 @@ async function performFacebookAction(page, action, commentTemplates, onLog) {
   switch (action) {
     case 'like':
       try {
-        const likeBtn = await page.waitForSelector('[aria-label="Suka"], [aria-label="Like"]', { timeout: 5000 });
+        const likeBtn = await page.waitForSelector('[aria-label="Suka"], [aria-label="Like"], [aria-label="Sukai"]', { timeout: 5000 });
         await likeBtn.click();
-        onLog({ type: 'success', message: '👍 Like berhasil!' });
+        onLog({ type: 'success', message: '👍 Like Facebook berhasil!' });
       } catch {
         onLog({ type: 'warn', message: 'Tombol like tidak ditemukan' });
       }
@@ -333,12 +375,13 @@ async function performFacebookAction(page, action, commentTemplates, onLog) {
     case 'comment':
       try {
         const comment = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
-        const commentBox = await page.waitForSelector('[aria-label="Tulis komentar…"], [aria-label="Write a comment…"]', { timeout: 5000 });
+        const commentBox = await page.waitForSelector('[aria-label="Tulis komentar…"], [aria-label="Write a comment…"], [aria-label="Tinggalkan komentar"]', { timeout: 5000 });
         await commentBox.click();
+        await page.waitForTimeout(800);
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
         await page.waitForTimeout(500);
-        await page.keyboard.type(comment, { delay: 50 + Math.random() * 50 });
         await page.keyboard.press('Enter');
-        onLog({ type: 'success', message: `💬 Komentar "${comment}" berhasil!` });
+        onLog({ type: 'success', message: `💬 Komentar Facebook "${comment}" berhasil!` });
       } catch {
         onLog({ type: 'warn', message: 'Kolom komentar tidak ditemukan' });
       }
@@ -346,12 +389,12 @@ async function performFacebookAction(page, action, commentTemplates, onLog) {
 
     case 'share':
       try {
-        const shareBtn = await page.waitForSelector('[aria-label="Bagikan"], [aria-label="Share"]', { timeout: 5000 });
+        const shareBtn = await page.waitForSelector('[aria-label="Bagikan"], [aria-label="Share"], [aria-label="Kirim"]', { timeout: 5000 });
         await shareBtn.click();
         await page.waitForTimeout(1000);
-        const shareToFeed = await page.waitForSelector('[aria-label="Bagikan sekarang"], [aria-label="Share now"]', { timeout: 5000 });
-        await shareToFeed.click();
-        onLog({ type: 'success', message: '🔄 Share berhasil!' });
+        const shareNow = await page.$('[aria-label="Bagikan sekarang"], [aria-label="Share now"]');
+        if (shareNow) await shareNow.click();
+        onLog({ type: 'success', message: '↗ Share Facebook berhasil!' });
       } catch {
         onLog({ type: 'warn', message: 'Tombol share tidak ditemukan' });
       }
@@ -363,11 +406,21 @@ async function performFacebookAction(page, action, commentTemplates, onLog) {
 
     case 'add_friend':
       try {
-        const addBtn = await page.waitForSelector('[aria-label="Tambah teman"], [aria-label="Add Friend"]', { timeout: 5000 });
+        const addBtn = await page.waitForSelector('[aria-label="Tambah teman"], [aria-label="Add Friend"], [aria-label="Tambahkan sebagai teman"]', { timeout: 5000 });
         await addBtn.click();
         onLog({ type: 'success', message: '👤 Permintaan pertemanan dikirim!' });
       } catch {
         onLog({ type: 'warn', message: 'Tombol tambah teman tidak ditemukan' });
+      }
+      break;
+
+    case 'follow_page':
+      try {
+        const followBtn = await page.waitForSelector('[aria-label="Ikuti"], [aria-label="Follow"], [aria-label="Sukai Halaman"]', { timeout: 5000 });
+        await followBtn.click();
+        onLog({ type: 'success', message: '📌 Follow Page berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol follow page tidak ditemukan' });
       }
       break;
   }
@@ -377,9 +430,14 @@ async function performInstagramAction(page, action, commentTemplates, onLog) {
   switch (action) {
     case 'like':
       try {
-        const likeBtn = await page.waitForSelector('svg[aria-label="Suka"], svg[aria-label="Like"]', { timeout: 5000 });
-        await likeBtn.click();
-        onLog({ type: 'success', message: '❤️ Like Instagram berhasil!' });
+        const likeBtn = await page.waitForSelector('svg[aria-label="Suka"], svg[aria-label="Like"], svg[aria-label="Unlike"]', { timeout: 5000 });
+        const ariaLabel = await likeBtn.getAttribute('aria-label');
+        if (ariaLabel === 'Unlike' || ariaLabel === 'Sudah Suka') {
+          onLog({ type: 'warn', message: 'Sudah di-like sebelumnya' });
+        } else {
+          await likeBtn.click();
+          onLog({ type: 'success', message: '❤️ Like Instagram berhasil!' });
+        }
       } catch {
         onLog({ type: 'warn', message: 'Tombol like tidak ditemukan' });
       }
@@ -390,7 +448,9 @@ async function performInstagramAction(page, action, commentTemplates, onLog) {
         const comment = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
         const commentBox = await page.waitForSelector('textarea[aria-label="Tambahkan komentar…"], textarea[aria-label="Add a comment…"]', { timeout: 5000 });
         await commentBox.click();
-        await page.keyboard.type(comment, { delay: 50 + Math.random() * 50 });
+        await page.waitForTimeout(500);
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
+        await page.waitForTimeout(500);
         await page.keyboard.press('Enter');
         onLog({ type: 'success', message: `💬 Komentar Instagram "${comment}" berhasil!` });
       } catch {
@@ -404,7 +464,7 @@ async function performInstagramAction(page, action, commentTemplates, onLog) {
         await followBtn.click();
         onLog({ type: 'success', message: '✅ Follow Instagram berhasil!' });
       } catch {
-        onLog({ type: 'warn', message: 'Tombol follow tidak ditemukan' });
+        onLog({ type: 'warn', message: 'Tombol follow tidak ditemukan atau sudah follow' });
       }
       break;
 
@@ -418,6 +478,20 @@ async function performInstagramAction(page, action, commentTemplates, onLog) {
       }
       break;
 
+    case 'story_view':
+      try {
+        await page.goto('https://www.instagram.com/', { waitUntil: 'networkidle' });
+        const story = await page.$('div[role="button"] canvas, div[role="button"] img[alt*="story"]');
+        if (story) {
+          await story.click();
+          await page.waitForTimeout(3000 + Math.random() * 2000);
+          onLog({ type: 'success', message: '👁 Lihat Story Instagram berhasil!' });
+        }
+      } catch {
+        onLog({ type: 'warn', message: 'Story tidak ditemukan' });
+      }
+      break;
+
     case 'scroll':
       await scrollPage(page, onLog);
       break;
@@ -428,7 +502,7 @@ async function performTikTokAction(page, action, commentTemplates, onLog) {
   switch (action) {
     case 'like':
       try {
-        const likeBtn = await page.waitForSelector('[data-e2e="like-icon"]', { timeout: 5000 });
+        const likeBtn = await page.waitForSelector('[data-e2e="like-icon"], [data-e2e="browse-like-icon"]', { timeout: 5000 });
         await likeBtn.click();
         onLog({ type: 'success', message: '❤️ Like TikTok berhasil!' });
       } catch {
@@ -439,9 +513,11 @@ async function performTikTokAction(page, action, commentTemplates, onLog) {
     case 'comment':
       try {
         const comment = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
-        const commentBox = await page.waitForSelector('[data-e2e="comment-input"]', { timeout: 5000 });
+        const commentBox = await page.waitForSelector('[data-e2e="comment-input"], [data-e2e="comment-text"]', { timeout: 5000 });
         await commentBox.click();
-        await page.keyboard.type(comment, { delay: 50 + Math.random() * 50 });
+        await page.waitForTimeout(500);
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
+        await page.waitForTimeout(500);
         await page.keyboard.press('Enter');
         onLog({ type: 'success', message: `💬 Komentar TikTok "${comment}" berhasil!` });
       } catch {
@@ -449,17 +525,38 @@ async function performTikTokAction(page, action, commentTemplates, onLog) {
       }
       break;
 
+    case 'share':
+      try {
+        const shareBtn = await page.waitForSelector('[data-e2e="share-icon"], [data-e2e="browse-share-icon"]', { timeout: 5000 });
+        await shareBtn.click();
+        onLog({ type: 'success', message: '↗ Share TikTok berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol share TikTok tidak ditemukan' });
+      }
+      break;
+
     case 'follow':
       try {
-        const followBtn = await page.waitForSelector('[data-e2e="follow-button"]', { timeout: 5000 });
+        const followBtn = await page.waitForSelector('[data-e2e="follow-button"], [data-e2e="browse-follow-button"]', { timeout: 5000 });
         await followBtn.click();
         onLog({ type: 'success', message: '✅ Follow TikTok berhasil!' });
       } catch {
-        onLog({ type: 'warn', message: 'Tombol follow TikTok tidak ditemukan' });
+        onLog({ type: 'warn', message: 'Tombol follow TikTok tidak ditemukan atau sudah follow' });
+      }
+      break;
+
+    case 'save':
+      try {
+        const saveBtn = await page.waitForSelector('[data-e2e="undefined-icon"], [aria-label="Tambahkan ke Favorit"]', { timeout: 5000 });
+        await saveBtn.click();
+        onLog({ type: 'success', message: '🔖 Favorit TikTok berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol favorit TikTok tidak ditemukan' });
       }
       break;
 
     case 'scroll':
+      await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'networkidle' });
       await scrollPage(page, onLog);
       break;
   }
@@ -481,10 +578,10 @@ async function performTwitterAction(page, action, commentTemplates, onLog) {
       try {
         const rtBtn = await page.waitForSelector('[data-testid="retweet"]', { timeout: 5000 });
         await rtBtn.click();
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(800);
         const confirmRt = await page.waitForSelector('[data-testid="retweetConfirm"]', { timeout: 5000 });
         await confirmRt.click();
-        onLog({ type: 'success', message: '🔄 Retweet berhasil!' });
+        onLog({ type: 'success', message: '🔄 Retweet Twitter berhasil!' });
       } catch {
         onLog({ type: 'warn', message: 'Tombol retweet tidak ditemukan' });
       }
@@ -496,11 +593,22 @@ async function performTwitterAction(page, action, commentTemplates, onLog) {
         const replyBtn = await page.waitForSelector('[data-testid="reply"]', { timeout: 5000 });
         await replyBtn.click();
         await page.waitForTimeout(1000);
-        await page.keyboard.type(comment, { delay: 50 + Math.random() * 50 });
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
+        await page.waitForTimeout(500);
         await page.keyboard.press('Control+Enter');
         onLog({ type: 'success', message: `💬 Reply Twitter "${comment}" berhasil!` });
       } catch {
         onLog({ type: 'warn', message: 'Tombol reply tidak ditemukan' });
+      }
+      break;
+
+    case 'bookmark':
+      try {
+        const bookmarkBtn = await page.waitForSelector('[data-testid="bookmark"]', { timeout: 5000 });
+        await bookmarkBtn.click();
+        onLog({ type: 'success', message: '🔖 Bookmark Twitter berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol bookmark tidak ditemukan' });
       }
       break;
 
@@ -512,6 +620,137 @@ async function performTwitterAction(page, action, commentTemplates, onLog) {
       } catch {
         onLog({ type: 'warn', message: 'Tombol follow tidak ditemukan' });
       }
+      break;
+
+    case 'scroll':
+      await scrollPage(page, onLog);
+      break;
+  }
+}
+
+async function performYouTubeAction(page, action, commentTemplates, onLog) {
+  switch (action) {
+    case 'like':
+      try {
+        const likeBtn = await page.waitForSelector('button[aria-label*="like this video"], button[aria-label*="Suka video"]', { timeout: 5000 });
+        await likeBtn.click();
+        onLog({ type: 'success', message: '👍 Like YouTube berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol like YouTube tidak ditemukan' });
+      }
+      break;
+
+    case 'dislike':
+      try {
+        const dislikeBtn = await page.waitForSelector('button[aria-label*="dislike this video"], button[aria-label*="Tidak suka"]', { timeout: 5000 });
+        await dislikeBtn.click();
+        onLog({ type: 'success', message: '👎 Dislike YouTube berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol dislike YouTube tidak ditemukan' });
+      }
+      break;
+
+    case 'comment':
+      try {
+        const comment = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
+        await page.waitForSelector('#comments', { timeout: 10000 });
+        await page.evaluate(() => document.querySelector('#comments').scrollIntoView());
+        await page.waitForTimeout(1000);
+        const commentBox = await page.waitForSelector('#simplebox-placeholder, [aria-label="Tambahkan komentar…"]', { timeout: 5000 });
+        await commentBox.click();
+        await page.waitForTimeout(800);
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
+        await page.waitForTimeout(500);
+        const submitBtn = await page.waitForSelector('#submit-button', { timeout: 5000 });
+        await submitBtn.click();
+        onLog({ type: 'success', message: `💬 Komentar YouTube "${comment}" berhasil!` });
+      } catch {
+        onLog({ type: 'warn', message: 'Kolom komentar YouTube tidak ditemukan' });
+      }
+      break;
+
+    case 'subscribe':
+      try {
+        const subBtn = await page.waitForSelector('button[aria-label*="Subscribe"], button[aria-label*="Berlangganan"]', { timeout: 5000 });
+        await subBtn.click();
+        onLog({ type: 'success', message: '🔔 Subscribe YouTube berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol subscribe tidak ditemukan atau sudah subscribe' });
+      }
+      break;
+
+    case 'save':
+      try {
+        const saveBtn = await page.waitForSelector('button[aria-label*="Save"], button[aria-label*="Simpan"]', { timeout: 5000 });
+        await saveBtn.click();
+        await page.waitForTimeout(500);
+        const saveToPlaylist = await page.$('tp-yt-paper-checkbox');
+        if (saveToPlaylist) await saveToPlaylist.click();
+        onLog({ type: 'success', message: '📋 Save YouTube berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol save tidak ditemukan' });
+      }
+      break;
+
+    case 'scroll':
+      await scrollPage(page, onLog);
+      break;
+  }
+}
+
+async function performThreadsAction(page, action, commentTemplates, onLog) {
+  switch (action) {
+    case 'like':
+      try {
+        const likeBtn = await page.waitForSelector('svg[aria-label="Like"], div[aria-label="Like"]', { timeout: 5000 });
+        await likeBtn.click();
+        onLog({ type: 'success', message: '❤️ Like Threads berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol like Threads tidak ditemukan' });
+      }
+      break;
+
+    case 'comment':
+      try {
+        const comment = commentTemplates[Math.floor(Math.random() * commentTemplates.length)];
+        const replyBtn = await page.waitForSelector('svg[aria-label="Reply"], div[aria-label="Reply"]', { timeout: 5000 });
+        await replyBtn.click();
+        await page.waitForTimeout(1000);
+        await page.keyboard.type(comment, { delay: 60 + Math.random() * 60 });
+        await page.waitForTimeout(500);
+        const postBtn = await page.waitForSelector('div[role="button"]:has-text("Post"), button:has-text("Post")', { timeout: 5000 });
+        await postBtn.click();
+        onLog({ type: 'success', message: `💬 Reply Threads "${comment}" berhasil!` });
+      } catch {
+        onLog({ type: 'warn', message: 'Kolom reply Threads tidak ditemukan' });
+      }
+      break;
+
+    case 'repost':
+      try {
+        const repostBtn = await page.waitForSelector('svg[aria-label="Repost"], div[aria-label="Repost"]', { timeout: 5000 });
+        await repostBtn.click();
+        await page.waitForTimeout(500);
+        const confirmRepost = await page.$('div[role="button"]:has-text("Repost")');
+        if (confirmRepost) await confirmRepost.click();
+        onLog({ type: 'success', message: '🔄 Repost Threads berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol repost Threads tidak ditemukan' });
+      }
+      break;
+
+    case 'follow':
+      try {
+        const followBtn = await page.waitForSelector('div[role="button"]:has-text("Follow"), button:has-text("Follow")', { timeout: 5000 });
+        await followBtn.click();
+        onLog({ type: 'success', message: '✅ Follow Threads berhasil!' });
+      } catch {
+        onLog({ type: 'warn', message: 'Tombol follow Threads tidak ditemukan' });
+      }
+      break;
+
+    case 'scroll':
+      await scrollPage(page, onLog);
       break;
   }
 }
