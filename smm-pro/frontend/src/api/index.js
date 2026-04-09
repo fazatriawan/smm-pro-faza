@@ -48,6 +48,8 @@ export const postsAPI = {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
   delete: (id) => api.delete(`/posts/${id}`),
+  retry: (id) => api.post(`/posts/${id}/retry`),
+  stop: (id) => api.post(`/posts/${id}/stop`),
 };
 
 // ─── Schedule ────────────────────────────────────────────────────────────────
