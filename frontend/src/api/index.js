@@ -81,4 +81,12 @@ export const warmupAPI = {
   getLogs: () => api.get('/warmup/logs'),
 };
 
+export const aiAPI = {
+  generateCaption: (data) => api.post('/ai/caption', data),
+  generateVariations: (data) => api.post('/ai/caption/variations', data),
+  generateComments: (data) => api.post('/ai/comments', data),
+  generateHashtags: (data) => api.post('/ai/hashtags', data),
+  generateReply: (data) => api.post('/ai/reply', data),
+};
+
 export default api;
