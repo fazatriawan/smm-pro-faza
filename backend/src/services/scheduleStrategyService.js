@@ -67,13 +67,22 @@ const DAYS_ID = {
 };
 
 /**
+ * Menormalisasi nama platform ke kunci internal.
+ * @param {string} platform
+ * @returns {string}
+ */
+function normalizePlatformKey(platform) {
+  return (platform || '').toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+}
+
+/**
  * Mendapatkan waktu posting optimal untuk satu platform + content type.
  * @param {string} platform
  * @param {string} contentType - (opsional) e.g. 'video', 'image', 'reel'
  * @returns {{ platform: string, contentType: string, bestTimes: string[], bestDays: string[], note: string }}
  */
 function getOptimalPostingTime(platform, contentType) {
-  const key = (platform || '').toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+  const key = normalizePlatformKey(platform);
   const config = OPTIMAL_TIMES[key];
   if (!config) {
     return {
@@ -116,7 +125,7 @@ function generateWeeklySchedule(platforms, contentTypes) {
     schedule[day] = { dayId: DAYS_ID[day], slots: [] };
 
     for (const platform of targetPlatforms) {
-      const key = platform.toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+      const key = normalizePlatformKey(platform);
       const config = OPTIMAL_TIMES[key];
       if (!config) continue;
       if (!config.bestDays.includes(day)) continue;
@@ -162,7 +171,7 @@ function suggestBatchSchedule(videoCount, platforms) {
     const dayName = DAYS_OF_WEEK[date.getDay()];
 
     for (const platform of targetPlatforms) {
-      const key = platform.toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+      const key = normalizePlatformKey(platform);
       const config = OPTIMAL_TIMES[key];
       if (!config) continue;
       if (!config.bestDays.includes(dayName)) continue;
@@ -192,7 +201,8 @@ function suggestBatchSchedule(videoCount, platforms) {
 
   let remaining = count;
   let idx = 0;
-  while (remaining > 0 && idx < availableSlots.length * 2) {
+  const MAX_SCHEDULING_ATTEMPTS = availableSlots.length * 2;
+  while (remaining > 0 && idx < MAX_SCHEDULING_ATTEMPTS) {
     for (const p of targetPlatforms) {
       if (remaining <= 0) break;
       const pSlots = perPlatformSlots[p];

@@ -112,11 +112,34 @@ const HASHTAG_TEMPLATES = {
 };
 
 /**
- * Memendekkan caption agar tidak melebihi batas karakter platform.
- * @param {string} text
- * @param {number} maxChars
+ * Menormalisasi nama platform ke kunci internal yang digunakan.
+ * @param {string} platform
  * @returns {string}
  */
+function normalizePlatformKey(platform) {
+  return (platform || '').toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+}
+
+/**
+ * Mendapatkan fungsi generator hashtag untuk platform tertentu.
+ * Menggunakan explicit switch agar tidak ada dynamic property access dari user input.
+ * @param {string} key - Normalized platform key
+ * @returns {Function}
+ */
+function getHashtagGenerator(key) {
+  switch (key) {
+    case 'tiktok': return HASHTAG_TEMPLATES.tiktok;
+    case 'youtube': return HASHTAG_TEMPLATES.youtube;
+    case 'linkedin': return HASHTAG_TEMPLATES.linkedin;
+    case 'twitter': return HASHTAG_TEMPLATES.twitter;
+    case 'facebook': return HASHTAG_TEMPLATES.facebook;
+    case 'threads': return HASHTAG_TEMPLATES.threads;
+    case 'pinterest': return HASHTAG_TEMPLATES.pinterest;
+    default: return HASHTAG_TEMPLATES.instagram;
+  }
+}
+
+
 function truncateCaption(text, maxChars) {
   if (!maxChars || text.length <= maxChars) return text;
   return text.substring(0, maxChars - 3) + '...';
@@ -129,7 +152,7 @@ function truncateCaption(text, maxChars) {
  * @returns {{ platform: string, caption: string, hashtags: string[], note: string }}
  */
 function optimizeCaption(originalCaption, platform) {
-  const key = platform.toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
+  const key = normalizePlatformKey(platform);
   const rules = PLATFORM_RULES[key];
   if (!rules) {
     return { platform, caption: originalCaption, hashtags: [], note: 'Platform tidak dikenali, caption tidak diubah.' };
@@ -192,11 +215,10 @@ function optimizeCaption(originalCaption, platform) {
  * @returns {string[]}
  */
 function generateHashtags(content, platform, count = 5) {
-  const key = platform.toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
-  const safeKey = Object.prototype.hasOwnProperty.call(HASHTAG_TEMPLATES, key) ? key : 'instagram';
-  const generator = HASHTAG_TEMPLATES[safeKey];
+  const key = normalizePlatformKey(platform);
+  const generator = getHashtagGenerator(key);
   const tags = generator(content || 'konten');
-  const rules = PLATFORM_RULES[safeKey];
+  const rules = PLATFORM_RULES[key];
   const max = count || (rules ? rules.hashtagCount.max : 5);
   return tags.slice(0, max);
 }
