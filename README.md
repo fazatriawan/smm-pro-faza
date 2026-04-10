@@ -13,6 +13,9 @@
 | **Warm Up** | Aktivitas organik terkontrol (like, follow, search, save) |
 | **Notifikasi** | Semua notif dari semua platform di satu tempat, real-time |
 | **Analytics** | Statistik lengkap per platform, per akun, per konten |
+| **Caption Optimization** | Optimasi caption otomatis per platform (TikTok, Instagram, YouTube, LinkedIn, Twitter, Facebook) |
+| **Schedule Strategy** | Jadwal posting optimal berdasarkan best posting times per platform |
+| **Analytics Enhancement** | Engagement rate, performance report, top content, rekomendasi strategi konten |
 
 ---
 
@@ -131,6 +134,10 @@ PATCH /api/notifications/mark-all-read
 ```
 GET /api/analytics/summary        — Ringkasan semua akun
 GET /api/analytics/account/:id    — Time-series satu akun
+GET /api/analytics/engagement-rate/:postId — Engagement rate satu post
+GET /api/analytics/performance-report      — Laporan performa (query: accountId, startDate, endDate)
+GET /api/analytics/top-content             — Top performing content (query: accountId, limit)
+GET /api/analytics/content-suggestions     — Rekomendasi strategi konten (query: accountId)
 ```
 
 ### Amplifikasi
@@ -143,6 +150,26 @@ POST /api/amplify    — Buat & jalankan job baru
 ```
 GET /api/warmup/stats   — Statistik hari ini
 GET /api/warmup/logs    — Log aktivitas
+```
+
+### Caption Optimization
+```
+POST /api/caption/optimize        — Optimasi caption untuk satu platform
+                                    Body: { caption, platform }
+POST /api/caption/optimize-batch  — Optimasi caption untuk semua platform sekaligus
+                                    Body: { caption, platforms[] }
+POST /api/caption/hashtags        — Generate hashtag
+                                    Body: { content, platform, count }
+```
+
+### Schedule Strategy
+```
+GET  /api/schedule-strategy/optimal-time  — Waktu posting optimal
+                                            Query: platform, contentType
+POST /api/schedule-strategy/weekly        — Generate jadwal mingguan
+                                            Body: { platforms[], contentTypes[] }
+POST /api/schedule-strategy/batch         — Suggest batch schedule
+                                            Body: { videoCount, platforms[] }
 ```
 
 ---

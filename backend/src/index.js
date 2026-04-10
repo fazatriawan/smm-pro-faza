@@ -21,6 +21,8 @@ const authTwitterRoutes = require('./routes/authTwitter');
 const authThreadsRoutes = require('./routes/authThreads');
 const aiRoutes = require('./routes/ai');
 const exportRoutes = require('./routes/export');
+const captionRoutes = require('./routes/caption');
+const scheduleStrategyRoutes = require('./routes/scheduleStrategy');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
@@ -57,6 +59,8 @@ app.use('/api/auth', authTwitterRoutes);
 app.use('/api/auth', authThreadsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/caption', captionRoutes);
+app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
