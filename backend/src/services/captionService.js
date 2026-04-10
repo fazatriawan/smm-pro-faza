@@ -193,9 +193,10 @@ function optimizeCaption(originalCaption, platform) {
  */
 function generateHashtags(content, platform, count = 5) {
   const key = platform.toLowerCase().replace('/', '_').replace('twitter_x', 'twitter');
-  const generator = HASHTAG_TEMPLATES[key] || HASHTAG_TEMPLATES['instagram'];
+  const safeKey = Object.prototype.hasOwnProperty.call(HASHTAG_TEMPLATES, key) ? key : 'instagram';
+  const generator = HASHTAG_TEMPLATES[safeKey];
   const tags = generator(content || 'konten');
-  const rules = PLATFORM_RULES[key];
+  const rules = PLATFORM_RULES[safeKey];
   const max = count || (rules ? rules.hashtagCount.max : 5);
   return tags.slice(0, max);
 }

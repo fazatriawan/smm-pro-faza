@@ -4,6 +4,7 @@
  */
 
 const { Analytics, Post, SocialAccount } = require('../models');
+const mongoose = require('mongoose');
 
 /**
  * Menghitung engagement rate dari metrik konten.
@@ -56,6 +57,7 @@ function calculateEngagementRate(views, likes, comments, shares, saves) {
  * @returns {Promise<Object>}
  */
 async function getPostEngagementRate(postId) {
+  if (!mongoose.Types.ObjectId.isValid(postId)) throw new Error('postId tidak valid');
   // Coba cari analytics snapshot yang terkait dengan post ini
   // Karena Analytics model menyimpan per-account, kita baca dari post targetAccounts
   const post = await Post.findById(postId).populate('targetAccounts.account', 'platform label');
@@ -90,8 +92,13 @@ async function getPostEngagementRate(postId) {
  * @returns {Promise<Object>}
  */
 async function generatePerformanceReport(accountId, dateRange) {
-  const start = dateRange && dateRange.startDate ? new Date(dateRange.startDate) : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
-  const end = dateRange && dateRange.endDate ? new Date(dateRange.endDate) : new Date();
+  if (!mongoose.Types.ObjectId.isValid(accountId)) throw new Error('accountId tidak valid');
+  const defaultStart = new Date();
+  defaultStart.setDate(defaultStart.getDate() - 30);
+  const startRaw = dateRange && dateRange.startDate ? new Date(dateRange.startDate) : defaultStart;
+  const endRaw = dateRange && dateRange.endDate ? new Date(dateRange.endDate) : new Date();
+  const start = isNaN(startRaw.getTime()) ? defaultStart : startRaw;
+  const end = isNaN(endRaw.getTime()) ? new Date() : endRaw;
 
   const account = await SocialAccount.findById(accountId);
   if (!account) throw new Error('Akun tidak ditemukan');
@@ -158,6 +165,7 @@ async function generatePerformanceReport(accountId, dateRange) {
  * @returns {Promise<Object[]>}
  */
 async function getTopPerformingContent(accountId, limit) {
+  if (!mongoose.Types.ObjectId.isValid(accountId)) throw new Error('accountId tidak valid');
   const maxLimit = Math.min(Number(limit) || 10, 50);
 
   const account = await SocialAccount.findById(accountId);

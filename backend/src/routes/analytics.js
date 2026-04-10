@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { protect } = require('../middleware/auth');
 const { Analytics, SocialAccount, Post } = require('../models');
+const mongoose = require('mongoose');
 const {
   getPostEngagementRate,
   generatePerformanceReport,
@@ -69,6 +70,7 @@ router.get('/performance-report', protect, async (req, res) => {
   try {
     const { accountId, startDate, endDate } = req.query;
     if (!accountId) return res.status(400).json({ message: 'accountId wajib diisi' });
+    if (!mongoose.Types.ObjectId.isValid(accountId)) return res.status(400).json({ message: 'accountId tidak valid' });
     const report = await generatePerformanceReport(accountId, { startDate, endDate });
     res.json(report);
   } catch (err) { res.status(500).json({ message: err.message }); }
@@ -79,6 +81,7 @@ router.get('/top-content', protect, async (req, res) => {
   try {
     const { accountId, limit } = req.query;
     if (!accountId) return res.status(400).json({ message: 'accountId wajib diisi' });
+    if (!mongoose.Types.ObjectId.isValid(accountId)) return res.status(400).json({ message: 'accountId tidak valid' });
     const topContent = await getTopPerformingContent(accountId, limit);
     res.json(topContent);
   } catch (err) { res.status(500).json({ message: err.message }); }
@@ -89,6 +92,7 @@ router.get('/content-suggestions', protect, async (req, res) => {
   try {
     const { accountId } = req.query;
     if (!accountId) return res.status(400).json({ message: 'accountId wajib diisi' });
+    if (!mongoose.Types.ObjectId.isValid(accountId)) return res.status(400).json({ message: 'accountId tidak valid' });
 
     const account = await SocialAccount.findById(accountId);
     if (!account) return res.status(404).json({ message: 'Akun tidak ditemukan' });
