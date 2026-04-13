@@ -16,7 +16,11 @@
       "Bash(git status:*)",
       "Bash(gh auth:*)",
       "Bash(ls \"C:/Users/User/AppData/Roaming/Python/Python314/Scripts/graphify\"*)",
-      "Bash(\"C:/Users/User/AppData/Roaming/Python/Python314/Scripts/graphify.exe\" install:*)"
+      "Bash(\"C:/Users/User/AppData/Roaming/Python/Python314/Scripts/graphify.exe\" install:*)",
+      "Bash(python -c \"import graphify\")",
+      "Bash(python -c \"import sys; open\\('.graphify_python', 'w'\\).write\\(sys.executable\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Chunk 1: {len\\(d[\\\\\"nodes\\\\\"]\\)} nodes, {len\\(d[\\\\\"edges\\\\\"]\\)} edges, {len\\(d.get\\(\\\\\"hyperedges\\\\\",[]\\)\\)} hyperedges'\\)\")"
     ]
   }
 }
