@@ -14,7 +14,9 @@
       "Bash(export PATH=\"/c/Program Files/GitHub CLI:$PATH\")",
       "Bash(git push:*)",
       "Bash(git status:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(ls \"C:/Users/User/AppData/Roaming/Python/Python314/Scripts/graphify\"*)",
+      "Bash(\"C:/Users/User/AppData/Roaming/Python/Python314/Scripts/graphify.exe\" install:*)"
     ]
   }
 }
