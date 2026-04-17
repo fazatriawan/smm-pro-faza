@@ -73,7 +73,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 3 }));
 
 app.get('/tos', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
