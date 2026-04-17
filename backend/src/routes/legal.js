@@ -247,4 +247,10 @@ router.get('/privacy', (req, res) => {
   `));
 });
 
+// ── TikTok domain verification ────────────────────────────────────────────────
+router.get('/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+});
+
 module.exports = router;
