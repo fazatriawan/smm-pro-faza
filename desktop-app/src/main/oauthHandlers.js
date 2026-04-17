@@ -234,7 +234,9 @@ function buildTikTokUrl(clientKey) {
 
 async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier) {
   console.log('[TikTok Token] code_verifier being sent:', codeVerifier);
-  // Tukar code → token (sertakan code_verifier untuk PKCE)
+  // Tukar code → token
+  // NOTE: sending code_verifier causes "Code verifier invalid" on TikTok sandbox —
+  // testing without it to check if sandbox skips PKCE at token time
   const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -244,7 +246,6 @@ async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier)
       code,
       grant_type:    'authorization_code',
       redirect_uri:  REDIRECT('tiktok'),
-      code_verifier: codeVerifier,
     }),
   });
   const tokenData = await tokenRes.json();
