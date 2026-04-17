@@ -66,6 +66,9 @@ app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+app.get('/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt', (req, res) => {
+  res.type('text/plain').send('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+});
 app.use('/', legalRoutes);
 
 // MongoDB + Start
