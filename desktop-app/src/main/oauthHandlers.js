@@ -211,9 +211,14 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 let _tiktokCodeVerifier = null;
 
 function buildTikTokUrl(clientKey) {
-  // PKCE
-  _tiktokCodeVerifier       = crypto.randomBytes(32).toString('base64url');
-  const challenge           = crypto.createHash('sha256').update(_tiktokCodeVerifier).digest('base64url');
+  // PKCE — use hex verifier (safe ASCII chars only) and explicit base64url challenge
+  _tiktokCodeVerifier = crypto.randomBytes(32).toString('hex'); // 64 lowercase hex chars
+  const challenge     = crypto.createHash('sha256')
+    .update(_tiktokCodeVerifier)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g,  '');
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
