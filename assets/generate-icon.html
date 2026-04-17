@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SMM Pro Icon Generator</title>
+</head>
+<body style="background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:sans-serif;color:#fff;padding:24px;">
+  <canvas id="c" width="1024" height="1024" style="border-radius:40px;box-shadow:0 0 60px rgba(122,114,220,0.5);max-width:320px;max-height:320px;"></canvas>
+  <br>
+  <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;justify-content:center;">
+    <button onclick="dl(1024)" style="padding:12px 28px;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600;">
+      Download 1024×1024 (TikTok)
+    </button>
+    <button onclick="dl(256)" style="padding:12px 28px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600;">
+      Download 256×256 (App Icon)
+    </button>
+  </div>
+  <p style="margin-top:16px;color:rgba(255,255,255,0.4);font-size:13px;">
+    Simpan <b>256×256</b> ke: <code>desktop-app/assets/icon.png</code>
+  </p>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+    const S      = 1024;
+
+    draw(ctx, S);
+
+    // ── helper: rounded rect path ──────────────────────────────────────────────
+    function rr(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function draw(ctx, S) {
+      const cx = S / 2, cy = S * 0.50;
+
+      // ── Background ────────────────────────────────────────────────────────────
+      const bg = ctx.createLinearGradient(0, 0, S, S);
+      bg.addColorStop(0,   '#1a1456');
+      bg.addColorStop(0.5, '#312e81');
+      bg.addColorStop(1,   '#5b21b6');
+      ctx.fillStyle = bg;
+      rr(ctx, 0, 0, S, S, S * 0.188);
+      ctx.fill();
+
+      // ── Subtle dot-grid ───────────────────────────────────────────────────────
+      const gs = S / 16;
+      ctx.fillStyle = 'rgba(255,255,255,0.028)';
+      for (let xi = 1; xi < 16; xi++) {
+        for (let yi = 1; yi < 16; yi++) {
+          ctx.beginPath();
+          ctx.arc(xi * gs, yi * gs, S * 0.004, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // ── Radial glow behind icon ───────────────────────────────────────────────
+      const glow = ctx.createRadialGradient(cx, cy, S * 0.04, cx, cy, S * 0.40);
+      glow.addColorStop(0, 'rgba(167,139,250,0.38)');
+      glow.addColorStop(1, 'rgba(167,139,250,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(cx, cy, S * 0.40, 0, Math.PI * 2);
+      ctx.fill();
+
+      // ── Signal arcs ───────────────────────────────────────────────────────────
+      ctx.lineCap = 'round';
+      const arcCy = cy + S * 0.065;
+      const a1 = Math.PI * 1.185, a2 = Math.PI * 1.815;
+
+      // Outer arc (faintest)
+      ctx.beginPath();
+      ctx.arc(cx, arcCy, S * 0.300, a1, a2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = S * 0.038;
+      ctx.stroke();
+
+      // Mid arc
+      ctx.beginPath();
+      ctx.arc(cx, arcCy, S * 0.210, a1, a2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = S * 0.038;
+      ctx.stroke();
+
+      // Inner arc (brightest)
+      ctx.beginPath();
+      ctx.arc(cx, arcCy, S * 0.120, a1, a2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = S * 0.038;
+      ctx.stroke();
+
+      // Center dot
+      ctx.beginPath();
+      ctx.arc(cx, arcCy, S * 0.032, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = 'rgba(255,255,255,0.8)';
+      ctx.shadowBlur = S * 0.02;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // ── Platform color dots ───────────────────────────────────────────────────
+      const dotColors = ['#1877f2','#e1306c','#1da1f2','#ff0050'];
+      const dotR = S * 0.022, dotY = arcCy + S * 0.175, dotSpacing = S * 0.092;
+      const dotStartX = cx - (dotColors.length - 1) * dotSpacing / 2;
+      dotColors.forEach((c, i) => {
+        ctx.beginPath();
+        ctx.arc(dotStartX + i * dotSpacing, dotY, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = c;
+        ctx.shadowColor = c;
+        ctx.shadowBlur = S * 0.018;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.lineWidth = S * 0.004;
+        ctx.stroke();
+      });
+
+      // ── Text ─────────────────────────────────────────────────────────────────
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor  = 'rgba(0,0,0,0.4)';
+      ctx.shadowBlur   = S * 0.018;
+
+      ctx.font      = `bold ${S * 0.135}px 'Arial Black', Arial, sans-serif`;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('SMM', cx, cy + S * 0.365);
+
+      ctx.font      = `600 ${S * 0.066}px Arial, sans-serif`;
+      ctx.fillStyle = 'rgba(196,181,253,0.95)';
+      ctx.letterSpacing = '0.15em';
+      ctx.fillText('P R O', cx, cy + S * 0.46);
+
+      ctx.shadowBlur = 0;
+    }
+
+    // ── Download at custom size ───────────────────────────────────────────────
+    function dl(size) {
+      const out = document.createElement('canvas');
+      out.width = size; out.height = size;
+      const octx = out.getContext('2d');
+      draw(octx, size);
+      const link = document.createElement('a');
+      link.download = `smm-pro-icon-${size}.png`;
+      link.href = out.toDataURL('image/png');
+      link.click();
+    }
+  </script>
+</body>
+</html>

@@ -1,3 +1,5 @@
+const dns = require('dns');
+dns.setServers(['8.8.8.8','8.8.4.4']);
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -26,6 +28,7 @@ const scheduleStrategyRoutes = require('./routes/scheduleStrategy');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
+const legalRoutes = require('./routes/legal');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -63,6 +66,7 @@ app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+app.use('/', legalRoutes);
 
 // MongoDB + Start
 mongoose.connect(process.env.MONGODB_URI)
@@ -77,3 +81,4 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(err => { console.error('❌ DB Error:', err); process.exit(1); });
 
 module.exports = { app, io };
+

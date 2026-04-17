@@ -2,6 +2,12 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const FormData = require('form-data');
+const os = require('os');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Gunakan plugin stealth untuk menghindari deteksi
+puppeteer.use(StealthPlugin());
 
 async function bulkPost(config, settings, onLog) {
   const { accounts, caption, mediaPath, platform, scheduledAt } = config;
