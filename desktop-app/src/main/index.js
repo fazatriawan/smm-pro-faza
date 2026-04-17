@@ -32,6 +32,55 @@ function createWindow() {
   if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools();
 }
 
+// ─── SCHEDULED POST DISPATCHER ────────────────────────────────────────────────
+async function dispatchScheduledPosts() {
+  const s = store.get('settings', {});
+  if (!s.supabaseUrl || !s.supabaseKey || !s.upstashRedisUrl) return;
+
+  try {
+    const supabase = createClient(s.supabaseUrl, s.supabaseKey);
+
+    // Find posts that are due
+    const { data: posts } = await supabase
+      .from('posts')
+      .select('id, content, media_urls')
+      .eq('status', 'scheduled')
+      .lte('scheduled_at', new Date().toISOString());
+
+    if (!posts || posts.length === 0) return;
+
+    for (const post of posts) {
+      const { data: targets } = await supabase
+        .from('post_targets')
+        .select('id, account_id, platform')
+        .eq('post_id', post.id)
+        .eq('status', 'pending');
+
+      if (!targets || targets.length === 0) continue;
+
+      // Mark post as dispatching so it doesn't get picked up again
+      await supabase.from('posts').update({ status: 'publishing' }).eq('id', post.id);
+
+      for (const target of targets) {
+        try {
+          await pushJob(s.upstashRedisUrl, {
+            postTargetId: target.id,
+            platform:     target.platform,
+            accountId:    target.account_id,
+            content:      post.content,
+            mediaUrls:    post.media_urls || [],
+          });
+          addLog({ type: 'info', message: `📅 Scheduled post dispatched: ${target.platform}` });
+        } catch (err) {
+          addLog({ type: 'error', message: `❌ Gagal dispatch scheduled post (${target.platform}): ${err.message}` });
+        }
+      }
+    }
+  } catch (_) {
+    // silent — don't crash the app if Supabase is unreachable
+  }
+}
+
 app.whenReady().then(() => {
   createWindow();
   startOAuthServer(mainWindow);
@@ -41,6 +90,10 @@ app.whenReady().then(() => {
   if (s.supabaseUrl && s.supabaseKey && s.encryptionKey) {
     oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
   }
+
+  // Start scheduled post dispatcher — check every 60 seconds
+  setInterval(dispatchScheduledPosts, 60 * 1000);
+  setTimeout(dispatchScheduledPosts, 5000); // first run 5s after startup
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
@@ -216,6 +269,32 @@ ipcMain.handle('connect-tiktok', async () => {
   setPending('tiktok', (code) => oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret));
 
   const url = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
+  shell.openExternal(url);
+  return { success: true };
+});
+
+ipcMain.handle('connect-youtube', async () => {
+  const s = store.get('settings', {});
+  if (!s.ytClientId || !s.ytClientSecret) return { success: false, error: 'YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET belum diisi di Pengaturan' };
+  if (!s.supabaseUrl || !s.supabaseKey || !s.encryptionKey) return { success: false, error: 'Supabase / Encryption Key belum diisi di Pengaturan' };
+
+  oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
+  setPending('youtube', (code) => oauthHandlers.handleYoutubeCallback(code, s.ytClientId, s.ytClientSecret));
+
+  const url = oauthHandlers.buildYoutubeUrl(s.ytClientId);
+  shell.openExternal(url);
+  return { success: true };
+});
+
+ipcMain.handle('connect-threads', async () => {
+  const s = store.get('settings', {});
+  if (!s.threadsAppId || !s.threadsAppSecret) return { success: false, error: 'THREADS_APP_ID / THREADS_APP_SECRET belum diisi di Pengaturan' };
+  if (!s.supabaseUrl || !s.supabaseKey || !s.encryptionKey) return { success: false, error: 'Supabase / Encryption Key belum diisi di Pengaturan' };
+
+  oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
+  setPending('threads', (code) => oauthHandlers.handleThreadsCallback(code, s.threadsAppId, s.threadsAppSecret));
+
+  const url = oauthHandlers.buildThreadsUrl(s.threadsAppId);
   shell.openExternal(url);
   return { success: true };
 });
