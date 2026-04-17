@@ -210,8 +210,11 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 // ── TikTok OAuth 2.0 (PKCE required) ─────────────────────────────────────────
 // Returns { url, codeVerifier } — caller must pass codeVerifier back to handleTikTokCallback
 function buildTikTokUrl(clientKey) {
-  // plain method: code_challenge = code_verifier (no hashing)
-  const codeVerifier = crypto.randomBytes(32).toString('hex'); // 64 hex chars
+  const codeVerifier = crypto.randomBytes(32).toString('base64url'); // 43 chars
+  const challenge    = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+  console.log('[TikTok PKCE] verifier:', codeVerifier);
+  console.log('[TikTok PKCE] challenge:', challenge);
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
@@ -219,13 +222,13 @@ function buildTikTokUrl(clientKey) {
   url.searchParams.set('scope',                 'user.info.basic');
   url.searchParams.set('redirect_uri',          REDIRECT('tiktok'));
   url.searchParams.set('state',                 crypto.randomBytes(8).toString('hex'));
-  url.searchParams.set('code_challenge',        codeVerifier);
-  url.searchParams.set('code_challenge_method', 'plain');
+  url.searchParams.set('code_challenge',        challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
   return { url: url.toString(), codeVerifier };
 }
 
 async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier) {
-  console.log('[TikTok Token] code_verifier prefix:', codeVerifier?.substring(0, 12));
+  console.log('[TikTok Token] code_verifier being sent:', codeVerifier);
   // Tukar code → token (sertakan code_verifier untuk PKCE)
   const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method:  'POST',
@@ -240,6 +243,7 @@ async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier)
     }),
   });
   const tokenData = await tokenRes.json();
+  console.log('[TikTok Token] full response:', JSON.stringify(tokenData));
 
   // Handle both {error:{code,message}} and {error:"string", error_description:"..."}
   const errCode = tokenData.error?.code ?? tokenData.error;
