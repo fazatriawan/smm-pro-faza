@@ -33,6 +33,13 @@ const legalRoutes = require('./routes/legal');
 
 const app = express();
 app.set('trust proxy', 1);
+
+// ── TikTok domain verification — must be FIRST, before all middleware ──────────
+app.get('/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt', (_, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.end('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: process.env.FRONTEND_URL, credentials: true }
