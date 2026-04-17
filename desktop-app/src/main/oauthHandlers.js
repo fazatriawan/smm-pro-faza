@@ -218,7 +218,7 @@ function buildTikTokUrl(clientKey) {
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
   url.searchParams.set('response_type',         'code');
-  url.searchParams.set('scope',                 'user.info.basic,video.publish,video.upload');
+  url.searchParams.set('scope',                 'user.info.basic');
   url.searchParams.set('redirect_uri',          REDIRECT('tiktok'));
   url.searchParams.set('state',                 crypto.randomBytes(8).toString('hex'));
   url.searchParams.set('code_challenge',        challenge);
@@ -241,11 +241,20 @@ async function handleTikTokCallback(code, clientKey, clientSecret) {
     }),
   });
   const tokenData = await tokenRes.json();
-  if (tokenData.error?.code && tokenData.error.code !== 'ok') {
-    throw new Error(tokenData.error.message || 'TikTok token exchange gagal');
+
+  // Handle both {error:{code,message}} and {error:"string", error_description:"..."}
+  const errCode = tokenData.error?.code ?? tokenData.error;
+  const errMsg  = tokenData.error?.message ?? tokenData.error_description;
+  if (errCode && errCode !== 'ok') {
+    throw new Error(errMsg || `TikTok token exchange gagal (${errCode})`);
   }
 
-  const { access_token, refresh_token, expires_in, open_id } = tokenData.data || tokenData;
+  const data = tokenData.data || tokenData;
+  const { access_token, refresh_token, expires_in, open_id } = data;
+
+  if (!access_token) {
+    throw new Error(`TikTok: access_token tidak ditemukan. Response: ${JSON.stringify(tokenData)}`);
+  }
 
   // Info user
   const infoRes = await fetch(
