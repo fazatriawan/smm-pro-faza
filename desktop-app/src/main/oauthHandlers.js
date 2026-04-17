@@ -208,17 +208,18 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 }
 
 // ── TikTok OAuth 2.0 (PKCE required) ─────────────────────────────────────────
-let _tiktokCodeVerifier = null;
-
+// Returns { url, codeVerifier } — caller must pass codeVerifier back to handleTikTokCallback
 function buildTikTokUrl(clientKey) {
-  // PKCE — use hex verifier (safe ASCII chars only) and explicit base64url challenge
-  _tiktokCodeVerifier = crypto.randomBytes(32).toString('hex'); // 64 lowercase hex chars
-  const challenge     = crypto.createHash('sha256')
-    .update(_tiktokCodeVerifier)
+  const codeVerifier = crypto.randomBytes(32).toString('hex'); // 64 hex chars
+  const challenge    = crypto.createHash('sha256')
+    .update(codeVerifier)
     .digest('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=/g,  '');
+
+  console.log('[TikTok PKCE] verifier prefix:', codeVerifier.substring(0, 12));
+  console.log('[TikTok PKCE] challenge prefix:', challenge.substring(0, 12));
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
@@ -228,10 +229,11 @@ function buildTikTokUrl(clientKey) {
   url.searchParams.set('state',                 crypto.randomBytes(8).toString('hex'));
   url.searchParams.set('code_challenge',        challenge);
   url.searchParams.set('code_challenge_method', 'S256');
-  return url.toString();
+  return { url: url.toString(), codeVerifier };
 }
 
-async function handleTikTokCallback(code, clientKey, clientSecret) {
+async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier) {
+  console.log('[TikTok Token] code_verifier prefix:', codeVerifier?.substring(0, 12));
   // Tukar code → token (sertakan code_verifier untuk PKCE)
   const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method:  'POST',
@@ -242,7 +244,7 @@ async function handleTikTokCallback(code, clientKey, clientSecret) {
       code,
       grant_type:    'authorization_code',
       redirect_uri:  REDIRECT('tiktok'),
-      code_verifier: _tiktokCodeVerifier,
+      code_verifier: codeVerifier,
     }),
   });
   const tokenData = await tokenRes.json();

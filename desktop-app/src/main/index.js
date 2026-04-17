@@ -266,9 +266,10 @@ ipcMain.handle('connect-tiktok', async () => {
   if (!s.supabaseUrl || !s.supabaseKey || !s.encryptionKey) return { success: false, error: 'Supabase / Encryption Key belum diisi di Pengaturan' };
 
   oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
-  setPending('tiktok', (code) => oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret));
 
-  const url = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
+  const { url, codeVerifier } = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
+  setPending('tiktok', (code) => oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret, codeVerifier));
+
   shell.openExternal(url);
   return { success: true };
 });
