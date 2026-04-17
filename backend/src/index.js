@@ -33,10 +33,27 @@ const { initSocket } = require('./services/socketService');
 const app = express();
 app.set('trust proxy', 1);
 
-// ── TikTok domain verification — must be FIRST, before all middleware ──────────
-app.get('/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt', (_, res) => {
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.end('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+console.log('[BOOT] index.js v4 loading, registering routes...');
+
+// ── Universal early interceptor (before everything) ────────────────────────────
+app.use((req, res, next) => {
+  const u = req.url.split('?')[0];
+  if (u === '/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt') {
+    console.log('[HIT] tiktok verification');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.end('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+  }
+  if (u === '/tos') {
+    console.log('[HIT] /tos');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.end(require('./routes/legal').tosHtml());
+  }
+  if (u === '/privacy') {
+    console.log('[HIT] /privacy');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.end(require('./routes/legal').privacyHtml());
+  }
+  next();
 });
 
 const server = http.createServer(app);
@@ -73,7 +90,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 3 }));
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 4 }));
 
 app.get('/tos', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
