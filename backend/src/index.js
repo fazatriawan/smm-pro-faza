@@ -29,7 +29,6 @@ const scheduleStrategyRoutes = require('./routes/scheduleStrategy');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
-const legalRoutes = require('./routes/legal');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -75,10 +74,15 @@ app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
-app.get('/tiktokuE0f2DtlDOlbfG5zbrzgspRWMOETzigC.txt', (req, res) => {
-  res.type('text/plain').send('tiktok-developers-site-verification=uE0f2DtlDOlbfG5zbrzgspRWMOETzigC');
+
+app.get('/tos', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(require('./routes/legal').tosHtml());
 });
-app.use('/', legalRoutes);
+app.get('/privacy', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(require('./routes/legal').privacyHtml());
+});
 
 // MongoDB + Start
 mongoose.connect(process.env.MONGODB_URI)
