@@ -2,44 +2,130 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SMM Pro Desktop</title>
+<title>SMM Pro Desktop — Social Media Manager</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:16px;line-height:1.65;display:flex;flex-direction:column;min-height:100vh}
-header{background:linear-gradient(135deg,#312e81,#5b21b6);padding:60px 24px;text-align:center;color:#fff}
-header h1{font-size:32px;font-weight:800;margin-top:12px}
-header p{font-size:15px;color:rgba(255,255,255,0.75);margin-top:8px}
-main{max-width:640px;margin:48px auto;padding:0 24px;flex:1}
-.card{background:#fff;border-radius:14px;padding:32px;margin-bottom:20px;box-shadow:0 2px 12px rgba(0,0,0,0.07)}
-.card h2{font-size:18px;font-weight:700;color:#312e81;margin-bottom:10px}
-.card p{color:#555;font-size:15px}
-.links{display:flex;gap:16px;margin-top:28px;justify-content:center;flex-wrap:wrap}
-.links a{background:#5b21b6;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600;font-size:15px;transition:background 0.15s}
-.links a:hover{background:#4c1d95}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:16px;line-height:1.65}
+header{background:linear-gradient(135deg,#312e81,#5b21b6);padding:64px 24px 48px;text-align:center;color:#fff}
+header .logo{font-size:32px;font-weight:900;letter-spacing:-0.5px}
+header h1{font-size:22px;font-weight:400;color:rgba(255,255,255,0.85);margin-top:10px;max-width:520px;margin-left:auto;margin-right:auto}
+header .badge{display:inline-block;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:20px;padding:4px 14px;font-size:12px;margin-top:14px;color:rgba(255,255,255,0.9)}
+main{max-width:760px;margin:0 auto;padding:48px 24px 80px}
+.section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#5b21b6;margin-bottom:16px}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:48px}
+.feature{background:#fff;border-radius:14px;padding:24px;box-shadow:0 2px 10px rgba(0,0,0,0.06)}
+.feature .icon{font-size:28px;margin-bottom:10px}
+.feature h3{font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:6px}
+.feature p{font-size:13px;color:#555;line-height:1.6}
+.about{background:#fff;border-radius:14px;padding:28px 32px;margin-bottom:32px;box-shadow:0 2px 10px rgba(0,0,0,0.06)}
+.about p{color:#444;margin-bottom:10px;font-size:15px}
+.about p:last-child{margin-bottom:0}
+.platforms{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 0}
+.platform{background:#f0eff8;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;color:#312e81}
+.legal-bar{background:#fff;border-radius:14px;padding:20px 28px;box-shadow:0 2px 10px rgba(0,0,0,0.06);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.legal-bar span{font-size:14px;color:#555}
+.legal-links{display:flex;gap:12px}
+.legal-links a{background:#5b21b6;color:#fff;text-decoration:none;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;transition:background 0.15s}
+.legal-links a:hover{background:#4c1d95}
+.how{background:#fff;border-radius:14px;padding:28px 32px;margin-bottom:32px;box-shadow:0 2px 10px rgba(0,0,0,0.06)}
+.steps{list-style:none;counter-reset:step;margin-top:14px}
+.steps li{counter-increment:step;display:flex;gap:14px;margin-bottom:14px;font-size:14px;color:#444;align-items:flex-start}
+.steps li::before{content:counter(step);background:#5b21b6;color:#fff;border-radius:50%;min-width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-top:1px}
+.tiktok-section{background:#fff;border-radius:14px;padding:28px 32px;margin-bottom:32px;box-shadow:0 2px 10px rgba(0,0,0,0.06)}
+.tiktok-section h2{font-size:17px;font-weight:700;color:#1d1d1f;margin-bottom:14px}
+.scope-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+.scope-table th{text-align:left;padding:8px 12px;background:#f0eff8;color:#312e81;font-weight:700;border-radius:4px}
+.scope-table td{padding:8px 12px;border-bottom:1px solid #f0f0f0;color:#444;vertical-align:top}
+.scope-table td:first-child{font-family:monospace;color:#5b21b6;font-size:12px;white-space:nowrap}
 footer{text-align:center;font-size:13px;color:#888;padding:24px}
-footer a{color:#5b21b6}
+footer a{color:#5b21b6;text-decoration:none}
+footer a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
 <header>
-  <div style="font-size:28px;font-weight:800">📡 SMM Pro Desktop</div>
-  <h1>Social Media Manager</h1>
-  <p>Schedule and publish to TikTok, Instagram, Facebook, Twitter/X &amp; more</p>
+  <div class="logo">📡 SMM Pro Desktop</div>
+  <h1>Schedule and publish to all your social media accounts from one place</h1>
+  <div class="badge">Desktop Application — Windows &amp; macOS</div>
 </header>
 <main>
-  <div class="card">
-    <h2>About</h2>
-    <p>SMM Pro Desktop is a desktop application for managing and scheduling social media posts across multiple platforms from a single interface. OAuth tokens are stored encrypted; your content lives in your own database.</p>
+
+  <div class="about">
+    <div class="section-title">About</div>
+    <p>SMM Pro Desktop is a desktop application that helps content creators, social media managers, and businesses manage multiple social media accounts efficiently. Connect your accounts once and schedule posts, bulk publish content, and track your activity — all from a single interface on your computer.</p>
+    <p>Your credentials are stored encrypted (AES-256-GCM) in your own database. We do not operate centralized servers that store your personal data.</p>
+    <div class="platforms">
+      <span class="platform">📘 Facebook</span>
+      <span class="platform">📸 Instagram</span>
+      <span class="platform">🎵 TikTok</span>
+      <span class="platform">🐦 Twitter / X</span>
+      <span class="platform">▶️ YouTube</span>
+      <span class="platform">🧵 Threads</span>
+    </div>
   </div>
-  <div class="card">
-    <h2>Legal</h2>
-    <p>Review our policies before connecting your accounts.</p>
+
+  <div class="section-title" style="margin-bottom:16px">Features</div>
+  <div class="features">
+    <div class="feature">
+      <div class="icon">🔗</div>
+      <h3>Connect Accounts via OAuth</h3>
+      <p>Securely connect your social media accounts using official OAuth 2.0 flows. Tokens are stored encrypted on your device.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📅</div>
+      <h3>Schedule Posts</h3>
+      <p>Schedule content to be published at a specific date and time. The app automatically dispatches posts when they are due.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📤</div>
+      <h3>Bulk Publishing</h3>
+      <p>Publish the same post to multiple accounts and platforms simultaneously. Supports text, images, and video content.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🔒</div>
+      <h3>Secure &amp; Private</h3>
+      <p>All OAuth tokens are encrypted with AES-256-GCM. Your data stays in your own Supabase database instance.</p>
+    </div>
   </div>
-  <div class="links">
-    <a href="tos.html">Terms of Service</a>
-    <a href="privacy.html">Privacy Policy</a>
+
+  <div class="how">
+    <div class="section-title">How It Works</div>
+    <ol class="steps">
+      <li>Download and install SMM Pro Desktop on your computer</li>
+      <li>Connect your social media accounts using the secure OAuth login flow</li>
+      <li>Create your post content and select which accounts to publish to</li>
+      <li>Choose to publish immediately or schedule for a later date and time</li>
+      <li>The app queues and publishes your content automatically via the worker service</li>
+    </ol>
   </div>
+
+  <div class="tiktok-section">
+    <h2>TikTok Integration</h2>
+    <p style="font-size:14px;color:#555;margin-bottom:12px">SMM Pro Desktop integrates with TikTok using the official TikTok for Developers API. The following permissions are requested:</p>
+    <table class="scope-table">
+      <tr><th>Scope</th><th>Purpose</th></tr>
+      <tr><td>user.info.basic</td><td>Retrieve your TikTok display name and user ID to identify your connected account in the app</td></tr>
+      <tr><td>video.upload</td><td>Upload video files you select from your computer to TikTok's servers</td></tr>
+      <tr><td>video.publish</td><td>Publish uploaded videos to your TikTok profile when you initiate a post</td></tr>
+    </table>
+    <p style="font-size:12px;color:#888;margin-top:12px">TikTok data is used solely for the purposes above and is never shared with third parties.</p>
+  </div>
+
+  <!-- Legal links — visible directly on page, no menu required -->
+  <div class="legal-bar">
+    <span>Legal documents for SMM Pro Desktop users:</span>
+    <div class="legal-links">
+      <a href="tos.html">Terms of Service</a>
+      <a href="privacy.html">Privacy Policy</a>
+    </div>
+  </div>
+
 </main>
-<footer>&copy; 2026 SMM Pro Desktop &mdash; <a href="mailto:fazatriawan@gmail.com">fazatriawan@gmail.com</a></footer>
+<footer>
+  &copy; 2026 SMM Pro Desktop &mdash;
+  <a href="mailto:fazatriawan@gmail.com">fazatriawan@gmail.com</a> &mdash;
+  <a href="tos.html">Terms of Service</a> &mdash;
+  <a href="privacy.html">Privacy Policy</a>
+</footer>
 </body>
 </html>
