@@ -1,4 +1,5 @@
-const dns = require('dns');
+const path = require('path');
+const dns  = require('dns');
 dns.setServers(['8.8.8.8','8.8.4.4']);
 require('dotenv').config();
 const express = require('express');
@@ -42,6 +43,7 @@ app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static('uploads'));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Rate limiting
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, max: 200 }));
