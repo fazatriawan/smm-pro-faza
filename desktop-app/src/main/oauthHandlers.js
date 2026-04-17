@@ -210,16 +210,8 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 // ── TikTok OAuth 2.0 (PKCE required) ─────────────────────────────────────────
 // Returns { url, codeVerifier } — caller must pass codeVerifier back to handleTikTokCallback
 function buildTikTokUrl(clientKey) {
+  // plain method: code_challenge = code_verifier (no hashing)
   const codeVerifier = crypto.randomBytes(32).toString('hex'); // 64 hex chars
-  const challenge    = crypto.createHash('sha256')
-    .update(codeVerifier)
-    .digest('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g,  '');
-
-  console.log('[TikTok PKCE] verifier prefix:', codeVerifier.substring(0, 12));
-  console.log('[TikTok PKCE] challenge prefix:', challenge.substring(0, 12));
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
@@ -227,8 +219,8 @@ function buildTikTokUrl(clientKey) {
   url.searchParams.set('scope',                 'user.info.basic');
   url.searchParams.set('redirect_uri',          REDIRECT('tiktok'));
   url.searchParams.set('state',                 crypto.randomBytes(8).toString('hex'));
-  url.searchParams.set('code_challenge',        challenge);
-  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('code_challenge',        codeVerifier);
+  url.searchParams.set('code_challenge_method', 'plain');
   return { url: url.toString(), codeVerifier };
 }
 
