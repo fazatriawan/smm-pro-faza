@@ -210,8 +210,13 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 // ── TikTok OAuth 2.0 (PKCE required) ─────────────────────────────────────────
 // Returns { url, codeVerifier } — caller must pass codeVerifier back to handleTikTokCallback
 function buildTikTokUrl(clientKey) {
-  const codeVerifier = crypto.randomBytes(32).toString('base64url'); // 43 chars
-  const challenge    = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  // TikTok hashes the raw bytes (not the base64url string) when verifying
+  const rawBytes     = crypto.randomBytes(32);
+  const codeVerifier = rawBytes.toString('base64url'); // sent to TikTok as-is
+  const challenge    = crypto.createHash('sha256')
+    .update(rawBytes)                         // ← hash raw bytes, not the string
+    .digest('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
   console.log('[TikTok PKCE] verifier:', codeVerifier);
   console.log('[TikTok PKCE] challenge:', challenge);
