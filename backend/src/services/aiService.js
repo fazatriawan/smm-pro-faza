@@ -1,22 +1,20 @@
 const axios = require('axios');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+const GEMINI_MODEL  = 'gemini-2.0-flash';
 
-async function generateWithGemini(prompt) {
+async function generateWithGemini(prompt, systemPrompt = null, maxTokens = 2000) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY belum diset di environment');
 
-  const res = await axios.post(
-    `${GEMINI_URL}?key=${GEMINI_API_KEY}`,
-    {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 1000,
-      }
-    }
-  );
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const body = {
+    contents:         [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.8, maxOutputTokens: maxTokens },
+  };
+  if (systemPrompt) body.systemInstruction = { parts: [{ text: systemPrompt }] };
 
+  const res = await axios.post(url, body);
+  if (!res.data.candidates?.[0]) throw new Error('Respons Gemini kosong');
   return res.data.candidates[0].content.parts[0].text;
 }
 

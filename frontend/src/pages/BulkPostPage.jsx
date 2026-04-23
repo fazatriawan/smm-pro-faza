@@ -156,11 +156,16 @@ export default function BulkPostPage() {
 
   const getPostLink = (platformPostId, platform) => {
     if (!platformPostId) return null;
+    const id = String(platformPostId);
     switch (platform) {
-      case 'facebook': return `https://facebook.com/${platformPostId}`;
-      case 'instagram': return `https://instagram.com/p/${platformPostId}`;
-      case 'twitter': return `https://twitter.com/i/web/status/${platformPostId}`;
-      case 'youtube': return `https://youtube.com/watch?v=${platformPostId}`;
+      case 'facebook':
+        // video ID (pure number) → reel URL; post ID (contains _) → permalink
+        if (id.includes('_')) return `https://www.facebook.com/permalink.php?story_fbid=${id.split('_')[1]}&id=${id.split('_')[0]}`;
+        return `https://www.facebook.com/video/${id}`;
+      case 'instagram': return `https://www.instagram.com/p/${id}`;
+      case 'twitter':   return `https://twitter.com/i/web/status/${id}`;
+      case 'youtube':   return `https://www.youtube.com/watch?v=${id}`;
+      case 'threads':   return `https://www.threads.net/t/${id}`;
       default: return null;
     }
   };

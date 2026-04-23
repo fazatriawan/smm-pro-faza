@@ -84,11 +84,17 @@ export const warmupAPI = {
 };
 
 export const aiAPI = {
-  generateCaption: (data) => api.post('/ai/caption', data),
-  generateVariations: (data) => api.post('/ai/caption/variations', data),
-  generateComments: (data) => api.post('/ai/comments', data),
-  generateHashtags: (data) => api.post('/ai/hashtags', data),
-  generateReply: (data) => api.post('/ai/reply', data),
+  generateCaption:    (data)   => api.post('/ai/caption', data),
+  generateVariations: (data)   => api.post('/ai/caption/variations', data),
+  generateComments:   (data)   => api.post('/ai/comments', data),
+  generateHashtags:   (data)   => api.post('/ai/hashtags', data),
+  generateReply:      (data)   => api.post('/ai/reply', data),
+  generateContent:    (data)   => api.post('/ai/content/generate', data, { timeout: 60000 }),
+  scrapeNews:         (params) => api.get('/ai/scrape/news', { params }),
+  scrapeTrends:       ()       => api.get('/ai/scrape/trends'),
+  generateImagen:     (data)   => api.post('/ai/imagen/generate', data, { timeout: 90000 }),
+  analyzeSentiment:   (data)   => api.post('/ai/sentiment/analyze', data),
+  getYoutubeTrends:   (params) => api.get('/ai/youtube/trends', { params }),
 };
 
 export default api;
