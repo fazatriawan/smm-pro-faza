@@ -22,7 +22,7 @@ async function runQueue() {
     const job = jobQueue.shift();
     try {
       const r = await publishJob(_supabase, _encKey, job);
-      _logFn?.({ type: 'success', message: `✅ [${r.platform}] @${r.username}: Berhasil diposting` });
+      _logFn?.({ type: 'success', message: `✅ [${r.platform}] @${r.username}: Berhasil diposting`, url: r.postUrl || null });
     } catch (err) {
       _logFn?.({ type: 'error', message: `❌ [${job.platform}] ID ${job.accountId}: ${err.message}` });
       // update status to failed in Supabase

@@ -357,6 +357,26 @@ async function publishToTikTok({ token, content, mediaUrls = [] }) {
   throw new Error('TikTok publish timeout');
 }
 
+// ─── URL Builder ───────────────────────────────────────────────────────────────
+function buildPostUrl(platform, postId) {
+  if (!postId) return null;
+  const id = String(postId);
+  switch (platform) {
+    case 'facebook':
+      if (id.includes('_')) {
+        const [pgId, pId] = id.split('_');
+        return `https://www.facebook.com/permalink.php?story_fbid=${pId}&id=${pgId}`;
+      }
+      return `https://www.facebook.com/video/${id}`;
+    case 'instagram': return `https://www.instagram.com/p/${id}`;
+    case 'twitter':   return `https://twitter.com/i/web/status/${id}`;
+    case 'youtube':   return `https://www.youtube.com/watch?v=${id}`;
+    case 'threads':   return `https://www.threads.net/t/${id}`;
+    case 'tiktok':    return `https://www.tiktok.com/@/video/${id}`;
+    default:          return null;
+  }
+}
+
 // ─── Main publishJob ───────────────────────────────────────────────────────────
 
 async function publishJob(supabase, encryptionKey, job) {
@@ -388,14 +408,16 @@ async function publishJob(supabase, encryptionKey, job) {
     default:          throw new Error(`Platform tidak didukung: ${platform}`);
   }
 
+  const postUrl = buildPostUrl(platform, result.postId);
+
   // Update post_target as published
   await supabase.from('post_targets').update({
-    status:    'published',
-    post_url:  result.postId ? String(result.postId) : null,
+    status:      'published',
+    post_url:    postUrl || (result.postId ? String(result.postId) : null),
     published_at: new Date().toISOString(),
   }).eq('id', postTargetId);
 
-  return { platform, username: account.username, postId: result.postId };
+  return { platform, username: account.username, postId: result.postId, postUrl };
 }
 
 module.exports = { publishJob };

@@ -73,6 +73,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     window.api.onLog((log) => {
       logs.unshift({ ...log, timestamp: new Date().toISOString() });
       addToLiveLog(log);
+      // Forward ke bp-log jika sedang di halaman bulk post
+      if (currentPage === 'bulkpost') {
+        addBpLog(log.message, log.type, log.url || null);
+      }
     });
 
     window.api.onOAuthResult(async (result) => {
@@ -150,7 +154,24 @@ function addToLiveLog(log) {
   
   const el = document.createElement('div');
   el.className = `log-entry log-${log.type}`;
-  el.textContent = `[${new Date().toLocaleTimeString('id-ID')}] ${log.message}`;
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
+  el.style.justifyContent = 'space-between';
+  el.style.gap = '8px';
+
+  const span = document.createElement('span');
+  span.textContent = `[${new Date().toLocaleTimeString('id-ID')}] ${log.message}`;
+  el.appendChild(span);
+
+  if (log.url) {
+    const a = document.createElement('a');
+    a.href = '#';
+    a.textContent = 'Lihat ↗';
+    a.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);text-decoration:none;color:inherit;white-space:nowrap;flex-shrink:0';
+    a.onclick = (e) => { e.preventDefault(); window.api.openExternal(log.url); };
+    el.appendChild(a);
+  }
+
   box.prepend(el);
 }
 
@@ -1228,10 +1249,10 @@ async function generateBpCaption() {
   }
 }
 
-function addBpLog(message, type = 'info') {
+function addBpLog(message, type = 'info', url = null) {
   const logDiv = document.getElementById('bp-log');
   if (!logDiv) return;
-  
+
   const entry = document.createElement('div');
   entry.style.marginBottom = '6px';
   entry.style.padding = '4px 8px';
@@ -1240,10 +1261,25 @@ function addBpLog(message, type = 'info') {
   entry.style.color = type === 'error' ? '#C62828' : type === 'success' ? '#2E7D32' : '#1565C0';
   entry.style.fontSize = '11px';
   entry.style.fontFamily = "'Courier New', monospace";
-  
+  entry.style.display = 'flex';
+  entry.style.alignItems = 'center';
+  entry.style.justifyContent = 'space-between';
+  entry.style.gap = '8px';
+
   const timestamp = new Date().toLocaleTimeString('id-ID', { hour12: false });
-  entry.textContent = `[${timestamp}] ${message}`;
-  
+  const textSpan = document.createElement('span');
+  textSpan.textContent = `[${timestamp}] ${message}`;
+  entry.appendChild(textSpan);
+
+  if (url) {
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = 'Lihat ↗';
+    link.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);color:inherit;text-decoration:none;white-space:nowrap;flex-shrink:0';
+    link.onclick = (e) => { e.preventDefault(); window.api.openExternal(url); };
+    entry.appendChild(link);
+  }
+
   logDiv.appendChild(entry);
   logDiv.scrollTop = logDiv.scrollHeight;
 }
