@@ -43,7 +43,7 @@ async function publishPost(postId) {
   post.status = allSent ? 'completed' : anySent ? 'partial' : 'failed';
   await post.save();
 
-  // Hapus media dari Cloudinary setelah 5 menit
+  // Hapus media dari Cloudinary setelah 45 menit (video butuh waktu proses di Facebook)
   if (post.mediaUrls && post.mediaUrls.length > 0) {
     setTimeout(async () => {
       for (const url of post.mediaUrls) {
@@ -58,7 +58,7 @@ async function publishPost(postId) {
           console.log('[Cloudinary] Delete error:', e.message);
         }
       }
-    }, 5 * 60 * 1000);
+    }, 45 * 60 * 1000);
   }
 
   return post;
@@ -179,6 +179,7 @@ async function postToFacebook(account, caption, mediaUrls) {
         const params = new URLSearchParams();
         params.append('file_url', mediaUrl);
         params.append('description', caption);
+        params.append('published', 'true');
         params.append('access_token', token);
 
         const res = await axios.post(
