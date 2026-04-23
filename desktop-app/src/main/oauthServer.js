@@ -20,6 +20,7 @@ function startOAuthServer(mainWindow) {
     const platform = parts[1];
     const code     = url.searchParams.get('code');
     const error    = url.searchParams.get('error');
+    console.log(`[OAuth Raw URL] ${req.url}`);
     console.log(`[OAuth Callback] platform=${platform} code=${code ? code.substring(0,10)+'...' : 'null'} error=${error} error_description=${url.searchParams.get('error_description')}`);
 
     if (error || !code) {

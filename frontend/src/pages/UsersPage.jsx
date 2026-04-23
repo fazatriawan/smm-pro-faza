@@ -9,6 +9,7 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const { token } = useAuthStore();
   const [connecting, setConnecting] = useState(false);
+  const [copiedPlatform, setCopiedPlatform] = useState(null);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
@@ -49,14 +50,28 @@ export default function UsersPage() {
     }
   }, [qc]);
 
-  const connectFacebook = async () => {
+  const OAUTH_ENDPOINTS = {
+    facebook: '/auth/facebook',
+    facebook_personal: '/auth/facebook/personal',
+    youtube: '/auth/youtube',
+    twitter: '/auth/twitter',
+    threads: '/auth/threads',
+  };
+
+  const fetchOAuthUrl = async (platform) => {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}${OAUTH_ENDPOINTS[platform]}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!data.url) throw new Error('URL tidak tersedia');
+    return data.url;
+  };
+
+  const connectPlatform = async (platform) => {
     try {
       setConnecting(true);
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/facebook`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      const url = await fetchOAuthUrl(platform);
+      window.location.href = url;
     } catch (err) {
       toast.error('Gagal memulai koneksi');
     } finally {
@@ -64,65 +79,26 @@ export default function UsersPage() {
     }
   };
 
-  const connectFacebookPersonal = async () => {
+  const copyOAuthLink = async (platform) => {
     try {
       setConnecting(true);
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/facebook/personal`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      const url = await fetchOAuthUrl(platform);
+      await navigator.clipboard.writeText(url);
+      setCopiedPlatform(platform);
+      toast.success('Link disalin! Buka di Chrome profile yang sesuai.');
+      setTimeout(() => setCopiedPlatform(null), 3000);
     } catch (err) {
-      toast.error('Gagal memulai koneksi personal');
+      toast.error('Gagal menyalin link');
     } finally {
       setConnecting(false);
     }
   };
 
-  const connectYoutube = async () => {
-    try {
-      setConnecting(true);
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/youtube`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-    } catch (err) {
-      toast.error('Gagal memulai koneksi YouTube');
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const connectTwitter = async () => {
-    try {
-      setConnecting(true);
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/twitter`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-    } catch (err) {
-      toast.error('Gagal memulai koneksi Twitter');
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const connectThreads = async () => {
-    try {
-      setConnecting(true);
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/auth/threads`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-    } catch (err) {
-      toast.error('Gagal memulai koneksi Threads');
-    } finally {
-      setConnecting(false);
-    }
-  };
+  const connectFacebook = () => connectPlatform('facebook');
+  const connectFacebookPersonal = () => connectPlatform('facebook_personal');
+  const connectYoutube = () => connectPlatform('youtube');
+  const connectTwitter = () => connectPlatform('twitter');
+  const connectThreads = () => connectPlatform('threads');
 
   // Group akun berdasarkan platform
   // Tambahkan facebook_personal ke PLATFORMS display
@@ -177,26 +153,36 @@ export default function UsersPage() {
             {displayAccounts.length} akun terhubung
           </span>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            <button onClick={connectFacebook} disabled={connecting}
-              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#1877F2', color: '#fff', border: 'none' }}>
-              f+ Facebook & Instagram
-            </button>
-            <button onClick={connectFacebookPersonal} disabled={connecting}
-              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#E6F1FB', color: '#1877F2', border: '1px solid #1877F2' }}>
-              f Personal
-            </button>
-            <button onClick={connectYoutube} disabled={connecting}
-              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#FF0000', color: '#fff', border: 'none' }}>
-              ▶ YouTube
-            </button>
-            <button onClick={connectTwitter} disabled={connecting}
-              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#000', color: '#fff', border: 'none' }}>
-              𝕏 Twitter
-            </button>
-            <button onClick={connectThreads} disabled={connecting}
-              style={{ padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, background: '#000', color: '#fff', border: 'none' }}>
-              @ Threads
-            </button>
+            {[
+              { key: 'facebook', label: 'f+ Facebook & IG', bg: '#1877F2', color: '#fff', border: 'none' },
+              { key: 'facebook_personal', label: 'f Personal', bg: '#E6F1FB', color: '#1877F2', border: '1px solid #1877F2' },
+              { key: 'youtube', label: '▶ YouTube', bg: '#FF0000', color: '#fff', border: 'none' },
+              { key: 'twitter', label: '𝕏 Twitter', bg: '#000', color: '#fff', border: 'none' },
+              { key: 'threads', label: '@ Threads', bg: '#000', color: '#fff', border: 'none' },
+            ].map(({ key, label, bg, color, border }) => (
+              <div key={key} style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: border || 'none' }}>
+                <button
+                  onClick={() => connectPlatform(key)}
+                  disabled={connecting}
+                  style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: bg, color, border: 'none' }}
+                >
+                  {label}
+                </button>
+                <button
+                  onClick={() => copyOAuthLink(key)}
+                  disabled={connecting}
+                  title="Copy link untuk dibuka di Chrome profile lain"
+                  style={{
+                    padding: '8px 10px', cursor: 'pointer', fontSize: 12,
+                    background: copiedPlatform === key ? '#1D9E75' : 'rgba(0,0,0,0.15)',
+                    color: '#fff', border: 'none', borderLeft: '1px solid rgba(255,255,255,0.2)',
+                    transition: 'background 0.2s'
+                  }}
+                >
+                  {copiedPlatform === key ? '✓' : '🔗'}
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       </div>

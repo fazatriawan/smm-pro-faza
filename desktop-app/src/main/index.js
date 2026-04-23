@@ -1,11 +1,13 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const nodeFetch = require('node-fetch');
 const path = require('path');
+const fs = require('fs');
 const Store = require('electron-store');
 const { startAutomation, stopAutomation } = require('../automation/manager');
 const { bulkPost, stopBulkPost } = require('../services/bulkPostService');
 const { startOAuthServer, setPending } = require('./oauthServer');
 const oauthHandlers = require('./oauthHandlers');
-const { pushJob }   = require('./queuePublisher');
+const { pushJob, initQueue } = require('./queuePublisher');
 const { createClient } = require('@supabase/supabase-js');
 
 const store = new Store({ encryptionKey: 'smm-pro-secret-2024' });
@@ -35,7 +37,7 @@ function createWindow() {
 // ─── SCHEDULED POST DISPATCHER ────────────────────────────────────────────────
 async function dispatchScheduledPosts() {
   const s = store.get('settings', {});
-  if (!s.supabaseUrl || !s.supabaseKey || !s.upstashRedisUrl) return;
+  if (!s.supabaseUrl || !s.supabaseKey) return;
 
   try {
     const supabase = createClient(s.supabaseUrl, s.supabaseKey);
@@ -63,7 +65,7 @@ async function dispatchScheduledPosts() {
 
       for (const target of targets) {
         try {
-          await pushJob(s.upstashRedisUrl, {
+          await pushJob(null, {
             postTargetId: target.id,
             platform:     target.platform,
             accountId:    target.account_id,
@@ -85,10 +87,11 @@ app.whenReady().then(() => {
   createWindow();
   startOAuthServer(mainWindow);
 
-  // Init OAuth handlers dengan kredensial dari electron-store
+  // Init OAuth handlers dan queue dengan kredensial dari electron-store
   const s = store.get('settings', {});
   if (s.supabaseUrl && s.supabaseKey && s.encryptionKey) {
     oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
+    initQueue(createClient(s.supabaseUrl, s.supabaseKey), s.encryptionKey, addLog);
   }
 
   // Start scheduled post dispatcher — check every 60 seconds
@@ -125,7 +128,13 @@ ipcMain.handle('get-settings', () => store.get('settings', {
   restBetweenAccounts: 30, maxActionsPerHour: 30,
   apiUrl: 'https://smm-pro-faza.onrender.com'
 }));
-ipcMain.handle('save-settings', (_, settings) => { store.set('settings', settings); return settings; });
+ipcMain.handle('save-settings', (_, settings) => {
+  store.set('settings', settings);
+  if (settings.supabaseUrl && settings.supabaseKey && settings.encryptionKey) {
+    initQueue(createClient(settings.supabaseUrl, settings.supabaseKey), settings.encryptionKey, addLog);
+  }
+  return settings;
+});
 
 // ─── LOGS ─────────────────────────────────────────────────────────────────
 ipcMain.handle('get-logs', () => store.get('logs', []));
@@ -244,6 +253,9 @@ ipcMain.handle('save-oauth-credentials', (_, creds) => {
   const settings = store.get('settings', {});
   store.set('settings', { ...settings, ...creds });
   oauthHandlers.init(creds.supabaseUrl, creds.supabaseKey, creds.encryptionKey);
+  if (creds.supabaseUrl && creds.supabaseKey && creds.encryptionKey) {
+    initQueue(createClient(creds.supabaseUrl, creds.supabaseKey), creds.encryptionKey, addLog);
+  }
   return { success: true };
 });
 
@@ -260,16 +272,30 @@ ipcMain.handle('connect-twitter', async () => {
   return { success: true };
 });
 
+// Shared TikTok PKCE state — prevent double-generation from connect + copy-link
+let _tiktokOAuthUrl      = null;
+let _tiktokCodeVerifier  = null;
+
+function buildTikTokOAuth(s) {
+  // Reuse existing pair if still pending
+  if (_tiktokOAuthUrl && _tiktokCodeVerifier) return { url: _tiktokOAuthUrl, codeVerifier: _tiktokCodeVerifier };
+  const { url, codeVerifier } = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
+  _tiktokOAuthUrl     = url;
+  _tiktokCodeVerifier = codeVerifier;
+  setPending('tiktok', async (code) => {
+    const result = await oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret, _tiktokCodeVerifier);
+    _tiktokOAuthUrl = null; _tiktokCodeVerifier = null; // clear after use
+    return result;
+  });
+  return { url, codeVerifier };
+}
+
 ipcMain.handle('connect-tiktok', async () => {
   const s = store.get('settings', {});
   if (!s.tiktokClientKey || !s.tiktokClientSecret) return { success: false, error: 'TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET belum diisi di Pengaturan' };
   if (!s.supabaseUrl || !s.supabaseKey || !s.encryptionKey) return { success: false, error: 'Supabase / Encryption Key belum diisi di Pengaturan' };
-
   oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
-
-  const { url, codeVerifier } = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
-  setPending('tiktok', (code) => oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret, codeVerifier));
-
+  const { url } = buildTikTokOAuth(s);
   shell.openExternal(url);
   return { success: true };
 });
@@ -320,6 +346,46 @@ ipcMain.handle('connect-facebook', async () => {
   return { success: true };
 });
 
+ipcMain.handle('get-oauth-link', async (_, platform) => {
+  const s = store.get('settings', {});
+  if (!s.supabaseUrl || !s.supabaseKey || !s.encryptionKey)
+    return { success: false, error: 'Supabase / Encryption Key belum diisi di Pengaturan' };
+
+  oauthHandlers.init(s.supabaseUrl, s.supabaseKey, s.encryptionKey);
+
+  let url;
+  switch (platform) {
+    case 'facebook':
+      if (!s.fbAppId || !s.fbAppSecret) return { success: false, error: 'FB_APP_ID / FB_APP_SECRET belum diisi' };
+      setPending('facebook', (code) => oauthHandlers.handleFacebookCallback(code, s.fbAppId, s.fbAppSecret));
+      url = oauthHandlers.buildFacebookUrl(s.fbAppId);
+      break;
+    case 'twitter':
+      if (!s.twClientId || !s.twClientSecret) return { success: false, error: 'TW_CLIENT_ID / TW_CLIENT_SECRET belum diisi' };
+      url = oauthHandlers.buildTwitterUrl(s.twClientId);
+      setPending('twitter', (code) => oauthHandlers.handleTwitterCallback(code, s.twClientId, s.twClientSecret));
+      break;
+    case 'tiktok':
+      if (!s.tiktokClientKey || !s.tiktokClientSecret) return { success: false, error: 'TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET belum diisi' };
+      url = buildTikTokOAuth(s).url;
+      break;
+    case 'youtube':
+      if (!s.ytClientId || !s.ytClientSecret) return { success: false, error: 'YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET belum diisi' };
+      setPending('youtube', (code) => oauthHandlers.handleYoutubeCallback(code, s.ytClientId, s.ytClientSecret));
+      url = oauthHandlers.buildYoutubeUrl(s.ytClientId);
+      break;
+    case 'threads':
+      if (!s.threadsAppId || !s.threadsAppSecret) return { success: false, error: 'THREADS_APP_ID / THREADS_APP_SECRET belum diisi' };
+      setPending('threads', (code) => oauthHandlers.handleThreadsCallback(code, s.threadsAppId, s.threadsAppSecret));
+      url = oauthHandlers.buildThreadsUrl(s.threadsAppId);
+      break;
+    default:
+      return { success: false, error: `Platform tidak dikenal: ${platform}` };
+  }
+
+  return { success: true, url };
+});
+
 ipcMain.handle('get-oauth-accounts', async () => {
   const s = store.get('settings', {});
   if (!s.supabaseUrl || !s.supabaseKey) return [];
@@ -354,7 +420,12 @@ ipcMain.handle('upload-media', async (_, filePath) => {
       '.avi': 'video/avi',  '.webm': 'video/webm',
     };
     const contentType = mimeMap[ext] || 'application/octet-stream';
-    const uploadPath  = `uploads/${Date.now()}_${fileName}`;
+    const safeName    = path.basename(fileName, ext)
+      .replace(/[^\w\s-]/g, '')   // hapus emoji & karakter non-ASCII
+      .replace(/\s+/g, '_')       // spasi → underscore
+      .replace(/_+/g, '_')        // dedupe underscore
+      .slice(0, 80) || 'file';    // maks 80 karakter, fallback 'file'
+    const uploadPath  = `uploads/${Date.now()}_${safeName}${ext}`;
 
     const { error } = await supabase.storage
       .from('media')
@@ -373,7 +444,6 @@ ipcMain.handle('upload-media', async (_, filePath) => {
 ipcMain.handle('submit-bulk-post', async (_, { content, mediaUrls, accountIds, scheduledAt }) => {
   const s = store.get('settings', {});
   if (!s.supabaseUrl || !s.supabaseKey) return { success: false, error: 'Supabase belum dikonfigurasi di Pengaturan' };
-  if (!s.upstashRedisUrl && !scheduledAt) return { success: false, error: 'Upstash Redis URL belum diisi di Pengaturan' };
 
   const supabase = createClient(s.supabaseUrl, s.supabaseKey);
 
@@ -420,21 +490,273 @@ ipcMain.handle('submit-bulk-post', async (_, { content, mediaUrls, accountIds, s
     // Push ke queue jika bukan scheduled
     if (!scheduledAt) {
       try {
-        const jobId = await pushJob(s.upstashRedisUrl, {
+        const jobId = await pushJob(null, {
           postTargetId: target.id,
           platform:     acc.platform,
           accountId:    acc.id,
           content,
           mediaUrls:    mediaUrls || [],
         });
-        results.push({ accountId: acc.id, username: acc.username, platform: acc.platform, success: true, jobId });
+        results.push({ accountId: acc.id, username: acc.username, platform: acc.platform, success: true, jobId, postTargetId: target.id });
       } catch (err) {
         results.push({ accountId: acc.id, username: acc.username, platform: acc.platform, success: false, error: err.message });
       }
     } else {
-      results.push({ accountId: acc.id, username: acc.username, platform: acc.platform, success: true, scheduled: scheduledAt });
+      results.push({ accountId: acc.id, username: acc.username, platform: acc.platform, success: true, scheduled: scheduledAt, postTargetId: target.id });
     }
   }
 
   return { success: true, postId: post.id, results };
+});
+
+// ─── GEMINI HELPER ───────────────────────────────────────────────────────────
+async function callGemini(apiKey, model, systemPrompt, userPrompt) {
+  const mdl = model || 'gemini-flash-latest';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent?key=${apiKey}`;
+  const res  = await nodeFetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents:          [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig:  { maxOutputTokens: 2000, temperature: 0.8 },
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const msg = json.error?.message || 'Gemini API error';
+    if (res.status === 429 || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+      throw new Error('Kuota Gemini habis. Aktifkan billing di aistudio.google.com atau buat API key baru di project berbeda.');
+    }
+    throw new Error(msg);
+  }
+  return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+// ─── AI CONTENT GENERATOR ────────────────────────────────────────────────────
+function buildContentPrompts(tema, data, contentType) {
+  if (contentType === 'gambar') {
+    const systemPrompt = `Bertindaklah sebagai Social Media Strategist dan Desainer Konten Carousel/Infografis untuk Instagram dan TikTok di Indonesia. Keahlian Anda adalah mengubah berita atau informasi menjadi konten carousel yang menarik, informatif, dan viral di kalangan Gen Z dan Milenial Indonesia.
+
+Tujuan Konten: Mengedukasi masyarakat secara visual, ringkas, dan berbasis data. Tone bahasa santai, smart-casual, menggunakan istilah kekinian Indonesia.
+
+Kembalikan response MURNI dalam format JSON dengan key berikut:
+- judul: judul konten carousel
+- hook_visual: teks hook untuk slide pertama (maks 8 kata, harus bikin penasaran/klik)
+- slides: array 5-7 slide, masing-masing { nomor, judul_slide, isi (2-3 kalimat padat), deskripsi_visual_inggris (deskripsi gambar pendukung slide dalam Bahasa Inggris, tanpa teks) }
+- caption: caption Instagram/TikTok siap pakai
+- hashtag: array string
+- prompt_cover_inggris: deskripsi gambar cover carousel dalam Bahasa Inggris untuk generate di AI image generator, tanpa teks/tulisan, estetis, ratio 1:1
+
+Jangan ada teks lain selain JSON.`;
+    const userPrompt = `Tema yang dipilih: ${tema}\nReferensi Data/Berita: ${data}\n\nBuatkan 1 ide konten carousel/infografis yang komprehensif sesuai format JSON.`;
+    return { systemPrompt, userPrompt };
+  }
+
+  // default: video
+  const systemPrompt = `Bertindaklah sebagai Social Media Strategist dan Copywriter TikTok/Instagram Reels top tier di Indonesia. Keahlian utama Anda adalah mengubah berita formal atau informasi menjadi konten video pendek (di bawah 60 detik) yang viral, engaging, dan sangat disukai oleh Gen Z serta Milenial. Anda paham cara membuat hook 3 detik pertama yang mematikan agar penonton tidak scroll.
+
+Tujuan Konten: Mengedukasi masyarakat secara elegan, logis, dan berbasis data. Tone bahasa santai, smart-casual, menggunakan istilah kekinian Indonesia (guys, fyi, jujurly—tapi tidak cringe), dan tidak kaku.
+
+Kembalikan response MURNI dalam format JSON dengan key berikut: judul, hook, visual, script, cta, caption, hashtag (array string), prompt_gambar_inggris (deskripsi singkat dalam Bahasa Inggris untuk generate gambar B-roll pendukung konten, tanpa teks/tulisan, realistis, estetis, cocok untuk TikTok/Reels 9:16). Jangan ada teks lain selain JSON.`;
+  const userPrompt = `Tema yang dipilih: ${tema}\nReferensi Data/Berita: ${data}\n\nBuatkan 1 ide konten video pendek yang komprehensif sesuai format JSON.`;
+  return { systemPrompt, userPrompt };
+}
+
+ipcMain.handle('generate-content', async (_, { tema, data, model, contentType }) => {
+  const s = store.get('settings', {});
+  const { systemPrompt, userPrompt } = buildContentPrompts(tema, data, contentType || 'video');
+
+  // Return prompts even without API key so user can copy them
+  if (!s.geminiApiKey) {
+    return { success: false, error: 'Gemini API Key belum diisi di Pengaturan', systemPrompt, userPrompt };
+  }
+
+  try {
+    const text = await callGemini(s.geminiApiKey, model, systemPrompt, userPrompt);
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { success: false, error: 'Respons Gemini bukan JSON valid', raw: text, systemPrompt, userPrompt };
+    const result = JSON.parse(jsonMatch[0]);
+    return { success: true, result, systemPrompt, userPrompt };
+  } catch (err) {
+    return { success: false, error: err.message, systemPrompt, userPrompt };
+  }
+});
+
+// ─── SCRAPE NEWS (RSS) ───────────────────────────────────────────────────────
+ipcMain.handle('scrape-news', async (_, { sources, keyword, limit = 5 } = {}) => {
+  const RSS_FEEDS = {
+    antara:  'https://www.antaranews.com/rss/terkini.xml',
+    detik:   'https://rss.detik.com/index.php/detikcom',
+    kompas:  'https://rss.kompas.com/api/main_index',
+    tempo:   'https://rss.tempo.co/',
+    tribun:  'https://www.tribunnews.com/rss',
+    cnn:     'https://www.cnnindonesia.com/rss',
+  };
+
+  const kw = keyword?.toLowerCase() || '';
+  const selected = (sources || Object.keys(RSS_FEEDS)).filter(s => RSS_FEEDS[s]);
+  const articles = [];
+
+  for (const src of selected) {
+    try {
+      const res  = await nodeFetch(RSS_FEEDS[src], { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 8000 });
+      const xml  = await res.text();
+      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+      for (const [, body] of items) {
+        const title = (body.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || body.match(/<title>(.*?)<\/title>/))?.[1]?.trim();
+        const link  = (body.match(/<link>(.*?)<\/link>/))?.[1]?.trim();
+        const pubDate = (body.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]?.trim();
+        const description = (body.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/) || body.match(/<description>(.*?)<\/description>/))?.[1]?.replace(/<[^>]+>/g,'').trim();
+        if (!title) continue;
+        if (kw && !title.toLowerCase().includes(kw) && !(description||'').toLowerCase().includes(kw)) continue;
+        articles.push({ source: src, title, link, pubDate, description });
+        if (articles.length >= limit * selected.length) break;
+      }
+    } catch (e) { /* skip source on error */ }
+  }
+
+  const sorted = articles.sort((a, b) => {
+    if (!a.pubDate) return 1;
+    if (!b.pubDate) return -1;
+    return new Date(b.pubDate) - new Date(a.pubDate);
+  }).slice(0, limit * 3);
+
+  return { success: true, articles: sorted };
+});
+
+// ─── SCRAPE GOOGLE TRENDS INDONESIA ─────────────────────────────────────────
+ipcMain.handle('scrape-trends', async () => {
+  try {
+    const res   = await nodeFetch('https://trends.google.com/trending/rss?geo=ID', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, timeout: 10000,
+    });
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    const xml   = await res.text();
+    const items = [...xml.matchAll(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<ht:news_item_title><!\[CDATA\[(.*?)\]\]><\/ht:news_item_title>|<title>(.*?)<\/title>/g)]
+      .map(m => (m[1] || m[2] || m[3])?.trim()).filter(Boolean)
+      .filter(t => !['Google Trends', 'Trending Searches in Indonesia'].includes(t));
+    return { success: true, trends: items.slice(0, 25) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── SENTIMENT ANALYSIS ──────────────────────────────────────────────────────
+ipcMain.handle('analyze-sentiment', async (_, { texts }) => {
+  const s = store.get('settings', {});
+  if (!s.geminiApiKey) return { success: false, error: 'Gemini API Key belum diisi' };
+
+  const systemPrompt = 'Kamu adalah analis sentimen teks berbahasa Indonesia. Selalu kembalikan HANYA JSON valid, tanpa teks lain.';
+  const userPrompt   = `Analisis sentimen dari daftar teks berita/judul berikut. Klasifikasikan setiap item sebagai "positif", "negatif", atau "netral".
+
+Teks:
+${texts.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+Kembalikan JSON: { "results": [{ "text": "...", "sentiment": "positif|negatif|netral", "score": 0.0-1.0, "reason": "alasan singkat" }], "summary": { "positif": N, "negatif": N, "netral": N } }`;
+
+  try {
+    const raw   = await callGemini(s.geminiApiKey, 'gemini-2.0-flash', systemPrompt, userPrompt);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return { success: false, error: 'Respons tidak valid' };
+    return { success: true, ...JSON.parse(match[0]) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IMAGEN B-ROLL GENERATOR ─────────────────────────────────────────────────
+ipcMain.handle('generate-imagen-broll', async (_, { prompt }) => {
+  const s = store.get('settings', {});
+  if (!s.geminiApiKey) return { success: false, error: 'Gemini API Key belum diisi di Pengaturan' };
+  if (!prompt?.trim()) return { success: false, error: 'Prompt kosong' };
+
+  // AI Studio API keys use generateContent with responseModalities, not predict endpoint
+  const model = 'gemini-2.5-flash-image';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${s.geminiApiKey}`;
+  const fullPrompt = `Generate a photorealistic vertical 9:16 B-roll image (no text, no watermarks, no UI elements): ${prompt.trim()}`;
+
+  try {
+    const res = await nodeFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: fullPrompt }] }],
+        generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      const msg = json.error?.message || 'Gemini image API error';
+      if (res.status === 429 || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+        return { success: false, error: 'Kuota habis. Cek billing di aistudio.google.com.' };
+      }
+      return { success: false, error: msg };
+    }
+    const parts = json.candidates?.[0]?.content?.parts || [];
+    const imgPart = parts.find(p => p.inlineData?.data);
+    if (!imgPart) return { success: false, error: 'Tidak ada gambar dikembalikan. Pastikan API key aktif dan model didukung.' };
+    return { success: true, base64: imgPart.inlineData.data, mimeType: imgPart.inlineData.mimeType || 'image/png' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── YOUTUBE TRENDS ──────────────────────────────────────────────────────────
+async function fetchYoutubeTrends(apiKey, categoryId) {
+  const params = new URLSearchParams({
+    part: 'snippet,statistics',
+    chart: 'mostPopular',
+    regionCode: 'ID',
+    maxResults: '10',
+    key: apiKey,
+  });
+  if (categoryId) params.set('videoCategoryId', String(categoryId));
+  const res  = await nodeFetch(`https://www.googleapis.com/youtube/v3/videos?${params}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error?.message || 'YouTube API error');
+  return (json.items || []).map(v => ({
+    judul:        v.snippet.title,
+    nama_channel: v.snippet.channelTitle,
+    views:        parseInt(v.statistics?.viewCount || '0', 10),
+    url_video:    `https://www.youtube.com/watch?v=${v.id}`,
+  }));
+}
+
+ipcMain.handle('get-youtube-trends', async (_, { categoryId } = {}) => {
+  const s = store.get('settings', {});
+  if (!s.youtubeApiKey) return { success: false, error: 'YouTube API Key belum diisi di Pengaturan' };
+  try {
+    const videos = await fetchYoutubeTrends(s.youtubeApiKey, categoryId);
+    return { success: true, videos };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── DOWNLOAD B-ROLL IMAGE ────────────────────────────────────────────────────
+ipcMain.handle('download-broll-image', async (_, { base64, mimeType }) => {
+  try {
+    const ext = (mimeType || 'image/png').split('/')[1] || 'png';
+    const filename = `broll_${Date.now()}.${ext}`;
+    const savePath = path.join(app.getPath('downloads'), filename);
+    fs.writeFileSync(savePath, Buffer.from(base64, 'base64'));
+    shell.showItemInFolder(savePath);
+    return { success: true, path: savePath, filename };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── POLL POST TARGETS ────────────────────────────────────────────────────────
+ipcMain.handle('poll-post-targets', async (_, postTargetIds) => {
+  const s = store.get('settings', {});
+  if (!s.supabaseUrl || !s.supabaseKey) return { success: false };
+  const supabase = createClient(s.supabaseUrl, s.supabaseKey);
+  const { data, error } = await supabase
+    .from('post_targets')
+    .select('id, status, platform_post_id, error_message, platform')
+    .in('id', postTargetIds);
+  if (error) return { success: false };
+  return { success: true, targets: data };
 });

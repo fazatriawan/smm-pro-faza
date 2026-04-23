@@ -5,7 +5,7 @@
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder build --win",
+    "build": "cd src/renderer-react && npm run build && cd ../.. && electron-builder build --win",
     "dev": "electron . --dev"
   },
   "build": {
@@ -19,14 +19,25 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
-    "files": ["src/**/*", "assets/**/*", "!**/node_modules/*/{CHANGELOG.md,README.md}"]
+    "files": [
+      "src/main/**/*",
+      "src/services/**/*",
+      "src/automation/**/*",
+      "src/renderer-react/dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ]
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "@supabase/supabase-js": "^2.103.3",
     "axios": "^1.6.0",
+    "dotenv": "^17.4.2",
     "electron-store": "^8.1.0",
+    "node-fetch": "^2.7.0",
+    "puppeteer": "^24.40.0",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "node-fetch": "^2.7.0"
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
     "electron": "^28.0.0",

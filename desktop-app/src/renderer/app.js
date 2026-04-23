@@ -99,9 +99,9 @@ function go(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`nav-${page}`)?.classList.add('active');
-  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan' };
+  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator' };
   document.getElementById('page-title').textContent = titles[page] || page;
-  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings };
+  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent };
   try {
     document.getElementById('content').innerHTML = (pages[page] || (() => ''))();
   } catch (e) {
@@ -325,21 +325,24 @@ function pageAccounts() {
           <div style="font-size:12px;color:var(--c-text-3);margin-top:3px">Untuk posting otomatis via worker</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" style="background:#1877F2;font-size:12px;padding:6px 14px" onclick="connectFacebook()">
-            📘 Facebook / Instagram
-          </button>
-          <button class="btn btn-primary" style="background:#000;font-size:12px;padding:6px 14px" onclick="connectTwitter()">
-            🐦 Twitter / X
-          </button>
-          <button class="btn btn-primary" style="background:#ff0050;font-size:12px;padding:6px 14px" onclick="connectTikTok()">
-            🎵 TikTok
-          </button>
-          <button class="btn btn-primary" style="background:#FF0000;font-size:12px;padding:6px 14px" onclick="connectYoutube()">
-            ▶️ YouTube
-          </button>
-          <button class="btn btn-primary" style="background:#000;font-size:12px;padding:6px 14px" onclick="connectThreads()">
-            🧵 Threads
-          </button>
+          ${[
+            { platform:'facebook', label:'📘 Facebook / IG', bg:'#1877F2', fn:'connectFacebook()' },
+            { platform:'twitter',  label:'🐦 Twitter / X',  bg:'#000',    fn:'connectTwitter()' },
+            { platform:'tiktok',   label:'🎵 TikTok',       bg:'#ff0050', fn:'connectTikTok()' },
+            { platform:'youtube',  label:'▶️ YouTube',       bg:'#FF0000', fn:'connectYoutube()' },
+            { platform:'threads',  label:'🧵 Threads',       bg:'#000',    fn:'connectThreads()' },
+          ].map(({ platform, label, bg, fn }) => `
+            <div style="display:flex;border-radius:8px;overflow:hidden;gap:1px">
+              <button class="btn btn-primary" style="background:${bg};font-size:12px;padding:6px 12px;border-radius:0" onclick="${fn}">
+                ${label}
+              </button>
+              <button
+                title="Copy link — buka di Chrome profile yang sesuai"
+                style="background:rgba(255,255,255,0.15);border:none;cursor:pointer;padding:6px 9px;font-size:13px;color:#fff;backdrop-filter:blur(4px)"
+                onclick="copyOAuthLink('${platform}', this)"
+              >🔗</button>
+            </div>
+          `).join('')}
         </div>
       </div>
 
@@ -1289,22 +1292,119 @@ async function runBulkPost() {
     return;
   }
 
-  // Tampilkan hasil per akun
+  // Tampilkan status awal per akun + mulai polling
+  const pendingTargets = {}; // postTargetId → { r, logId }
+  let logIdCounter = Date.now();
+
   for (const r of result.results || []) {
     const p = PLATFORMS[r.platform];
     if (r.success) {
-      const msg = scheduledAt
-        ? `📅 Dijadwalkan: ${p?.icon} ${r.username} (${new Date(scheduledAt).toLocaleString('id-ID')})`
-        : `✅ Job dikirim: ${p?.icon} ${r.username} — Job ID: ${r.jobId}`;
-      addBpLog(msg, 'success');
+      if (scheduledAt) {
+        addBpLog(`📅 Dijadwalkan: ${p?.icon} ${r.username} (${new Date(scheduledAt).toLocaleString('id-ID')})`, 'success');
+      } else {
+        const lid = `log-${logIdCounter++}`;
+        addBpLogWithId(`⏳ Menunggu: ${p?.icon} ${r.username} — memproses...`, 'info', lid);
+        pendingTargets[r.postTargetId] = { r, logId: lid };
+      }
     } else {
       addBpLog(`❌ ${p?.icon} ${r.username}: ${r.error}`, 'error');
     }
   }
 
-  const ok   = result.results?.filter(r => r.success).length || 0;
-  const fail = result.results?.filter(r => !r.success).length || 0;
-  addBpLog(`Selesai — ${ok} berhasil, ${fail} gagal`, 'info');
+  // Polling status dari Supabase
+  const targetIds = Object.keys(pendingTargets);
+  if (targetIds.length > 0) {
+    addBpLog(`⏳ Memantau status ${targetIds.length} job...`, 'info');
+    const maxWait = 120000; // 2 menit
+    const interval = 3000;
+    let elapsed = 0;
+    const remaining = new Set(targetIds);
+    let okCount   = result.results?.filter(x => !x.success).length === 0 ? 0 : 0;
+    let failCount = result.results?.filter(x => !x.success).length || 0; // queue failures
+    let doneCount = 0;
+
+    const poll = setInterval(async () => {
+      elapsed += interval;
+      const res = await window.api.pollPostTargets([...remaining]);
+      if (!res?.success) return;
+
+      for (const t of res.targets || []) {
+        if (t.status === 'published' || t.status === 'failed') {
+          const { r, logId } = pendingTargets[t.id] || {};
+          const p = PLATFORMS[t.platform];
+          if (t.status === 'published') {
+            const url = buildPostUrl(t.platform, t.platform_post_id, r?.username);
+            const linkHtml = url
+              ? ` — <a href="#" onclick="window.api.openExternal('${url}');return false;" style="color:#1565C0;text-decoration:underline;font-weight:bold;">Lihat postingan ↗</a>`
+              : '';
+            updateBpLog(logId, `✅ Berhasil: ${p?.icon} ${r?.username}${linkHtml}`, 'success');
+            okCount++;
+          } else {
+            updateBpLog(logId, `❌ Gagal: ${p?.icon} ${r?.username} — ${t.error_message || 'unknown error'}`, 'error');
+            failCount++;
+          }
+          remaining.delete(t.id);
+          doneCount++;
+        }
+      }
+
+      if (remaining.size === 0 || elapsed >= maxWait) {
+        clearInterval(poll);
+        if (remaining.size > 0) {
+          for (const tid of remaining) {
+            const { r, logId } = pendingTargets[tid] || {};
+            const p = PLATFORMS[r?.platform];
+            updateBpLog(logId, `⚠️ Timeout: ${p?.icon} ${r?.username} — cek worker`, 'warn');
+            failCount++;
+          }
+        }
+        addBpLog(`Selesai — ${okCount} berhasil, ${failCount} gagal`, okCount > 0 && failCount === 0 ? 'success' : failCount > 0 && okCount === 0 ? 'error' : 'info');
+      }
+    }, interval);
+  } else {
+    const ok   = result.results?.filter(r => r.success).length || 0;
+    const fail = result.results?.filter(r => !r.success).length || 0;
+    addBpLog(`Selesai — ${ok} berhasil, ${fail} gagal`, 'info');
+  }
+}
+
+function buildPostUrl(platform, postId, username) {
+  if (!postId) return '';
+  switch (platform) {
+    case 'twitter':   return `https://x.com/i/web/status/${postId}`;
+    case 'youtube':   return `https://www.youtube.com/watch?v=${postId}`;
+    case 'instagram': return `https://www.instagram.com/p/${postId}/`;
+    case 'threads':   return `https://www.threads.net/t/${postId}`;
+    case 'facebook':  return `https://www.facebook.com/${postId}`;
+    case 'tiktok':    return username ? `https://www.tiktok.com/@${username}/video/${postId}` : '';
+    default:          return '';
+  }
+}
+
+function addBpLogWithId(msg, type, id) {
+  const logDiv = document.getElementById('bp-log');
+  if (!logDiv) return;
+  const bgMap  = { error: '#FFEBEE', success: '#E8F5E9', warn: '#FFF8E1', info: '#E3F2FD' };
+  const fgMap  = { error: '#C62828', success: '#2E7D32', warn: '#E65100', info: '#1565C0' };
+  const time   = new Date().toLocaleTimeString('id-ID', { hour12: false });
+  const div    = document.createElement('div');
+  div.id = id;
+  div.style.cssText = `margin-bottom:6px;padding:4px 8px;border-radius:4px;background:${bgMap[type]||bgMap.info};color:${fgMap[type]||fgMap.info};font-size:11px;font-family:'Courier New',monospace;`;
+  div.innerHTML = `[${time}] ${msg}`;
+  logDiv.appendChild(div);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+function updateBpLog(id, msg, type) {
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) { addBpLog(msg, type); return; }
+  const bgMap = { error: '#FFEBEE', success: '#E8F5E9', warn: '#FFF8E1', info: '#E3F2FD' };
+  const fgMap = { error: '#C62828', success: '#2E7D32', warn: '#E65100', info: '#1565C0' };
+  const time  = new Date().toLocaleTimeString('id-ID', { hour12: false });
+  el.style.background = bgMap[type] || bgMap.info;
+  el.style.color      = fgMap[type] || fgMap.info;
+  el.innerHTML = `[${time}] ${msg}`;
 }
 
 async function exportBulkPostReport() {
@@ -1787,6 +1887,467 @@ async function clearLogs() {
   go('logs');
 }
 
+// ─── AI CONTENT GENERATOR ────────────────────────────────────────────────────
+function pageAIContent() {
+  const themes = [
+    'Pro-Pemerintah — Update Infrastruktur',
+    'Pro-Pemerintah — Capaian Ekonomi',
+    'Pro-Pemerintah — Program Sosial',
+    'Klarifikasi Pemerintah — Meluruskan Hoaks',
+    'Konten Selingan — Komedi Ringan',
+    'Konten Selingan — Tips Karir',
+    'Konten Selingan — Review Tempat',
+    'Edukasi — Kebijakan Publik',
+    'Custom — Tulis Sendiri',
+  ];
+  return `
+    <!-- Scraping Section -->
+    <div class="card" style="border-left:3px solid #1976d2;margin-top:0">
+      <div class="card-title">🌐 Scrape Data Referensi</div>
+      <p style="font-size:12px;color:var(--c-text-3);margin:0 0 14px">Ambil berita terkini atau trending topic untuk dijadikan referensi konten.</p>
+
+      <div class="grid-2" style="margin-bottom:10px">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:8px">Sumber Berita</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-antara" checked> Antara News</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-detik" checked> Detik.com</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-kompas"> Kompas</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-tempo"> Tempo</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-tribun"> Tribunnews</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0"><input type="checkbox" id="src-cnn"> CNN Indonesia</label>
+          </div>
+          <div style="margin-top:10px">
+            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3)">Kata Kunci (opsional)</label>
+            <input type="text" id="scrape-keyword" placeholder="Contoh: ekonomi, infrastruktur, Prabowo..." style="width:100%;margin-top:5px;box-sizing:border-box">
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:8px">Google Trends Indonesia</div>
+          <div style="background:var(--c-bg-2,#f8f9fa);border-radius:8px;padding:10px;min-height:60px" id="trends-box">
+            <span style="font-size:12px;color:var(--c-text-3)">Klik tombol di bawah untuk mengambil trending</span>
+          </div>
+          <button onclick="loadTrends()" style="margin-top:8px;background:#1976d2;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px" id="trends-btn">📈 Google Trends</button>
+          <span id="trends-status" style="font-size:11px;color:var(--c-text-3);margin-left:6px"></span>
+
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin:12px 0 6px">YouTube Trending Indonesia</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <select id="yt-cat" style="font-size:11px;padding:4px 6px;border-radius:5px;border:1px solid var(--c-border)">
+              <option value="">Semua Kategori</option>
+              <option value="25">📰 Berita &amp; Politik</option>
+              <option value="22">👤 People &amp; Blog</option>
+              <option value="24">🎭 Entertainment</option>
+              <option value="28">💡 Sains &amp; Teknologi</option>
+            </select>
+            <button onclick="loadYoutubeTrends()" style="background:#FF0000;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px" id="yt-trends-btn">▶️ Trending YT</button>
+          </div>
+          <div id="yt-trends-list" style="display:grid;gap:5px;max-height:200px;overflow-y:auto"></div>
+          <span id="yt-trends-status" style="font-size:11px;color:var(--c-text-3)"></span>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;align-items:center">
+        <button onclick="scrapeNewsUI()" style="background:#1976d2;color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600" id="scrape-btn">📰 Ambil Berita</button>
+        <span id="scrape-status" style="font-size:12px;color:var(--c-text-3)"></span>
+      </div>
+
+      <div id="scrape-result" style="display:none;margin-top:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:8px">Berita Ditemukan</div>
+        <div id="scrape-list" style="display:grid;gap:8px;max-height:300px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #e91e8c;margin-top:0">
+      <div class="card-title">✨ AI Content Generator</div>
+      <p style="font-size:12px;color:var(--c-text-3);margin:0 0 16px">Generate naskah konten TikTok/Reels/Carousel menggunakan Gemini AI.</p>
+
+      <div class="grid-2" style="margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label>Tipe Konten</label>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer;padding:7px 14px;border-radius:8px;border:2px solid #e91e8c;background:#fff0f6;color:#e91e8c">
+              <input type="radio" name="ai-content-type" value="video" checked style="accent-color:#e91e8c"> 🎬 Video
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer;padding:7px 14px;border-radius:8px;border:2px solid var(--c-border);color:var(--c-text)">
+              <input type="radio" name="ai-content-type" value="gambar" style="accent-color:#1976d2"> 🖼️ Gambar/Carousel
+            </label>
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Model</label>
+          <select id="ai-model" style="width:100%">
+            <option value="gemini-flash-latest">Gemini Flash Latest (Recommended)</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            <option value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Tema Konten</label>
+        <select id="ai-tema" style="width:100%" onchange="document.getElementById('ai-tema-custom').style.display=this.value==='Custom — Tulis Sendiri'?'block':'none'">
+          ${themes.map(t => `<option value="${t}">${t}</option>`).join('')}
+        </select>
+        <input type="text" id="ai-tema-custom" placeholder="Tulis tema custom..." style="display:none;margin-top:6px">
+      </div>
+
+      <div class="form-group">
+        <label>Referensi Data / Berita Hari Ini</label>
+        <textarea id="ai-data" rows="5" placeholder="Paste berita, data statistik, atau informasi yang ingin dijadikan konten...\n\nAtau klik tombol di atas untuk scrape otomatis, lalu klik berita yang ingin dipakai."></textarea>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn-primary" onclick="generateAIContent()" id="ai-btn">✨ Generate Konten</button>
+        <button onclick="showAIPrompt()" style="background:none;border:1px solid var(--c-border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;color:var(--c-text-2)">📋 Lihat &amp; Salin Prompt</button>
+        <span id="ai-status" style="font-size:12px;color:var(--c-text-3)"></span>
+      </div>
+
+      <!-- Prompt viewer -->
+      <div id="ai-prompt-box" style="display:none;margin-top:14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:6px">Prompt Lengkap (copy ke Gemini Pro)</div>
+        <textarea id="ai-prompt-text" rows="12" readonly style="width:100%;font-size:11.5px;font-family:monospace;background:var(--c-bg-2,#f4f4f4);border:1px solid var(--c-border);border-radius:6px;padding:10px;resize:vertical;box-sizing:border-box;color:var(--c-text)"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button onclick="copyAIPrompt()" style="background:#1976d2;color:#fff;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px">📋 Salin</button>
+          <button onclick="document.getElementById('ai-prompt-box').style.display='none'" style="background:none;border:1px solid var(--c-border);border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px">Tutup</button>
+          <span id="copy-status" style="font-size:11px;color:var(--c-text-3);align-self:center"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="ai-result" style="display:none">
+      <div class="card" style="border-left:3px solid #4caf50">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div class="card-title" style="margin:0">📄 Hasil Generate</div>
+          <button onclick="useAICaption()" style="background:#e91e8c;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">
+            📢 Pakai sebagai Caption Bulk Post
+          </button>
+        </div>
+        <div id="ai-result-fields" style="display:grid;gap:12px"></div>
+      </div>
+    </div>
+
+    <style>
+      .ai-field { background:var(--c-bg-2,#f8f9fa);border-radius:8px;padding:12px }
+      .ai-label { font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3,#888);margin-bottom:6px }
+      .ai-value { font-size:13px;color:var(--c-text,#222);line-height:1.6 }
+      .news-item { background:var(--c-bg-2,#f8f9fa);border-radius:8px;padding:10px 12px;cursor:pointer;border:1px solid transparent;transition:.15s }
+      .news-item:hover { border-color:#1976d2;background:#e3f2fd }
+    </style>
+  `;
+}
+
+let _aiResult = null;
+let _aiPrompts = { systemPrompt: '', userPrompt: '' };
+
+function getContentType() {
+  return document.querySelector('input[name="ai-content-type"]:checked')?.value || 'video';
+}
+
+async function generateAIContent() {
+  const temaEl = document.getElementById('ai-tema');
+  const tema = temaEl.value === 'Custom — Tulis Sendiri'
+    ? document.getElementById('ai-tema-custom').value.trim()
+    : temaEl.value;
+  const data        = document.getElementById('ai-data').value.trim();
+  const model       = document.getElementById('ai-model').value;
+  const contentType = getContentType();
+
+  if (!data) { alert('Isi dulu Referensi Data / Berita.'); return; }
+
+  const btn = document.getElementById('ai-btn');
+  const status = document.getElementById('ai-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  status.textContent = 'Menghubungi Gemini AI...';
+
+  const res = await window.api.generateContent({ tema, data, model, contentType });
+
+  btn.disabled = false;
+  btn.textContent = '✨ Generate Konten';
+
+  // Always store prompts so user can copy them
+  if (res.systemPrompt) _aiPrompts = { systemPrompt: res.systemPrompt, userPrompt: res.userPrompt };
+
+  if (!res.success) {
+    status.textContent = '❌ ' + res.error;
+    return;
+  }
+
+  _aiResult = res.result;
+  status.textContent = '✅ Selesai!';
+
+  renderAIResult(res.result, contentType);
+  document.getElementById('ai-result').style.display = 'block';
+}
+
+function renderAIResult(r, contentType) {
+  const container = document.getElementById('ai-result-fields');
+  if (!container) return;
+  window._brollBase64 = null;
+  window._brollMime   = null;
+
+  const field = (label, html, style = '') =>
+    `<div class="ai-field"><div class="ai-label">${label}</div><div class="ai-value" ${style}>${html}</div></div>`;
+
+  const hashtags = Array.isArray(r.hashtag) ? r.hashtag.join(' ') : (r.hashtag || '');
+
+  if (contentType === 'gambar') {
+    const slidesHtml = (r.slides || []).map(s => `
+      <div style="background:#fff;border-radius:6px;padding:10px;border:1px solid var(--c-border)">
+        <div style="font-size:11px;font-weight:700;color:#1976d2;margin-bottom:4px">Slide ${s.nomor}</div>
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:4px">${s.judul_slide || ''}</div>
+        <div style="font-size:12px;color:var(--c-text-2);line-height:1.6;margin-bottom:6px">${s.isi || ''}</div>
+        <div style="font-size:11px;color:var(--c-text-3);font-style:italic">🖼️ ${s.deskripsi_visual_inggris || ''}</div>
+      </div>`).join('');
+
+    container.innerHTML =
+      field('🎯 Judul', r.judul || '') +
+      field('⚡ Hook Visual (Slide 1)', r.hook_visual || '', 'style="font-size:15px;font-weight:600;color:#e91e8c"') +
+      `<div class="ai-field"><div class="ai-label">🖼️ Slides (${(r.slides||[]).length})</div><div style="display:grid;gap:8px;margin-top:4px">${slidesHtml}</div></div>` +
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">` +
+        field('💬 Caption', r.caption || '') +
+        field('# Hashtag', `<span style="color:#1976d2">${hashtags}</span>`) +
+      `</div>` +
+      `<div class="ai-field" style="border:1px solid #1976d222">
+        <div class="ai-label" style="color:#1976d2">🎨 Prompt Cover (copy ke AI Image Generator)</div>
+        <div class="ai-value" style="font-style:italic">${r.prompt_cover_inggris || '-'}</div>
+        <button onclick="navigator.clipboard.writeText(document.querySelector('#ai-result-fields .cover-prompt-text')?.textContent||'')" style="margin-top:8px;background:none;border:1px solid #1976d2;color:#1976d2;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:11px">📋 Salin Prompt Cover</button>
+      </div>`;
+
+    // store cover prompt in copyable span
+    const coverEl = container.querySelector('.ai-value:last-of-type');
+    if (r.prompt_cover_inggris && coverEl) coverEl.classList.add('cover-prompt-text');
+
+  } else {
+    // video
+    const brollPrompt = r.prompt_gambar_inggris || '';
+    container.innerHTML =
+      field('🎯 Judul', r.judul || '') +
+      field('⚡ Hook (3 Detik Pertama)', r.hook || '', 'style="font-size:15px;font-weight:600;color:#e91e8c"') +
+      field('🎬 Konsep Visual', r.visual || '') +
+      field('📝 Script Lengkap', (r.script || '').replace(/\n/g,'<br>'), 'style="white-space:pre-line;line-height:1.7"') +
+      field('📣 Call to Action', r.cta || '') +
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">` +
+        field('💬 Caption', r.caption || '') +
+        field('# Hashtag', `<span style="color:#1976d2">${hashtags}</span>`) +
+      `</div>` +
+      `<div class="ai-field" style="border:1px solid #e91e8c22">
+        <div class="ai-label" style="color:#e91e8c">🖼️ B-Roll Generator (Imagen) — butuh billing</div>
+        <div class="ai-value" style="color:var(--c-text-3);font-style:${brollPrompt?'normal':'italic'};margin-bottom:10px" id="ai-broll-prompt">${brollPrompt || '(tidak ada prompt gambar)'}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button onclick="generateBroll()" id="broll-btn" style="background:#e91e8c;color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:12px;font-weight:600">🎨 Generate B-Roll</button>
+          <button onclick="downloadBroll()" id="broll-dl-btn" style="display:none;background:#388e3c;color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:12px;font-weight:600">⬇️ Download</button>
+          <span id="broll-status" style="font-size:12px;color:var(--c-text-3)"></span>
+        </div>
+        <div id="broll-preview" style="margin-top:12px;display:none">
+          <img id="broll-img" src="" alt="B-Roll preview" style="max-width:100%;max-height:480px;border-radius:8px;display:block;margin:0 auto;box-shadow:0 2px 12px #0002">
+        </div>
+      </div>`;
+  }
+}
+
+function showAIPrompt() {
+  const box = document.getElementById('ai-prompt-box');
+  const ta  = document.getElementById('ai-prompt-text');
+  if (!box || !ta) return;
+
+  const contentType = getContentType();
+  const temaEl = document.getElementById('ai-tema');
+  const tema = temaEl?.value === 'Custom — Tulis Sendiri'
+    ? document.getElementById('ai-tema-custom')?.value?.trim()
+    : temaEl?.value;
+  const data = document.getElementById('ai-data')?.value?.trim();
+
+  // Build the combined prompt the user can paste into Gemini Pro
+  let text = '';
+  if (_aiPrompts.systemPrompt) {
+    text = `=== SYSTEM PROMPT ===\n${_aiPrompts.systemPrompt}\n\n=== USER PROMPT ===\n${_aiPrompts.userPrompt}`;
+  } else {
+    // Fallback: build from current form values
+    const typeLabel = contentType === 'gambar' ? 'Gambar/Carousel' : 'Video';
+    text = `Generate konten ${typeLabel} untuk Social Media.\n\nTema: ${tema || '(belum diisi)'}\n\nReferensi Data/Berita:\n${data || '(belum diisi)'}\n\nBalas dalam format JSON sesuai tipe konten ${typeLabel}.`;
+  }
+
+  ta.value = text;
+  box.style.display = 'block';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function copyAIPrompt() {
+  const ta = document.getElementById('ai-prompt-text');
+  if (!ta?.value) return;
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const s = document.getElementById('copy-status');
+    if (s) { s.textContent = '✅ Tersalin!'; setTimeout(() => s.textContent = '', 2000); }
+  });
+}
+
+function useAICaption() {
+  if (!_aiResult) return;
+  const caption = [_aiResult.caption, '', Array.isArray(_aiResult.hashtag) ? _aiResult.hashtag.join(' ') : _aiResult.hashtag].filter(Boolean).join('\n');
+  go('bulkpost');
+  setTimeout(() => {
+    const el = document.getElementById('bp-caption');
+    if (el) { el.value = caption; el.focus(); }
+  }, 200);
+}
+
+async function generateBroll() {
+  const prompt = document.getElementById('ai-broll-prompt')?.textContent?.trim();
+  if (!prompt || prompt === '(tidak ada prompt gambar)' || prompt === 'Prompt gambar akan muncul setelah generate konten.') {
+    alert('Generate konten dulu untuk mendapatkan prompt gambar B-roll.');
+    return;
+  }
+
+  const btn = document.getElementById('broll-btn');
+  const status = document.getElementById('broll-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  status.textContent = 'Menghubungi Imagen API...';
+
+  const res = await window.api.generateImagenBroll({ prompt });
+  btn.disabled = false;
+  btn.textContent = '🎨 Generate B-Roll';
+
+  if (!res.success) {
+    status.textContent = '❌ ' + res.error;
+    return;
+  }
+
+  window._brollBase64 = res.base64;
+  window._brollMime   = res.mimeType || 'image/png';
+  status.textContent = '✅ Gambar siap!';
+
+  const img = document.getElementById('broll-img');
+  const preview = document.getElementById('broll-preview');
+  const dlBtn = document.getElementById('broll-dl-btn');
+  img.src = `data:${window._brollMime};base64,${res.base64}`;
+  preview.style.display = 'block';
+  dlBtn.style.display = 'inline-block';
+}
+
+async function downloadBroll() {
+  if (!window._brollBase64) return;
+  const res = await window.api.downloadBrollImage({ base64: window._brollBase64, mimeType: window._brollMime });
+  if (res.success) {
+    document.getElementById('broll-status').textContent = `✅ Tersimpan: ${res.filename}`;
+  } else {
+    document.getElementById('broll-status').textContent = '❌ ' + res.error;
+  }
+}
+
+async function scrapeNewsUI() {
+  const sources = ['antara','detik','kompas','tempo','tribun','cnn'].filter(s => document.getElementById(`src-${s}`)?.checked);
+  if (!sources.length) { alert('Pilih minimal satu sumber berita.'); return; }
+  const keyword = document.getElementById('scrape-keyword')?.value.trim() || '';
+  const btn = document.getElementById('scrape-btn');
+  const status = document.getElementById('scrape-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Mengambil...';
+  status.textContent = '';
+
+  const res = await window.api.scrapeNews({ sources, keyword, limit: 5 });
+  btn.disabled = false;
+  btn.textContent = '📰 Ambil Berita';
+
+  if (!res.success || !res.articles?.length) {
+    status.textContent = res.error ? `❌ ${res.error}` : 'Tidak ada berita ditemukan.';
+    return;
+  }
+
+  status.textContent = `✅ ${res.articles.length} berita`;
+  const list = document.getElementById('scrape-list');
+  list.innerHTML = res.articles.map((a, i) => `
+    <div class="news-item" onclick="useNewsArticle(${i})" data-idx="${i}" title="Klik untuk pakai sebagai referensi">
+      <div style="font-size:12px;font-weight:600;color:var(--c-text);margin-bottom:3px">${a.title || ''}</div>
+      <div style="font-size:11px;color:var(--c-text-3)">${a.source || ''} · ${a.pubDate ? new Date(a.pubDate).toLocaleDateString('id-ID') : ''}</div>
+      ${a.description ? `<div style="font-size:11.5px;color:var(--c-text-2);margin-top:4px;line-height:1.5">${a.description.slice(0,160)}...</div>` : ''}
+    </div>
+  `).join('');
+  document.getElementById('scrape-result').style.display = 'block';
+  window._scrapedArticles = res.articles;
+}
+
+function useNewsArticle(idx) {
+  const articles = window._scrapedArticles || [];
+  const a = articles[idx];
+  if (!a) return;
+  const text = [a.title, a.description, a.link ? `Sumber: ${a.link}` : ''].filter(Boolean).join('\n\n');
+  const ta = document.getElementById('ai-data');
+  if (ta) { ta.value = (ta.value ? ta.value + '\n\n' : '') + text; ta.focus(); }
+  document.querySelectorAll('.news-item').forEach((el, i) => {
+    el.style.borderColor = i === idx ? '#1976d2' : 'transparent';
+    el.style.background  = i === idx ? '#e3f2fd' : '';
+  });
+}
+
+async function loadTrends() {
+  const btn = document.getElementById('trends-btn');
+  const status = document.getElementById('trends-status');
+  const box = document.getElementById('trends-box');
+  btn.disabled = true;
+  btn.textContent = '⏳ Memuat...';
+  status.textContent = '';
+
+  const res = await window.api.scrapeTrends();
+  btn.disabled = false;
+  btn.textContent = '📈 Ambil Trending';
+
+  if (!res.success || !res.trends?.length) {
+    status.textContent = res.error ? `❌ ${res.error}` : 'Tidak ada data';
+    return;
+  }
+
+  box.innerHTML = res.trends.slice(0, 15).map(t =>
+    `<span onclick="useTrend('${t.replace(/'/g,"&#39;")}')" style="display:inline-block;background:#1976d2;color:#fff;border-radius:12px;padding:3px 10px;font-size:11px;margin:2px;cursor:pointer">${t}</span>`
+  ).join('');
+  status.textContent = `✅ ${res.trends.length} trending`;
+}
+
+function useTrend(trend) {
+  const ta = document.getElementById('ai-data');
+  if (ta) { ta.value = (ta.value ? ta.value + '\n' : '') + `Trending: ${trend}`; ta.focus(); }
+}
+
+async function loadYoutubeTrends() {
+  const btn = document.getElementById('yt-trends-btn');
+  const status = document.getElementById('yt-trends-status');
+  const list = document.getElementById('yt-trends-list');
+  const categoryId = document.getElementById('yt-cat')?.value || '';
+  btn.disabled = true;
+  btn.textContent = '⏳ Memuat...';
+  status.textContent = '';
+  list.innerHTML = '';
+
+  const res = await window.api.getYoutubeTrends(categoryId ? { categoryId } : {});
+  btn.disabled = false;
+  btn.textContent = '▶️ Trending YT';
+
+  if (!res.success) {
+    status.textContent = `❌ ${res.error}`;
+    return;
+  }
+  if (!res.videos?.length) { status.textContent = 'Tidak ada data'; return; }
+
+  status.textContent = `✅ ${res.videos.length} video`;
+  list.innerHTML = res.videos.map((v, i) => `
+    <div class="news-item" onclick="useYoutubeVideo(${i})" style="padding:7px 10px">
+      <div style="font-size:11.5px;font-weight:600;color:var(--c-text)">${v.judul}</div>
+      <div style="font-size:10.5px;color:var(--c-text-3);margin-top:2px">${v.nama_channel} · ${(v.views||0).toLocaleString('id-ID')} views</div>
+    </div>
+  `).join('');
+  window._ytTrends = res.videos;
+}
+
+function useYoutubeVideo(idx) {
+  const v = (window._ytTrends || [])[idx];
+  if (!v) return;
+  const text = `Judul: ${v.judul}\nChannel: ${v.nama_channel}\nViews: ${v.views?.toLocaleString('id-ID')}\nURL: ${v.url_video}`;
+  const ta = document.getElementById('ai-data');
+  if (ta) { ta.value = (ta.value ? ta.value + '\n\n' : '') + text; ta.focus(); }
+}
+
 // ─── SETTINGS ──────────────────────────────────────────────────────────────
 function pageSettings() {
   return `
@@ -1847,7 +2408,7 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>Gemini API Key <span style="font-size:10px;color:var(--c-text-3);text-transform:none;font-weight:400">(AI Caption &amp; Komentar)</span></label>
-          <input type="password" id="s-gemini" value="${settings.geminiApiKey||''}" placeholder="AIza...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-gemini" value="${settings.geminiApiKey||''}" placeholder="AIza..." style="flex:1"><button type="button" onclick="toggleVisible('s-gemini')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
           <div style="font-size:11px;color:var(--c-text-3);margin-top:5px">Dapatkan di aistudio.google.com</div>
         </div>
 
@@ -1859,7 +2420,6 @@ function pageSettings() {
       </div>
     </div>
 
-    <!-- Kredensial API (untuk OAuth & Worker) -->
     <div class="card" style="border-left:3px solid #7a72dc;margin-top:0">
       <div class="card-title">🔐 Kredensial API</div>
       <div style="font-size:12px;color:var(--c-text-3);margin-bottom:14px">
@@ -1873,18 +2433,13 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>Supabase Service Key</label>
-          <input type="password" id="s-supa-key" value="${settings.supabaseKey||''}" placeholder="eyJhbGci...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-supa-key" value="${settings.supabaseKey||''}" placeholder="eyJhbGci..." style="flex:1"><button type="button" onclick="toggleVisible('s-supa-key')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
       </div>
 
       <div class="form-group">
         <label>Token Encryption Key <span style="font-size:10px;color:var(--c-text-3);text-transform:none;font-weight:400">(hex 64 karakter — sama dengan worker)</span></label>
-        <input type="password" id="s-enc-key" value="${settings.encryptionKey||''}" placeholder="043104693b...">
-      </div>
-
-      <div class="form-group">
-        <label>Upstash Redis URL <span style="font-size:10px;color:var(--c-text-3);text-transform:none;font-weight:400">(sama dengan UPSTASH_REDIS_URL di worker/.env)</span></label>
-        <input type="password" id="s-redis-url" value="${settings.upstashRedisUrl||''}" placeholder="rediss://default:...@....upstash.io:6379">
+        <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-enc-key" value="${settings.encryptionKey||''}" placeholder="043104693b..." style="flex:1"><button type="button" onclick="toggleVisible('s-enc-key')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
       </div>
 
       <div class="grid-2">
@@ -1894,7 +2449,7 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>Facebook App Secret</label>
-          <input type="password" id="s-fb-secret" value="${settings.fbAppSecret||''}" placeholder="abcdef...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-fb-secret" value="${settings.fbAppSecret||''}" placeholder="abcdef..." style="flex:1"><button type="button" onclick="toggleVisible('s-fb-secret')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
       </div>
 
@@ -1905,7 +2460,7 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>Twitter Client Secret</label>
-          <input type="password" id="s-tw-secret" value="${settings.twClientSecret||''}" placeholder="xxxx...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-tw-secret" value="${settings.twClientSecret||''}" placeholder="xxxx..." style="flex:1"><button type="button" onclick="toggleVisible('s-tw-secret')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
       </div>
 
@@ -1916,8 +2471,13 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>TikTok Client Secret</label>
-          <input type="password" id="s-tt-secret" value="${settings.tiktokClientSecret||''}" placeholder="xxxx...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-tt-secret" value="${settings.tiktokClientSecret||''}" placeholder="xxxx..." style="flex:1"><button type="button" onclick="toggleVisible('s-tt-secret')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
+      </div>
+
+      <div class="form-group">
+        <label>YouTube Data API Key <span style="font-size:10px;color:var(--c-text-3);text-transform:none;font-weight:400">(untuk Trending — console.cloud.google.com)</span></label>
+        <div style="display:flex;gap:6px"><input type="password" id="s-yt-api-key" value="${settings.youtubeApiKey||''}" placeholder="AIzaSy..." style="flex:1"><button type="button" onclick="toggleVisible('s-yt-api-key')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
       </div>
 
       <div class="grid-2">
@@ -1927,7 +2487,7 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>YouTube Client Secret</label>
-          <input type="password" id="s-yt-secret" value="${settings.ytClientSecret||''}" placeholder="GOCSPX-...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-yt-secret" value="${settings.ytClientSecret||''}" placeholder="GOCSPX-..." style="flex:1"><button type="button" onclick="toggleVisible('s-yt-secret')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
       </div>
 
@@ -1938,7 +2498,7 @@ function pageSettings() {
         </div>
         <div class="form-group">
           <label>Threads App Secret</label>
-          <input type="password" id="s-th-secret" value="${settings.threadsAppSecret||''}" placeholder="xxxx...">
+          <div style="position:relative;display:flex;gap:6px"><input type="password" id="s-th-secret" value="${settings.threadsAppSecret||''}" placeholder="xxxx..." style="flex:1"><button type="button" onclick="toggleVisible('s-th-secret')" style="background:none;border:1px solid var(--c-border);border-radius:6px;cursor:pointer;padding:0 8px;font-size:14px">👁</button></div>
         </div>
       </div>
 
@@ -1951,6 +2511,14 @@ function pageSettings() {
       style="width:100%;padding:11px;font-size:13px;border-radius:var(--r-sm)">
       💾 Simpan Pengaturan
     </button>`;
+}
+
+function toggleVisible(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.type = el.type === 'password' ? 'text' : 'password';
+  const btn = el.nextElementSibling;
+  if (btn) btn.textContent = el.type === 'password' ? '👁' : '🙈';
 }
 
 async function saveSettings() {
@@ -1972,11 +2540,11 @@ async function saveSettings() {
     twClientSecret:   document.getElementById('s-tw-secret').value.trim(),
     tiktokClientKey:  document.getElementById('s-tt-key').value.trim(),
     tiktokClientSecret: document.getElementById('s-tt-secret').value.trim(),
+    youtubeApiKey:    document.getElementById('s-yt-api-key').value.trim(),
     ytClientId:       document.getElementById('s-yt-id').value.trim(),
     ytClientSecret:   document.getElementById('s-yt-secret').value.trim(),
     threadsAppId:     document.getElementById('s-th-id').value.trim(),
     threadsAppSecret: document.getElementById('s-th-secret').value.trim(),
-    upstashRedisUrl:  document.getElementById('s-redis-url').value.trim(),
   };
   await window.api.saveSettings(settings);
 
@@ -1992,6 +2560,16 @@ async function saveSettings() {
   alert('✅ Pengaturan tersimpan!');
 }
 // ── OAuth ──────────────────────────────────────────────────────────────────
+async function copyOAuthLink(platform, btn) {
+  const result = await window.api.getOAuthLink(platform);
+  if (!result.success) { alert(`❌ ${result.error}\n\nIsi dulu di menu Pengaturan → Kredensial API.`); return; }
+  await navigator.clipboard.writeText(result.url);
+  const orig = btn.textContent;
+  btn.textContent = '✅';
+  btn.title = 'Tersalin! Tempel di Chrome profile yang sesuai.';
+  setTimeout(() => { btn.textContent = orig; btn.title = 'Copy link — buka di Chrome profile yang sesuai'; }, 3000);
+}
+
 async function connectFacebook() {
   const result = await window.api.connectFacebook();
   if (!result.success) alert(`❌ ${result.error}\n\nIsi dulu di menu Pengaturan → Kredensial API.`);

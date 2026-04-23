@@ -1,0 +1,24 @@
+﻿
+/* --- PERBAIKAN AREA KLIK & KETIK ELECTRON --- */
+input, textarea, select, button, .btn, .nav-item, label, .platform-tab, .amp-check, .bp-check, .auto-check, .action-btn {
+    -webkit-app-region: no-drag !important;
+    pointer-events: auto !important;
+}
+
+/* --- PERBAIKAN AREA KLIK & KETIK ELECTRON --- */
+input, textarea, select, button, .btn, .nav-item, label, .platform-tab, .amp-check, .bp-check, .auto-check, .action-btn {
+    -webkit-app-region: no-drag !important;
+    pointer-events: auto !important;
+}
+
+/* --- PERBAIKAN AREA KLIK & KETIK ELECTRON --- */
+input, textarea, select, button, .btn, .nav-item, label, .platform-tab, .amp-check, .bp-check, .auto-check, .action-btn {
+    -webkit-app-region: no-drag !important;
+    pointer-events: auto !important;
+}
+
+/* --- PERBAIKAN AREA KLIK & KETIK ELECTRON --- */
+input, textarea, select, button, .btn, .nav-item, label, .platform-tab, .amp-check, .bp-check, .auto-check, .action-btn {
+    -webkit-app-region: no-drag !important;
+    pointer-events: auto !important;
+}

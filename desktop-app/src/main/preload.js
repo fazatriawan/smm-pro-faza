@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, shell } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Accounts
@@ -35,11 +35,21 @@ contextBridge.exposeInMainWorld('api', {
   connectTikTok:   () => ipcRenderer.invoke('connect-tiktok'),
   connectYoutube:  () => ipcRenderer.invoke('connect-youtube'),
   connectThreads:  () => ipcRenderer.invoke('connect-threads'),
+  getOAuthLink: (platform) => ipcRenderer.invoke('get-oauth-link', platform),
   getOAuthAccounts: () => ipcRenderer.invoke('get-oauth-accounts'),
   deleteOAuthAccount: (id) => ipcRenderer.invoke('delete-oauth-account', id),
   onOAuthResult: (cb) => ipcRenderer.on('oauth-result', (_, result) => cb(result)),
 
   // Bulk Post (queue)
   submitBulkPost: (data) => ipcRenderer.invoke('submit-bulk-post', data),
+  pollPostTargets: (ids)  => ipcRenderer.invoke('poll-post-targets', ids),
   uploadMedia: (filePath) => ipcRenderer.invoke('upload-media', filePath),
+  openExternal: (url) => shell.openExternal(url),
+  generateContent:     (data)    => ipcRenderer.invoke('generate-content', data),
+  scrapeNews:          (cfg)     => ipcRenderer.invoke('scrape-news', cfg),
+  scrapeTrends:        ()        => ipcRenderer.invoke('scrape-trends'),
+  analyzeSentiment:    (data)    => ipcRenderer.invoke('analyze-sentiment', data),
+  generateImagenBroll: (data)    => ipcRenderer.invoke('generate-imagen-broll', data),
+  downloadBrollImage:  (data)    => ipcRenderer.invoke('download-broll-image', data),
+  getYoutubeTrends:    (data)    => ipcRenderer.invoke('get-youtube-trends', data),
 });
