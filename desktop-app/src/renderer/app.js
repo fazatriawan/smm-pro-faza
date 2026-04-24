@@ -73,10 +73,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     window.api.onLog((log) => {
       logs.unshift({ ...log, timestamp: new Date().toISOString() });
       addToLiveLog(log);
-      // Forward ke bp-log jika sedang di halaman bulk post
-      if (currentPage === 'bulkpost') {
-        addBpLog(log.message, log.type, log.url || null);
-      }
     });
 
     window.api.onOAuthResult(async (result) => {
@@ -165,10 +161,10 @@ function addToLiveLog(log) {
 
   if (log.url) {
     const a = document.createElement('a');
-    a.href = '#';
+    a.href = 'javascript:void(0)';
     a.textContent = 'Lihat ↗';
-    a.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);text-decoration:none;color:inherit;white-space:nowrap;flex-shrink:0';
-    a.onclick = (e) => { e.preventDefault(); window.api.openExternal(log.url); };
+    a.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);text-decoration:none;color:inherit;white-space:nowrap;flex-shrink:0;cursor:pointer';
+    a.onclick = () => window.api.openExternal(log.url);
     el.appendChild(a);
   }
 
@@ -373,27 +369,33 @@ function pageAccounts() {
            </div>`
         : Object.entries(PLATFORMS)
             .filter(([p]) => oauthByPlatform[p]?.length > 0)
-            .map(([platform, p]) => `
-              <div style="margin-bottom:12px">
-                <div style="padding:8px 12px;background:${p.bg};border-radius:8px;display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                  <span style="font-size:16px">${p.icon}</span>
-                  <span style="font-size:13px;font-weight:600;color:${p.color};flex:1">${p.label}</span>
-                  <span style="font-size:12px;color:${p.color}">${oauthByPlatform[platform].length} akun</span>
-                </div>
-                ${oauthByPlatform[platform].map(a => `
-                  <div class="account-row" style="margin-left:8px">
-                    <div class="avatar" style="background:${p.color}">${(a.username||'?')[0].toUpperCase()}</div>
-                    <div style="flex:1">
-                      <div style="font-size:13px;font-weight:500">${a.username || a.platform_uid}</div>
-                      <div style="font-size:11px;color:#888;margin-top:2px">ID: ${a.platform_uid}</div>
-                    </div>
-                    <span class="badge ${a.is_active ? 'badge-success' : 'badge-warn'}">${a.is_active ? 'Aktif' : 'Nonaktif'}</span>
-                    <button class="btn btn-danger" style="font-size:11px;padding:4px 8px"
-                      onclick="removeOAuthAccount('${a.id}')">Lepas</button>
+            .map(([platform, p]) => {
+              const colId = 'oauth-' + platform;
+              return `
+                <div style="margin-bottom:10px">
+                  <div style="padding:8px 12px;background:${p.bg};border-radius:8px;display:flex;align-items:center;gap:8px;margin-bottom:4px;cursor:pointer;user-select:none" onclick="toggleSection('${colId}')">
+                    <span style="font-size:16px">${p.icon}</span>
+                    <span style="font-size:13px;font-weight:600;color:${p.color};flex:1">${p.label}</span>
+                    <span style="font-size:12px;color:${p.color}">${oauthByPlatform[platform].length} akun</span>
+                    <span id="${colId}-arrow" style="font-size:11px;color:${p.color};transition:transform 0.15s;display:inline-block">▾</span>
                   </div>
-                `).join('')}
-              </div>
-            `).join('')
+                  <div id="${colId}">
+                    ${oauthByPlatform[platform].map(a => `
+                      <div class="account-row" style="margin-left:8px">
+                        <div class="avatar" style="background:${p.color}">${(a.username||'?')[0].toUpperCase()}</div>
+                        <div style="flex:1">
+                          <div style="font-size:13px;font-weight:500">${a.username || a.platform_uid}</div>
+                          <div style="font-size:11px;color:#888;margin-top:2px">ID: ${a.platform_uid}</div>
+                        </div>
+                        <span class="badge ${a.is_active ? 'badge-success' : 'badge-warn'}">${a.is_active ? 'Aktif' : 'Nonaktif'}</span>
+                        <button class="btn btn-danger" style="font-size:11px;padding:4px 8px"
+                          onclick="removeOAuthAccount('${a.id}')">Lepas</button>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')
       }
     </div>`;
 
@@ -426,41 +428,51 @@ function pageAccounts() {
       </div>
     </div>
 
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div class="card-title" style="margin:0">Daftar Akun (${accounts.length})</div>
-        <button class="btn btn-primary" onclick="cancelEdit(); showForm('add-form')">+ Tambah Akun</button>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;cursor:pointer;user-select:none" onclick="toggleSection('puppet-list')">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="card-title" style="margin:0">Daftar Akun (${accounts.length})</div>
+          <span id="puppet-list-arrow" style="font-size:11px;color:#aaa;transition:transform 0.15s;display:inline-block">▾</span>
+        </div>
+        <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="event.stopPropagation();cancelEdit();showForm('add-form')">+ Tambah Akun</button>
       </div>
-
-      ${accounts.length === 0
-        ? `<div style="text-align:center;padding:40px;color:#aaa"><div style="font-size:48px;margin-bottom:12px">👤</div><div>Belum ada akun — klik "+ Tambah Akun" untuk mulai</div></div>`
-        : Object.entries(PLATFORMS).filter(([p]) => byPlatform[p]?.length > 0).map(([platform, p]) => `
-            <div style="margin-bottom:14px">
-              <div style="padding:10px 14px;background:${p.bg};border-radius:8px;display:flex;align-items:center;gap:10px;margin-bottom:8px">
-                <span style="font-size:18px">${p.icon}</span>
-                <span style="font-size:13px;font-weight:600;color:${p.color};flex:1">${p.label}</span>
-                <span style="font-size:12px;color:${p.color};font-weight:500">${byPlatform[platform].length} akun</span>
-              </div>
-              ${byPlatform[platform].map(a => `
-                <div class="account-row" style="margin-left:8px">
-                  <input type="checkbox" value="${a.id}" class="acc-check" style="width:16px;height:16px;flex-shrink:0;cursor:pointer" onchange="updateLoginCheckCount()">
-                  <div class="avatar" style="background:${p.color}">${(a.username||'?')[0].toUpperCase()}</div>
-                  <div style="flex:1">
-                    <div style="font-size:13px;font-weight:500">${a.username}</div>
-                    <div style="font-size:11px;color:#888;margin-top:2px">
-                      ${getTwoFALabel(a.twoFAType)} •
-                      <span data-acc-status="${a.id}">${a.cookies ? '✅ Sudah Login' : '○ Belum Login'}</span>
-                    </div>
+      <div id="puppet-list" style="border-top:0.5px solid rgba(0,0,0,0.07);padding:12px 16px 4px">
+        ${accounts.length === 0
+          ? `<div style="text-align:center;padding:40px;color:#aaa"><div style="font-size:48px;margin-bottom:12px">👤</div><div>Belum ada akun — klik "+ Tambah Akun" untuk mulai</div></div>`
+          : Object.entries(PLATFORMS).filter(([p]) => byPlatform[p]?.length > 0).map(([platform, p]) => {
+              const colId = 'puppet-' + platform;
+              return `
+                <div style="margin-bottom:12px">
+                  <div style="padding:8px 12px;background:${p.bg};border-radius:8px;display:flex;align-items:center;gap:10px;margin-bottom:6px;cursor:pointer;user-select:none" onclick="toggleSection('${colId}')">
+                    <span style="font-size:16px">${p.icon}</span>
+                    <span style="font-size:13px;font-weight:600;color:${p.color};flex:1">${p.label}</span>
+                    <span style="font-size:12px;color:${p.color};font-weight:500">${byPlatform[platform].length} akun</span>
+                    <span id="${colId}-arrow" style="font-size:11px;color:${p.color};transition:transform 0.15s;display:inline-block">▾</span>
                   </div>
-                  <span class="badge ${a.cookies ? 'badge-success' : 'badge-warn'}" data-acc-badge="${a.id}">${a.cookies ? 'Aktif' : 'Belum Login'}</span>
-                  <button class="btn btn-primary" style="font-size:11px;padding:4px 8px;background:#6960c8" onclick="loginAccount('${a.id}')">🔑 Login</button>
-                  <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="editAccount('${a.id}')">✏️ Edit</button>
-                  <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="clearCookies('${a.id}')">Reset Sesi</button>
-                  <button class="btn btn-danger" style="font-size:11px;padding:4px 8px" onclick="deleteAccount('${a.id}')">Hapus</button>
+                  <div id="${colId}">
+                    ${byPlatform[platform].map(a => `
+                      <div class="account-row" style="margin-left:8px">
+                        <input type="checkbox" value="${a.id}" class="acc-check" style="width:16px;height:16px;flex-shrink:0;cursor:pointer" onchange="updateLoginCheckCount()">
+                        <div class="avatar" style="background:${p.color}">${(a.username||'?')[0].toUpperCase()}</div>
+                        <div style="flex:1">
+                          <div style="font-size:13px;font-weight:500">${a.username}</div>
+                          <div style="font-size:11px;color:#888;margin-top:2px">
+                            ${getTwoFALabel(a.twoFAType)} •
+                            <span data-acc-status="${a.id}">${a.cookies ? '✅ Sudah Login' : '○ Belum Login'}</span>
+                          </div>
+                        </div>
+                        <span class="badge ${a.cookies ? 'badge-success' : 'badge-warn'}" data-acc-badge="${a.id}">${a.cookies ? 'Aktif' : 'Belum Login'}</span>
+                        <button class="btn btn-primary" style="font-size:11px;padding:4px 8px;background:#6960c8" onclick="loginAccount('${a.id}')">🔑 Login</button>
+                        <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="editAccount('${a.id}')">✏️ Edit</button>
+                        <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="clearCookies('${a.id}')">Reset Sesi</button>
+                        <button class="btn btn-danger" style="font-size:11px;padding:4px 8px" onclick="deleteAccount('${a.id}')">Hapus</button>
+                      </div>
+                    `).join('')}
+                  </div>
                 </div>
-              `).join('')}
-            </div>
-          `).join('')}
+              `;
+            }).join('')}
+      </div>
     </div>
 
     <!-- Form Tambah / Edit Akun -->
@@ -533,6 +545,15 @@ function pageAccounts() {
       </div>
     </div>
   `;
+}
+
+function toggleSection(id) {
+  const el    = document.getElementById(id);
+  const arrow = document.getElementById(id + '-arrow');
+  if (!el) return;
+  const nowHidden = el.style.display === 'none';
+  el.style.display = nowHidden ? '' : 'none';
+  if (arrow) arrow.style.transform = nowHidden ? 'rotate(0deg)' : 'rotate(-90deg)';
 }
 
 function getTwoFALabel(type) {
@@ -1273,10 +1294,10 @@ function addBpLog(message, type = 'info', url = null) {
 
   if (url) {
     const link = document.createElement('a');
-    link.href = '#';
+    link.href = 'javascript:void(0)';
     link.textContent = 'Lihat ↗';
-    link.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);color:inherit;text-decoration:none;white-space:nowrap;flex-shrink:0';
-    link.onclick = (e) => { e.preventDefault(); window.api.openExternal(url); };
+    link.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);color:inherit;text-decoration:none;white-space:nowrap;flex-shrink:0;cursor:pointer';
+    link.onclick = () => window.api.openExternal(url);
     entry.appendChild(link);
   }
 
@@ -1369,11 +1390,8 @@ async function runBulkPost() {
           const { r, logId } = pendingTargets[t.id] || {};
           const p = PLATFORMS[t.platform];
           if (t.status === 'published') {
-            const url = buildPostUrl(t.platform, t.platform_post_id, r?.username);
-            const linkHtml = url
-              ? ` — <a href="#" onclick="window.api.openExternal('${url}');return false;" style="color:#1565C0;text-decoration:underline;font-weight:bold;">Lihat postingan ↗</a>`
-              : '';
-            updateBpLog(logId, `✅ Berhasil: ${p?.icon} ${r?.username}${linkHtml}`, 'success');
+            const url = t.post_url || buildPostUrl(t.platform, t.platform_post_id, r?.username);
+            updateBpLog(logId, `✅ Berhasil: ${p?.icon} ${r?.username}`, 'success', url || null);
             okCount++;
           } else {
             updateBpLog(logId, `❌ Gagal: ${p?.icon} ${r?.username} — ${t.error_message || 'unknown error'}`, 'error');
@@ -1431,16 +1449,31 @@ function addBpLogWithId(msg, type, id) {
   logDiv.scrollTop = logDiv.scrollHeight;
 }
 
-function updateBpLog(id, msg, type) {
+function updateBpLog(id, msg, type, url) {
   if (!id) return;
   const el = document.getElementById(id);
-  if (!el) { addBpLog(msg, type); return; }
+  if (!el) { addBpLog(msg, type, url); return; }
   const bgMap = { error: '#FFEBEE', success: '#E8F5E9', warn: '#FFF8E1', info: '#E3F2FD' };
   const fgMap = { error: '#C62828', success: '#2E7D32', warn: '#E65100', info: '#1565C0' };
   const time  = new Date().toLocaleTimeString('id-ID', { hour12: false });
-  el.style.background = bgMap[type] || bgMap.info;
-  el.style.color      = fgMap[type] || fgMap.info;
-  el.innerHTML = `[${time}] ${msg}`;
+  el.style.background     = bgMap[type] || bgMap.info;
+  el.style.color          = fgMap[type] || fgMap.info;
+  el.style.display        = 'flex';
+  el.style.alignItems     = 'center';
+  el.style.justifyContent = 'space-between';
+  el.style.gap            = '8px';
+  el.innerHTML            = '';
+  const span = document.createElement('span');
+  span.textContent = `[${time}] ${msg}`;
+  el.appendChild(span);
+  if (url) {
+    const link = document.createElement('a');
+    link.href = 'javascript:void(0)';
+    link.textContent = 'Lihat postingan ↗';
+    link.style.cssText = 'font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,0.08);color:inherit;text-decoration:none;white-space:nowrap;flex-shrink:0;cursor:pointer';
+    link.onclick = () => window.api.openExternal(url);
+    el.appendChild(link);
+  }
 }
 
 async function exportBulkPostReport() {

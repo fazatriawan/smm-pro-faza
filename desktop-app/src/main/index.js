@@ -282,10 +282,16 @@ function buildTikTokOAuth(s) {
   const { url, codeVerifier } = oauthHandlers.buildTikTokUrl(s.tiktokClientKey);
   _tiktokOAuthUrl     = url;
   _tiktokCodeVerifier = codeVerifier;
+  const capturedVerifier = codeVerifier;
   setPending('tiktok', async (code) => {
-    const result = await oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret, _tiktokCodeVerifier);
-    _tiktokOAuthUrl = null; _tiktokCodeVerifier = null; // clear after use
-    return result;
+    try {
+      const result = await oauthHandlers.handleTikTokCallback(code, s.tiktokClientKey, s.tiktokClientSecret, capturedVerifier);
+      _tiktokOAuthUrl = null; _tiktokCodeVerifier = null;
+      return result;
+    } catch (err) {
+      _tiktokOAuthUrl = null; _tiktokCodeVerifier = null; // clear on error so next retry generates fresh PKCE
+      throw err;
+    }
   });
   return { url, codeVerifier };
 }
@@ -748,6 +754,11 @@ ipcMain.handle('download-broll-image', async (_, { base64, mimeType }) => {
   }
 });
 
+// ─── OPEN EXTERNAL URL ────────────────────────────────────────────────────────
+ipcMain.handle('open-external', async (_, url) => {
+  await shell.openExternal(url);
+});
+
 // ─── POLL POST TARGETS ────────────────────────────────────────────────────────
 ipcMain.handle('poll-post-targets', async (_, postTargetIds) => {
   const s = store.get('settings', {});
@@ -755,7 +766,7 @@ ipcMain.handle('poll-post-targets', async (_, postTargetIds) => {
   const supabase = createClient(s.supabaseUrl, s.supabaseKey);
   const { data, error } = await supabase
     .from('post_targets')
-    .select('id, status, platform_post_id, error_message, platform')
+    .select('id, status, platform_post_id, post_url, error_message, platform')
     .in('id', postTargetIds);
   if (error) return { success: false };
   return { success: true, targets: data };

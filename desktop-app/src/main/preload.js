@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   submitBulkPost: (data) => ipcRenderer.invoke('submit-bulk-post', data),
   pollPostTargets: (ids)  => ipcRenderer.invoke('poll-post-targets', ids),
   uploadMedia: (filePath) => ipcRenderer.invoke('upload-media', filePath),
-  openExternal: (url) => shell.openExternal(url),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   generateContent:     (data)    => ipcRenderer.invoke('generate-content', data),
   scrapeNews:          (cfg)     => ipcRenderer.invoke('scrape-news', cfg),
   scrapeTrends:        ()        => ipcRenderer.invoke('scrape-trends'),

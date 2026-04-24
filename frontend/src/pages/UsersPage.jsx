@@ -10,6 +10,11 @@ export default function UsersPage() {
   const { token } = useAuthStore();
   const [connecting, setConnecting] = useState(false);
   const [copiedPlatform, setCopiedPlatform] = useState(null);
+  const [collapsedPlatforms, setCollapsedPlatforms] = useState({
+    facebook: true, facebook_personal: true, instagram: true,
+    threads: true, youtube: true, twitter: true, tiktok: true,
+  });
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
@@ -21,26 +26,19 @@ export default function UsersPage() {
     onSuccess: () => { toast.success('Akun diputus'); qc.invalidateQueries({ queryKey: ['accounts'] }); }
   });
 
-  // Cek kalau baru connect dari OAuth
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'threads') {
-      toast.success('Threads berhasil terhubung!');
-      qc.invalidateQueries({ queryKey: ['accounts'] });
-      window.history.replaceState({}, '', '/users');
-    }
-    if (params.get('connected') === 'twitter') {
-      toast.success('Twitter/X berhasil terhubung!');
-      qc.invalidateQueries({ queryKey: ['accounts'] });
-      window.history.replaceState({}, '', '/users');
-    }
-    if (params.get('connected') === 'youtube') {
-      toast.success('YouTube berhasil terhubung!');
-      qc.invalidateQueries({ queryKey: ['accounts'] });
-      window.history.replaceState({}, '', '/users');
-    }
-    if (params.get('connected') === 'facebook') {
-      toast.success('Facebook & Instagram berhasil terhubung!');
+    const connected = params.get('connected');
+    const labels = {
+      threads:  'Threads berhasil terhubung!',
+      twitter:  'Twitter/X berhasil terhubung!',
+      youtube:  'YouTube berhasil terhubung!',
+      facebook: 'Facebook & Instagram berhasil terhubung!',
+      tiktok:   'TikTok berhasil terhubung!',
+      personal: 'Facebook Personal berhasil terhubung!',
+    };
+    if (connected && labels[connected]) {
+      toast.success(labels[connected]);
       qc.invalidateQueries({ queryKey: ['accounts'] });
       window.history.replaceState({}, '', '/users');
     }
@@ -51,11 +49,12 @@ export default function UsersPage() {
   }, [qc]);
 
   const OAUTH_ENDPOINTS = {
-    facebook: '/auth/facebook',
+    facebook:          '/auth/facebook',
     facebook_personal: '/auth/facebook/personal',
-    youtube: '/auth/youtube',
-    twitter: '/auth/twitter',
-    threads: '/auth/threads',
+    youtube:           '/auth/youtube',
+    twitter:           '/auth/twitter',
+    threads:           '/auth/threads',
+    tiktok:            '/auth/tiktok',
   };
 
   const fetchOAuthUrl = async (platform) => {
@@ -72,7 +71,7 @@ export default function UsersPage() {
       setConnecting(true);
       const url = await fetchOAuthUrl(platform);
       window.location.href = url;
-    } catch (err) {
+    } catch {
       toast.error('Gagal memulai koneksi');
     } finally {
       setConnecting(false);
@@ -87,47 +86,53 @@ export default function UsersPage() {
       setCopiedPlatform(platform);
       toast.success('Link disalin! Buka di Chrome profile yang sesuai.');
       setTimeout(() => setCopiedPlatform(null), 3000);
-    } catch (err) {
+    } catch {
       toast.error('Gagal menyalin link');
     } finally {
       setConnecting(false);
     }
   };
 
-  const connectFacebook = () => connectPlatform('facebook');
-  const connectFacebookPersonal = () => connectPlatform('facebook_personal');
-  const connectYoutube = () => connectPlatform('youtube');
-  const connectTwitter = () => connectPlatform('twitter');
-  const connectThreads = () => connectPlatform('threads');
-
-  // Group akun berdasarkan platform
-  // Tambahkan facebook_personal ke PLATFORMS display
-  const PLATFORMS_EXTENDED = {
-    facebook: { label: 'Facebook Pages', short: 'FB', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
-    facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
-    instagram: { label: 'Instagram', short: 'IG', color: '#D4537E', bg: '#FBEAF0', text: '#A02060' },
-    threads: { label: 'Threads', short: 'TH', color: '#000000', bg: '#f0efec', text: '#333' },
-    youtube: { label: 'YouTube', short: 'YT', color: '#FF0000', bg: '#FAECE7', text: '#CC0000' },
-    twitter: { label: 'X/Twitter', short: 'X', color: '#888780', bg: '#F1EFE8', text: '#555' },
-    tiktok: { label: 'TikTok', short: 'TT', color: '#639922', bg: '#EAF3DE', text: '#3B6D11' },
+  const togglePlatformCollapse = (platform) => {
+    setCollapsedPlatforms(prev => ({ ...prev, [platform]: !prev[platform] }));
   };
 
-  // Akun yang bermasalah
-  const problematicAccounts = accounts.filter(a => 
-    !a.isActive || 
-    a.tokenError || 
+  const collapseAll = () => {
+    setCollapsedPlatforms(Object.fromEntries(
+      Object.keys(collapsedPlatforms).map(k => [k, true])
+    ));
+  };
+
+  const expandAll = () => {
+    setCollapsedPlatforms(Object.fromEntries(
+      Object.keys(collapsedPlatforms).map(k => [k, false])
+    ));
+  };
+
+  const PLATFORMS_EXTENDED = {
+    facebook:          { label: 'Facebook Pages',    short: 'FB', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
+    facebook_personal: { label: 'Facebook Personal', short: 'FP', color: '#1877F2', bg: '#E6F1FB', text: '#185FA5' },
+    instagram:         { label: 'Instagram',         short: 'IG', color: '#D4537E', bg: '#FBEAF0', text: '#A02060' },
+    threads:           { label: 'Threads',           short: 'TH', color: '#000000', bg: '#f0efec', text: '#333' },
+    youtube:           { label: 'YouTube',           short: 'YT', color: '#FF0000', bg: '#FAECE7', text: '#CC0000' },
+    twitter:           { label: 'X/Twitter',         short: 'X',  color: '#888780', bg: '#F1EFE8', text: '#555' },
+    tiktok:            { label: 'TikTok',            short: 'TT', color: '#639922', bg: '#EAF3DE', text: '#3B6D11' },
+  };
+
+  const CONNECT_BUTTONS = [
+    { key: 'facebook',          label: 'f+ Facebook & IG',  bg: '#1877F2', color: '#fff',    border: 'none' },
+    { key: 'facebook_personal', label: 'f Personal',        bg: '#E6F1FB', color: '#1877F2', border: '1px solid #1877F2' },
+    { key: 'youtube',           label: '▶ YouTube',         bg: '#FF0000', color: '#fff',    border: 'none' },
+    { key: 'twitter',           label: '𝕏 Twitter',         bg: '#000',    color: '#fff',    border: 'none' },
+    { key: 'threads',           label: '@ Threads',         bg: '#000',    color: '#fff',    border: 'none' },
+    { key: 'tiktok',            label: '♪ TikTok',          bg: '#000',    color: '#fff',    border: 'none' },
+  ];
+
+  const problematicAccounts = accounts.filter(a =>
+    !a.isActive ||
+    a.tokenError ||
     (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
   );
-
-  const [collapsedPlatforms, setCollapsedPlatforms] = useState({ facebook: true, instagram: true, youtube: true, twitter: true, tiktok: true, threads: true, facebook_personal: true });
-  const [showNotifications, setShowNotifications] = useState(false);
-
-  const togglePlatformCollapse = (platform) => {
-    setCollapsedPlatforms(prev => ({
-      ...prev,
-      [platform]: !prev[platform]
-    }));
-  };
 
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
@@ -135,14 +140,7 @@ export default function UsersPage() {
     return acc;
   }, {});
 
-  const mockAccounts = [
-    { _id: '1', label: '@brand_official', platform: 'facebook', platformUsername: 'Brand Official', isActive: true },
-    { _id: '2', label: '@brand_official', platform: 'instagram', platformUsername: 'brand_official', isActive: true },
-    { _id: '3', label: '@promo_store', platform: 'facebook', platformUsername: 'Promo Store', isActive: true },
-    { _id: '4', label: '@promo_store', platform: 'instagram', platformUsername: 'promo_store', isActive: true },
-  ];
-
-  const displayAccounts = accounts.length > 0 ? accounts : mockAccounts;
+  const hasAnyAccount = accounts.length > 0;
 
   return (
     <div>
@@ -150,16 +148,10 @@ export default function UsersPage() {
         <span className="page-title">Akun & User</span>
         <div className="page-actions">
           <span style={{ fontSize: 12, color: '#888' }}>
-            {displayAccounts.length} akun terhubung
+            {accounts.length} akun terhubung
           </span>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {[
-              { key: 'facebook', label: 'f+ Facebook & IG', bg: '#1877F2', color: '#fff', border: 'none' },
-              { key: 'facebook_personal', label: 'f Personal', bg: '#E6F1FB', color: '#1877F2', border: '1px solid #1877F2' },
-              { key: 'youtube', label: '▶ YouTube', bg: '#FF0000', color: '#fff', border: 'none' },
-              { key: 'twitter', label: '𝕏 Twitter', bg: '#000', color: '#fff', border: 'none' },
-              { key: 'threads', label: '@ Threads', bg: '#000', color: '#fff', border: 'none' },
-            ].map(({ key, label, bg, color, border }) => (
+            {CONNECT_BUTTONS.map(({ key, label, bg, color, border }) => (
               <div key={key} style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: border || 'none' }}>
                 <button
                   onClick={() => connectPlatform(key)}
@@ -188,7 +180,7 @@ export default function UsersPage() {
       </div>
 
       <div className="page-content">
-        {/* Notifikasi Bell */}
+        {/* Notifikasi akun bermasalah */}
         {problematicAccounts.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div
@@ -196,30 +188,19 @@ export default function UsersPage() {
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8,
                 padding: '8px 14px', borderRadius: 20, cursor: 'pointer',
-                background: '#FCEBEB', border: '1px solid #E24B4A',
-                userSelect: 'none'
+                background: '#FCEBEB', border: '1px solid #E24B4A', userSelect: 'none'
               }}
             >
               <span style={{ fontSize: 16 }}>🔔</span>
               <span style={{ fontSize: 13, fontWeight: 600, color: '#A32D2D' }}>
                 {problematicAccounts.length} akun bermasalah
               </span>
-              <span style={{ fontSize: 11, color: '#E24B4A' }}>
-                {showNotifications ? '▲' : '▼'}
-              </span>
+              <span style={{ fontSize: 11, color: '#E24B4A' }}>{showNotifications ? '▲' : '▼'}</span>
             </div>
-
             {showNotifications && (
-              <div style={{
-                marginTop: 8, background: '#FCEBEB',
-                border: '1px solid #E24B4A', borderRadius: 10,
-                padding: '12px 16px'
-              }}>
+              <div style={{ marginTop: 8, background: '#FCEBEB', border: '1px solid #E24B4A', borderRadius: 10, padding: '12px 16px' }}>
                 {problematicAccounts.map(a => (
-                  <div key={a._id} style={{
-                    fontSize: 12, color: '#A32D2D', marginBottom: 6,
-                    display: 'flex', alignItems: 'flex-start', gap: 6
-                  }}>
+                  <div key={a._id} style={{ fontSize: 12, color: '#A32D2D', marginBottom: 6, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                     <span>•</span>
                     <div>
                       <span style={{ fontWeight: 600 }}>{a.label}</span>
@@ -235,101 +216,95 @@ export default function UsersPage() {
             )}
           </div>
         )}
+
         {/* Info Banner */}
-        <div style={{
-          background: '#E6F1FB', borderRadius: 10, padding: '12px 16px',
-          marginBottom: 14, fontSize: 13, color: '#185FA5',
-          display: 'flex', alignItems: 'center', gap: 10
-        }}>
+        <div style={{ background: '#E6F1FB', borderRadius: 10, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#185FA5', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span>ℹ</span>
-          <span>Klik <b>"Connect Facebook & Instagram"</b> untuk menghubungkan semua Facebook Pages dan akun Instagram bisnis kamu sekaligus.</span>
+          <span>Klik <b>"f+ Facebook & IG"</b> untuk menghubungkan semua Facebook Pages dan Instagram bisnis sekaligus.</span>
         </div>
+
+        {/* Collapse controls */}
+        {hasAnyAccount && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <button
+              onClick={collapseAll}
+              style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'none', cursor: 'pointer', color: '#555' }}
+            >
+              ▸ Semua Ringkas
+            </button>
+            <button
+              onClick={expandAll}
+              style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.15)', background: 'none', cursor: 'pointer', color: '#555' }}
+            >
+              ▾ Semua Buka
+            </button>
+          </div>
+        )}
 
         {/* Akun per Platform */}
         {Object.entries(PLATFORMS_EXTENDED).map(([key, p]) => {
-          const platformAccounts = displayAccounts.filter(a => a.platform === key);
+          const platformAccounts = byPlatform[key] || [];
           if (platformAccounts.length === 0) return null;
+          const isCollapsed = collapsedPlatforms[key] !== false;
           return (
-            <div key={key} className="card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div key={key} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <div
+                onClick={() => togglePlatformCollapse(key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 16px', cursor: 'pointer', userSelect: 'none',
+                  borderBottom: isCollapsed ? 'none' : '0.5px solid rgba(0,0,0,0.06)',
+                }}
+              >
                 <div style={{
-                  width: 32, height: 32, borderRadius: 8,
+                  width: 28, height: 28, borderRadius: 7, flexShrink: 0,
                   background: p.bg, display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', fontSize: 13, fontWeight: 700, color: p.text
+                  justifyContent: 'center', fontSize: 12, fontWeight: 700, color: p.text
                 }}>{p.short}</div>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>{p.label}</div>
-                <div style={{ marginLeft: 'auto', fontSize: 12, color: '#aaa' }}>
-                  {platformAccounts.length} akun
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: '#aaa' }}>{platformAccounts.length} akun</span>
+                  <span style={{ fontSize: 11, color: '#bbb', transition: 'transform 0.15s', display: 'inline-block', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>▾</span>
                 </div>
               </div>
-              {platformAccounts.map((acc, i) => (
-                <div key={acc._id || i} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 0', borderBottom: '0.5px solid rgba(0,0,0,0.06)'
-                }}>
-                  <Avatar name={acc.platformUsername || acc.label} size={28} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{acc.label}</div>
-                    <div style={{ fontSize: 11, color: '#aaa' }}>@{acc.platformUsername}</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{
-                      width: 7, height: 7, borderRadius: '50%',
-                      background: acc.isActive ? '#1D9E75' : '#E24B4A'
-                    }} />
-                    <span style={{ fontSize: 11, color: '#888' }}>
-                      {acc.isActive ? 'Aktif' : 'Nonaktif'}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => disconnect.mutate(acc._id)}
-                    style={{
-                      fontSize: 11, padding: '3px 8px', borderRadius: 6,
-                      border: '0.5px solid rgba(0,0,0,0.1)',
-                      background: 'none', cursor: 'pointer', color: '#E24B4A'
-                    }}
-                  >Putus</button>
+              {!isCollapsed && (
+                <div style={{ padding: '4px 16px 10px' }}>
+                  {platformAccounts.map((acc, i) => (
+                    <div key={acc._id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: i < platformAccounts.length - 1 ? '0.5px solid rgba(0,0,0,0.05)' : 'none' }}>
+                      <Avatar name={acc.platformUsername || acc.label} size={28} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>{acc.label}</div>
+                        <div style={{ fontSize: 11, color: '#aaa' }}>@{acc.platformUsername}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: acc.isActive ? '#1D9E75' : '#E24B4A' }} />
+                        <span style={{ fontSize: 11, color: '#888' }}>{acc.isActive ? 'Aktif' : 'Nonaktif'}</span>
+                      </div>
+                      <button
+                        onClick={() => disconnect.mutate(acc._id)}
+                        style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.1)', background: 'none', cursor: 'pointer', color: '#E24B4A' }}
+                      >Putus</button>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           );
         })}
 
-        {/* Kalau belum ada akun terkoneksi */}
-        {displayAccounts.length === 0 && (
+        {/* Empty state */}
+        {accounts.length === 0 && (
           <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>🔗</div>
             <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Belum ada akun terhubung</div>
             <div style={{ fontSize: 13, color: '#888', marginBottom: 16 }}>
               Mulai dengan menghubungkan akun Facebook & Instagram kamu
             </div>
-            <button
-              className="btn-primary"
-              onClick={connectFacebook}
-              style={{ background: '#1877F2' }}
-            >
+            <button className="btn-primary" onClick={() => connectPlatform('facebook')} style={{ background: '#1877F2' }}>
               f+ Connect Facebook & Instagram
             </button>
           </div>
         )}
-
-        {/* Platform belum tersedia */}
-        <div className="card" style={{ background: '#f5f4f2' }}>
-          <div className="card-title">Platform Lainnya (Segera)</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-            {['youtube', 'twitter', 'tiktok'].map(p => (
-              <div key={p} style={{
-                padding: '10px', borderRadius: 10,
-                background: PLATFORMS[p].bg, textAlign: 'center', opacity: 0.6
-              }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: PLATFORMS[p].text }}>
-                  {PLATFORMS[p].label}
-                </div>
-                <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Coming soon</div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
