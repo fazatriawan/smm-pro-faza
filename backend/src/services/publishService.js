@@ -416,9 +416,14 @@ async function postToTikTok(account, caption, mediaUrls) {
   const videoUrl = mediaUrls[0];
   if (!isVideo(videoUrl)) throw new Error('TikTok hanya menerima video, bukan gambar');
 
+  console.log('[TikTok] Uploading video URL:', videoUrl);
+
   try {
     const initBody = {
-      source_info: { source: 'PULL_FROM_URL', url: videoUrl },
+      source_info: {
+        source: 'PULL_FROM_URL',
+        video_url: videoUrl
+      },
       title: caption || '',
       privacy_level: 'PUBLIC',
       disable_duet: false,
@@ -426,6 +431,8 @@ async function postToTikTok(account, caption, mediaUrls) {
       disable_stitch: false,
       video_cover_timestamp_ms: 0
     };
+
+    console.log('[TikTok] Request body:', JSON.stringify(initBody));
 
     const initRes = await axios.post(
       'https://open.tiktokapis.com/v2/post/publish/video/init/',
@@ -437,6 +444,8 @@ async function postToTikTok(account, caption, mediaUrls) {
         }
       }
     );
+
+    console.log('[TikTok] Response:', JSON.stringify(initRes.data));
 
     const data = initRes.data?.data;
     const err = initRes.data?.error;
@@ -450,6 +459,7 @@ async function postToTikTok(account, caption, mediaUrls) {
     console.log('[TikTok] Video submitted, publish_id:', publishId);
     return publishId;
   } catch (err) {
+    console.error('[TikTok] Full error response:', err.response?.data);
     const msg = err.response?.data?.error?.message || err.response?.data?.error?.code || err.message;
     throw new Error('TikTok upload gagal: ' + msg);
   }
