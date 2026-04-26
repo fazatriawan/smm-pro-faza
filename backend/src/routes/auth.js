@@ -73,12 +73,17 @@ router.get('/tiktok/callback', async (req, res) => {
     const data = tokenData.data || tokenData;
     const { access_token, refresh_token, expires_in, open_id } = data;
 
-    const infoRes = await axios.get(
-      'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username',
-      { headers: { Authorization: `Bearer ${access_token}` } }
-    );
-    const user = infoRes.data?.data?.user || {};
-    const username = user.username || user.display_name || open_id;
+    let username = open_id;
+    try {
+      const infoRes = await axios.get(
+        'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username',
+        { headers: { Authorization: `Bearer ${access_token}` } }
+      );
+      const user = infoRes.data?.data?.user || {};
+      username = user.username || user.display_name || open_id;
+    } catch (e) {
+      console.warn('[TikTok] user info skipped:', e.response?.data?.error?.code || e.message);
+    }
 
     await SocialAccount.findOneAndUpdate(
       { owner: userId, platform: 'tiktok', platformUserId: open_id },
