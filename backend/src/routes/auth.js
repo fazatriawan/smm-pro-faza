@@ -19,7 +19,8 @@ router.get('/tiktok', protect, (req, res) => {
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier)
     .digest('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
-  _ttStateStore[state] = { userId: req.user._id.toString(), codeVerifier };
+  _ttStateStore[state] = { userId: req.user._id.toString(), codeVerifier, ts: Date.now() };
+  console.log('[TikTok Web] state generated:', state, 'userId:', req.user._id, 'redirect_uri:', REDIRECT_URI);
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            CLIENT_KEY);
@@ -43,6 +44,7 @@ router.get('/tiktok/callback', async (req, res) => {
     if (!code || !state) return res.redirect(`${FRONTEND_URL}/users?error=no_code`);
 
     const stateData = _ttStateStore[state];
+    console.log('[TikTok Web CB] state:', state, 'found:', !!stateData, 'store keys:', Object.keys(_ttStateStore).length);
     if (!stateData) return res.redirect(`${FRONTEND_URL}/users?error=invalid_state`);
 
     const { userId, codeVerifier } = stateData;
