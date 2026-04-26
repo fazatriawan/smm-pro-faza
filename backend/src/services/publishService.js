@@ -416,18 +416,27 @@ async function postToTikTok(account, caption, mediaUrls) {
   const videoUrl = mediaUrls[0];
   if (!isVideo(videoUrl)) throw new Error('TikTok hanya menerima video, bukan gambar');
 
-  console.log('[TikTok] Uploading video URL:', videoUrl);
+  console.log('[TikTok] Video URL:', videoUrl);
 
   try {
+    // Step 1 — Download video dari Cloudinary ke buffer
+    console.log('[TikTok] Downloading video...');
+    const videoRes = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+    const videoBuffer = Buffer.from(videoRes.data);
+    const videoSize = videoBuffer.length;
+    console.log('[TikTok] Downloaded, size:', videoSize);
+
+    // Step 2 — Init upload dengan FILE_UPLOAD
     const initBody = {
       source_info: {
-        source: 'PULL_FROM_URL',
-        video_url: videoUrl
+        source: 'FILE_UPLOAD',
+        video_size: videoSize,
+        chunk_size: videoSize,
+        total_chunk_count: 1
       }
     };
 
-    console.log('[TikTok] Request body:', JSON.stringify(initBody));
-
+    console.log('[TikTok] Init upload...');
     const initRes = await axios.post(
       'https://open.tiktokapis.com/v2/post/publish/video/init/',
       initBody,
@@ -439,7 +448,7 @@ async function postToTikTok(account, caption, mediaUrls) {
       }
     );
 
-    console.log('[TikTok] Response:', JSON.stringify(initRes.data));
+    console.log('[TikTok] Init response:', JSON.stringify(initRes.data));
 
     const data = initRes.data?.data;
     const err = initRes.data?.error;
@@ -447,10 +456,22 @@ async function postToTikTok(account, caption, mediaUrls) {
       throw new Error(`TikTok init error: ${err.code} — ${err.message || ''}`);
     }
 
+    const uploadUrl = data?.upload_url;
     const publishId = data?.publish_id;
-    if (!publishId) throw new Error('TikTok tidak mengembalikan publish_id');
+    if (!uploadUrl) throw new Error('TikTok tidak mengembalikan upload_url');
 
-    console.log('[TikTok] Video submitted, publish_id:', publishId);
+    // Step 3 — Upload video bytes ke TikTok
+    console.log('[TikTok] Uploading bytes to TikTok...');
+    await axios.put(uploadUrl, videoBuffer, {
+      headers: {
+        'Content-Type': 'video/mp4',
+        'Content-Length': videoSize
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    });
+
+    console.log('[TikTok] Upload success, publish_id:', publishId);
     return publishId;
   } catch (err) {
     console.error('[TikTok] Full error response:', err.response?.data);
