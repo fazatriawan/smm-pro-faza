@@ -426,8 +426,13 @@ async function postToTikTok(account, caption, mediaUrls) {
     const videoSize = videoBuffer.length;
     console.log('[TikTok] Downloaded, size:', videoSize);
 
-    // Step 2 — Init upload dengan FILE_UPLOAD
+    // Step 2 — Init upload dengan FILE_UPLOAD + post_info (private untuk unaudited app)
+    const safeCaption = (caption || '').replace(/\r\n|\r|\n/g, ' ').trim();
     const initBody = {
+      post_info: {
+        title: safeCaption,
+        privacy_level: 'SELF'
+      },
       source_info: {
         source: 'FILE_UPLOAD',
         video_size: videoSize,
