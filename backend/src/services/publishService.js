@@ -420,14 +420,6 @@ async function postToTikTok(account, caption, mediaUrls) {
 
   try {
     const initBody = {
-      post_info: {
-        title: caption || '',
-        privacy_level: 'PUBLIC',
-        disable_duet: false,
-        disable_comment: false,
-        disable_stitch: false,
-        video_cover_timestamp_ms: 0
-      },
       source_info: {
         source: 'PULL_FROM_URL',
         video_url: videoUrl
