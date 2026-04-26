@@ -134,6 +134,9 @@ async function publishToAccount(post, target) {
       case 'youtube':
         platformPostId = await postToYouTube(account, caption, post.mediaUrls);
         break;
+      case 'tiktok':
+        platformPostId = await postToTikTok(account, caption, post.mediaUrls);
+        break;
       default:
         throw new Error(`Platform ${account.platform} belum didukung`);
     }
@@ -402,6 +405,53 @@ async function postToYouTube(account, caption, mediaUrls) {
   } catch (err) {
     const msg = err.response?.data?.error?.message || err.message;
     throw new Error('YouTube upload gagal: ' + msg);
+  }
+}
+
+async function postToTikTok(account, caption, mediaUrls) {
+  const token = account.accessToken;
+  if (!token) throw new Error('Token TikTok tidak ada');
+  if (!mediaUrls || mediaUrls.length === 0) throw new Error('TikTok membutuhkan video');
+
+  const videoUrl = mediaUrls[0];
+  if (!isVideo(videoUrl)) throw new Error('TikTok hanya menerima video, bukan gambar');
+
+  try {
+    const initBody = {
+      source_info: { source: 'PULL_FROM_URL', url: videoUrl },
+      title: caption || '',
+      privacy_level: 'PUBLIC',
+      disable_duet: false,
+      disable_comment: false,
+      disable_stitch: false,
+      video_cover_timestamp_ms: 0
+    };
+
+    const initRes = await axios.post(
+      'https://open.tiktokapis.com/v2/post/publish/video/init/',
+      initBody,
+      {
+        headers: {
+          Authorization: 'Bearer ' + token,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const data = initRes.data?.data;
+    const err = initRes.data?.error;
+    if (err && err.code !== 'ok') {
+      throw new Error(`TikTok init error: ${err.code} — ${err.message || ''}`);
+    }
+
+    const publishId = data?.publish_id;
+    if (!publishId) throw new Error('TikTok tidak mengembalikan publish_id');
+
+    console.log('[TikTok] Video submitted, publish_id:', publishId);
+    return publishId;
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.response?.data?.error?.code || err.message;
+    throw new Error('TikTok upload gagal: ' + msg);
   }
 }
 
