@@ -2,10 +2,11 @@ const router = require('express').Router();
 const { protect } = require('../middleware/auth');
 const { SocialAccount } = require('../models');
 
-// GET all accounts (admin sees all, operator sees own)
+// GET all accounts (admin sees all active, operator sees own active)
 router.get('/', protect, async (req, res) => {
   try {
-    const filter = req.user.role === 'admin' ? {} : { owner: req.user._id };
+    const baseFilter = { isActive: true };
+    const filter = req.user.role === 'admin' ? baseFilter : { ...baseFilter, owner: req.user._id };
     const accounts = await SocialAccount.find(filter)
       .populate('owner', 'name email')
       .sort('-connectedAt');
@@ -58,8 +59,6 @@ router.delete('/:id', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-module.exports = router;
-
 // PATCH update access token
 router.patch('/:id', protect, async (req, res) => {
   try {
@@ -73,3 +72,5 @@ router.patch('/:id', protect, async (req, res) => {
     res.json(account);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
+
+module.exports = router;
