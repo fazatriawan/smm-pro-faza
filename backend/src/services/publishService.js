@@ -117,6 +117,7 @@ async function publishToAccount(post, target) {
   try {
     let platformPostId;
     const caption = post.caption || '';
+    const overrides = post.platformOverrides || {};
 
     switch (account.platform) {
       case 'facebook':
@@ -135,7 +136,7 @@ async function publishToAccount(post, target) {
         platformPostId = await postToYouTube(account, caption, post.mediaUrls);
         break;
       case 'tiktok':
-        platformPostId = await postToTikTok(account, caption, post.mediaUrls);
+        platformPostId = await postToTikTok(account, caption, post.mediaUrls, overrides.tiktok?.privacyLevel);
         break;
       default:
         throw new Error(`Platform ${account.platform} belum didukung`);
@@ -408,7 +409,7 @@ async function postToYouTube(account, caption, mediaUrls) {
   }
 }
 
-async function postToTikTok(account, caption, mediaUrls) {
+async function postToTikTok(account, caption, mediaUrls, privacyLevel) {
   const token = account.accessToken;
   if (!token) throw new Error('Token TikTok tidak ada');
   if (!mediaUrls || mediaUrls.length === 0) throw new Error('TikTok membutuhkan video');
@@ -416,7 +417,8 @@ async function postToTikTok(account, caption, mediaUrls) {
   const videoUrl = mediaUrls[0];
   if (!isVideo(videoUrl)) throw new Error('TikTok hanya menerima video, bukan gambar');
 
-  console.log('[TikTok] Video URL:', videoUrl);
+  const effectivePrivacy = privacyLevel || 'SELF';
+  console.log('[TikTok] Video URL:', videoUrl, '| Privacy:', effectivePrivacy);
 
   try {
     // Step 1 — Download video dari Cloudinary ke buffer
@@ -426,12 +428,12 @@ async function postToTikTok(account, caption, mediaUrls) {
     const videoSize = videoBuffer.length;
     console.log('[TikTok] Downloaded, size:', videoSize);
 
-    // Step 2 — Init upload dengan FILE_UPLOAD + post_info (private untuk unaudited app)
+    // Step 2 — Init upload dengan FILE_UPLOAD + post_info
     const safeCaption = (caption || '').replace(/\r\n|\r|\n/g, ' ').trim();
     const initBody = {
       post_info: {
         title: safeCaption,
-        privacy_level: 'SELF'
+        privacy_level: effectivePrivacy
       },
       source_info: {
         source: 'FILE_UPLOAD',

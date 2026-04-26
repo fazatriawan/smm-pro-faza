@@ -16,6 +16,7 @@ export default function BulkPostPage() {
   const [scheduleType, setScheduleType] = useState('now');
   const [scheduledAt, setScheduledAt] = useState('');
   const [mediaFiles, setMediaFiles] = useState([]);
+  const [tiktokPrivacy, setTiktokPrivacy] = useState('SELF');
   const [activeTab, setActiveTab] = useState('compose');
   const [expandedPost, setExpandedPost] = useState(null);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
@@ -92,6 +93,9 @@ export default function BulkPostPage() {
     fd.append('accountIds', JSON.stringify(targetAccounts));
     fd.append('isImmediate', scheduleType === 'now');
     if (scheduleType !== 'now' && scheduledAt) fd.append('scheduledAt', scheduledAt);
+    if (selectedPlatforms.has('tiktok')) {
+      fd.append('platformOverrides', JSON.stringify({ tiktok: { privacyLevel: tiktokPrivacy } }));
+    }
     mediaFiles.forEach(f => fd.append('media', f));
     createPost.mutate(fd);
   };
@@ -371,6 +375,37 @@ export default function BulkPostPage() {
                   style={{ display: 'none' }}
                   onChange={e => setMediaFiles(Array.from(e.target.files))} />
               </div>
+
+              {/* TikTok Privacy */}
+              {selectedPlatforms.has('tiktok') && (
+                <div className="card">
+                  <div className="card-title">🎵 Pengaturan TikTok</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[
+                      { value: 'SELF', label: '🔒 Pribadi (Private)', desc: 'Hanya kamu yang bisa lihat — works now' },
+                      { value: 'PUBLIC', label: '🌐 Publik (Public)', desc: 'Semua orang bisa lihat — butuh audit TikTok' },
+                    ].map(opt => (
+                      <div
+                        key={opt.value}
+                        onClick={() => setTiktokPrivacy(opt.value)}
+                        style={{
+                          flex: 1, padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
+                          border: `1.5px solid ${tiktokPrivacy === opt.value ? '#639922' : 'rgba(0,0,0,0.1)'}`,
+                          background: tiktokPrivacy === opt.value ? '#EAF3DE' : '#f9f9f9',
+                          transition: 'all 0.12s'
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 600, color: tiktokPrivacy === opt.value ? '#3B6D11' : '#333' }}>
+                          {opt.label}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                          {opt.desc}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Waktu */}
               <div className="card">

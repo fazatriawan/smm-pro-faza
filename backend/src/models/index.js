@@ -73,7 +73,7 @@ const PostSchema = new mongoose.Schema({
     instagram: { caption: String },
     facebook: { caption: String },
     twitter: { caption: String },
-    tiktok: { caption: String }
+    tiktok: { caption: String, privacyLevel: { type: String, enum: ['PUBLIC', 'SELF'], default: 'SELF' } }
   }
 }, { timestamps: true });
 const Post = mongoose.model('Post', PostSchema);
