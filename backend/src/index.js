@@ -94,7 +94,7 @@ app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
 app.use('/', authTiktokDesktopRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 4 }));
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 5 }));
 
 app.get('/tos', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
