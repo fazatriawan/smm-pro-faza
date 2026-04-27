@@ -428,15 +428,14 @@ async function postToTikTok(account, caption, mediaUrls, privacyLevel) {
     const videoSize = videoBuffer.length;
     console.log('[TikTok] Downloaded, size:', videoSize);
 
-    // Step 2 — Init upload dengan FILE_UPLOAD
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB standard chunk
+    // Step 2 — Init upload dengan FILE_UPLOAD (single chunk)
     const initBody = {
       privacy_level: effectivePrivacy,
       source_info: {
         source: 'FILE_UPLOAD',
         video_size: videoSize,
-        chunk_size: Math.min(CHUNK_SIZE, videoSize),
-        total_chunk_count: Math.ceil(videoSize / CHUNK_SIZE)
+        chunk_size: videoSize,
+        total_chunk_count: 1
       }
     };
 
