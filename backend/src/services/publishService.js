@@ -429,8 +429,11 @@ async function postToTikTok(account, caption, mediaUrls, privacyLevel) {
     console.log('[TikTok] Downloaded, size:', videoSize);
 
     // Step 2 — Init upload dengan FILE_UPLOAD (single chunk)
+    const privacyMap = { PUBLIC: 'PUBLIC', SELF: 'PRIVATE' };
     const initBody = {
-      privacy_level: effectivePrivacy,
+      post_info: {
+        privacy_level: privacyMap[effectivePrivacy] || 'PRIVATE'
+      },
       source_info: {
         source: 'FILE_UPLOAD',
         video_size: videoSize,
