@@ -430,10 +430,11 @@ async function postToTikTok(account, caption, mediaUrls, privacyLevel) {
 
     // Step 2 — Init upload dengan FILE_UPLOAD + post_info
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB standard chunk
-    const privacyMap = { PUBLIC: 0, SELF: 2 };
+    const safeCaption = (caption || '').replace(/\r\n|\r|\n/g, ' ').trim();
     const initBody = {
       post_info: {
-        privacy_level: privacyMap[effectivePrivacy] ?? 2
+        title: safeCaption,
+        privacy_level: effectivePrivacy
       },
       source_info: {
         source: 'FILE_UPLOAD',
