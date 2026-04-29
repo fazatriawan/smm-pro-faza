@@ -285,21 +285,20 @@ async function postToThreads(account, caption, mediaUrls) {
       mediaUrl = mediaUrls[0];
     }
 
-    // Step 1 — Buat container
-    const params = {
+    // Step 1 — Buat container (POST body, bukan query params)
+    const body = {
       media_type: mediaType,
       text: caption,
       access_token: token
     };
     if (mediaUrl) {
-      if (mediaType === 'IMAGE') params.image_url = mediaUrl;
-      if (mediaType === 'VIDEO') params.video_url = mediaUrl;
+      if (mediaType === 'IMAGE') body.image_url = mediaUrl;
+      if (mediaType === 'VIDEO') body.video_url = mediaUrl;
     }
 
     const containerRes = await axios.post(
       `https://graph.threads.net/v1.0/${userId}/threads`,
-      null,
-      { params }
+      body
     );
     const containerId = containerRes.data.id;
     if (!containerId) throw new Error('Container ID tidak ditemukan');
@@ -309,11 +308,10 @@ async function postToThreads(account, caption, mediaUrls) {
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
-    // Step 2 — Publish
+    // Step 2 — Publish (POST body)
     const publishRes = await axios.post(
       `https://graph.threads.net/v1.0/${userId}/threads_publish`,
-      null,
-      { params: { creation_id: containerId, access_token: token } }
+      { creation_id: containerId, access_token: token }
     );
 
     return publishRes.data.id;
