@@ -15,6 +15,7 @@ const NAV = [
   { to: '/warmup',        icon: '◎', label: 'Warm Up' },
   { to: '/notifications', icon: '◈', label: 'Notifikasi' },
   { to: '/analytics',     icon: '▦', label: 'Analytics' },
+  { to: '/ai',            icon: '✨', label: 'AI Tools' },
 ];
 
 export default function Layout() {

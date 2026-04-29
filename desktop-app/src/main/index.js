@@ -589,6 +589,42 @@ ipcMain.handle('generate-content', async (_, { tema, data, model, contentType })
   }
 });
 
+// ─── AI CAPTION VARIATIONS ────────────────────────────────────────────────────
+ipcMain.handle('generate-caption-variations', async (_, { topic, tone, platform, model } = {}) => {
+  const s = store.get('settings', {});
+  if (!s.geminiApiKey) {
+    return { success: false, error: 'Gemini API Key belum diisi di Pengaturan' };
+  }
+  const systemPrompt = `Bertindaklah sebagai Social Media Copywriter top tier untuk Indonesia. Buatkan 5 variasi caption untuk konten media sosial.
+
+Aturan:
+- Setiap variasi harus unik, engaging, dan sesuai tone yang diminta
+- Sertakan CTA (call-to-action) yang jelas
+- Hashtag relevan di akhir setiap caption
+- Panjang optimal untuk ${platform || 'Instagram'} (150-300 karakter per variasi)
+- Gunakan bahasa Indonesia yang santai dan kekinian
+
+Kembalikan response MURNI dalam format JSON:
+{
+  "variations": [
+    { "id": 1, "text": "...", "hashtags": ["..."] },
+    { "id": 2, "text": "...", "hashtags": ["..."] },
+    ...
+  ]
+}`;
+  const userPrompt = `Topik: ${topic || 'Konten umum'}\nTone: ${tone || 'Santai dan friendly'}\nPlatform: ${platform || 'Instagram'}\n\nBuatkan 5 variasi caption.`;
+
+  try {
+    const text = await callGemini(s.geminiApiKey, model, systemPrompt, userPrompt);
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { success: false, error: 'Respons Gemini bukan JSON valid', raw: text };
+    const result = JSON.parse(jsonMatch[0]);
+    return { success: true, variations: result.variations || [] };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // ─── SCRAPE NEWS (RSS) ───────────────────────────────────────────────────────
 ipcMain.handle('scrape-news', async (_, { sources, keyword, limit = 5 } = {}) => {
   const RSS_FEEDS = {

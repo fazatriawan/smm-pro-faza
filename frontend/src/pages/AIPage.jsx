@@ -72,6 +72,11 @@ export default function AIPage() {
   const [ytCategory, setYtCategory] = useState('0');
   const [ytResults, setYtResults] = useState(null);
 
+  // Schedule Strategy state
+  const [ssPlatform, setSsPlatform] = useState('instagram');
+  const [ssType, setSsType] = useState('default');
+  const [ssResult, setSsResult] = useState(null);
+
   const NEWS_SOURCES = ['antara', 'detik', 'kompas', 'tempo', 'tribun', 'cnn'];
   const YT_CATEGORIES = [
     { id: '0',  label: 'Semua' },
@@ -197,6 +202,15 @@ export default function AIPage() {
     finally { setLoading(false); }
   };
 
+  const fetchScheduleStrategy = async () => {
+    setLoading(true);
+    try {
+      const res = await aiAPI.getScheduleStrategy({ platform: ssPlatform, contentType: ssType });
+      setSsResult(res.data);
+    } catch (err) { toast.error(err.response?.data?.message || 'Gagal ambil strategi jadwal'); }
+    finally { setLoading(false); }
+  };
+
   const tabStyle = (key) => ({
     padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
     background: activeTab === key ? '#EEEDFE' : '#f5f4f2',
@@ -225,6 +239,7 @@ export default function AIPage() {
             { key: 'imagen',    label: '🖼️ Imagen B-roll' },
             { key: 'sentiment', label: '📊 Sentimen' },
             { key: 'youtube',   label: '📺 YouTube Trends' },
+            { key: 'schedule',  label: '📅 Jadwal Optimal' },
           ].map(t => (
             <div key={t.key} onClick={() => setActiveTab(t.key)} style={tabStyle(t.key)}>{t.label}</div>
           ))}
@@ -907,6 +922,69 @@ export default function AIPage() {
                     </div>
                   </a>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'schedule' && (
+          <div>
+            <div className="card">
+              <div className="card-title">📅 Jadwal Posting Optimal</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>
+                Waktu dan hari terbaik untuk posting per platform berdasarkan data engagement
+              </div>
+              <div className="two-col">
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500 }}>Platform</label>
+                  <select value={ssPlatform} onChange={e => setSsPlatform(e.target.value)} style={{ width: '100%', marginTop: 6, padding: '8px 10px', borderRadius: 8, border: '1.5px solid #e5e5e5' }}>
+                    <option value="instagram">📸 Instagram</option>
+                    <option value="tiktok">🎵 TikTok</option>
+                    <option value="youtube">▶️ YouTube</option>
+                    <option value="facebook">📘 Facebook</option>
+                    <option value="twitter">🐦 Twitter/X</option>
+                    <option value="threads">🧵 Threads</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500 }}>Tipe Konten</label>
+                  <select value={ssType} onChange={e => setSsType(e.target.value)} style={{ width: '100%', marginTop: 6, padding: '8px 10px', borderRadius: 8, border: '1.5px solid #e5e5e5' }}>
+                    <option value="default">📋 Default</option>
+                    <option value="video">🎬 Video</option>
+                    <option value="image">🖼️ Gambar</option>
+                    <option value="reel">🎞️ Reel</option>
+                    <option value="story">📱 Story</option>
+                  </select>
+                </div>
+              </div>
+              <button className="btn-primary" style={{ width: '100%', padding: 10, marginTop: 14 }}
+                onClick={fetchScheduleStrategy} disabled={loading}>
+                {loading ? '⟳ Mengambil...' : '📅 Lihat Rekomendasi'}
+              </button>
+            </div>
+
+            {ssResult && (
+              <div className="card" style={{ marginTop: 14, borderLeft: '4px solid #f59e0b' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div className="card-title" style={{ margin: 0 }}>✅ {ssResult.platform?.charAt(0).toUpperCase() + ssResult.platform?.slice(1)} — {ssResult.contentType}</div>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: '#888', marginBottom: 8 }}>Waktu Optimal (WIB)</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {ssResult.bestTimes?.map(t => (
+                      <span key={t} style={{ background: '#fef3c7', color: '#92400e', padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600 }}>🕐 {t}</span>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: '#888', marginBottom: 8 }}>Hari Terbaik</div>
+                  <div style={{ fontSize: 14, color: '#333' }}>{ssResult.bestDaysId?.join(', ') || ssResult.bestDays?.join(', ')}</div>
+                </div>
+                {ssResult.note && (
+                  <div style={{ fontSize: 12, color: '#888', fontStyle: 'italic', background: '#f9f9f7', padding: 10, borderRadius: 8 }}>
+                    💡 {ssResult.note}
+                  </div>
+                )}
               </div>
             )}
           </div>

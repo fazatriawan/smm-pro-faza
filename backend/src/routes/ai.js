@@ -234,4 +234,30 @@ router.get('/youtube/trends', protect, async (req, res) => {
   }
 });
 
+// ─── Schedule Strategy ────────────────────────────────────────────────────────
+const { getOptimalPostingTime, generateWeeklySchedule, suggestBatchSchedule } = require('../services/scheduleStrategyService');
+
+router.get('/schedule/strategy', protect, (req, res) => {
+  const { platform, contentType } = req.query;
+  if (!platform) {
+    return res.status(400).json({ message: 'Parameter platform wajib diisi' });
+  }
+  const result = getOptimalPostingTime(platform, contentType);
+  res.json({ success: true, ...result });
+});
+
+router.get('/schedule/weekly', protect, (req, res) => {
+  const platforms = req.query.platforms ? req.query.platforms.split(',') : [];
+  const contentTypes = req.query.contentTypes ? req.query.contentTypes.split(',') : [];
+  const schedule = generateWeeklySchedule(platforms, contentTypes);
+  res.json({ success: true, schedule });
+});
+
+router.get('/schedule/batch', protect, (req, res) => {
+  const videoCount = parseInt(req.query.videoCount, 10) || 5;
+  const platforms = req.query.platforms ? req.query.platforms.split(',') : ['tiktok', 'instagram'];
+  const result = suggestBatchSchedule(videoCount, platforms);
+  res.json({ success: true, ...result });
+});
+
 module.exports = router;

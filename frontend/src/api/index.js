@@ -95,6 +95,9 @@ export const aiAPI = {
   generateImagen:     (data)   => api.post('/ai/imagen/generate', data, { timeout: 90000 }),
   analyzeSentiment:   (data)   => api.post('/ai/sentiment/analyze', data),
   getYoutubeTrends:   (params) => api.get('/ai/youtube/trends', { params }),
+  getScheduleStrategy: (params) => api.get('/ai/schedule/strategy', { params }),
+  getWeeklySchedule:   (params) => api.get('/ai/schedule/weekly', { params }),
+  getBatchSchedule:    (params) => api.get('/ai/schedule/batch', { params }),
 };
 
 export default api;

@@ -14,6 +14,7 @@ import AmplifyPage from './pages/AmplifyPage';
 import WarmUpPage from './pages/WarmUpPage';
 import NotificationsPage from './pages/NotificationsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import AIPage from './pages/AIPage';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30000 } } });
 
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="warmup"         element={<WarmUpPage />} />
             <Route path="notifications"  element={<NotificationsPage />} />
             <Route path="analytics"      element={<AnalyticsPage />} />
+            <Route path="ai"             element={<AIPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

@@ -104,6 +104,9 @@ function go(page) {
   const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent };
   try {
     document.getElementById('content').innerHTML = (pages[page] || (() => ''))();
+    if (page === 'aicontent') {
+      setTimeout(() => { showScheduleStrategy(); }, 0);
+    }
   } catch (e) {
     console.error(`Error rendering page "${page}":`, e);
     document.getElementById('content').innerHTML = `
@@ -2084,6 +2087,51 @@ function pageAIContent() {
       </div>
     </div>
 
+    <!-- AI Caption Variations -->
+    <div class="card" style="border-left:3px solid #7c3aed;margin-top:0">
+      <div class="card-title">📝 AI Caption Variations</div>
+      <p style="font-size:12px;color:var(--c-text-3);margin:0 0 16px">Generate 5 variasi caption untuk konten media sosial menggunakan Gemini AI.</p>
+
+      <div class="grid-2" style="margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label>Platform</label>
+          <select id="cv-platform" style="width:100%">
+            <option value="Instagram">📸 Instagram</option>
+            <option value="TikTok">🎵 TikTok</option>
+            <option value="Facebook">📘 Facebook</option>
+            <option value="Twitter">🐦 Twitter/X</option>
+            <option value="Threads">🧵 Threads</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Tone / Gaya</label>
+          <select id="cv-tone" style="width:100%">
+            <option value="Santai dan friendly">😊 Santai &amp; Friendly</option>
+            <option value="Profesional">👔 Profesional</option>
+            <option value="Humoris">😂 Humoris</option>
+            <option value="Inspiratif">✨ Inspiratif</option>
+            <option value="Edgy dan bold">🔥 Edgy &amp; Bold</option>
+            <option value="Storytelling">📖 Storytelling</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Topik / Ide Konten</label>
+        <textarea id="cv-topic" rows="3" placeholder="Deskripsikan topik konten Anda...&#10;Contoh: Review kafe baru di Bandung dengan konsep japandi"></textarea>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn-primary" onclick="generateCaptionVariations()" id="cv-btn" style="background:#7c3aed">✨ Generate Variasi</button>
+        <span id="cv-status" style="font-size:12px;color:var(--c-text-3)"></span>
+      </div>
+
+      <div id="cv-result" style="display:none;margin-top:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:10px">5 Variasi Caption</div>
+        <div id="cv-list" style="display:grid;gap:10px"></div>
+      </div>
+    </div>
+
     <div id="ai-result" style="display:none">
       <div class="card" style="border-left:3px solid #4caf50">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
@@ -2096,13 +2144,76 @@ function pageAIContent() {
       </div>
     </div>
 
+    <!-- AI Sentiment Analysis -->
+    <div class="card" style="border-left:3px solid #059669;margin-top:0">
+      <div class="card-title">📊 AI Sentiment Analysis</div>
+      <p style="font-size:12px;color:var(--c-text-3);margin:0 0 16px">Analisis sentimen dari daftar teks/judul berita menggunakan Gemini AI.</p>
+
+      <div class="form-group">
+        <label>Daftar Teks (satu per baris)</label>
+        <textarea id="sa-texts" rows="5" placeholder="Paste judul berita, komentar, atau teks yang ingin dianalisis...&#10;Contoh:&#10;Pemerintah luncurkan program bantuan UMKM&#10;Harga bbm naik lagi bulan ini&#10;Indonesia juara AFF 2024"></textarea>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn-primary" onclick="analyzeSentimentUI()" id="sa-btn" style="background:#059669">📊 Analisis Sentimen</button>
+        <span id="sa-status" style="font-size:12px;color:var(--c-text-3)"></span>
+      </div>
+
+      <div id="sa-result" style="display:none;margin-top:16px">
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="background:#dcfce7;color:#166534;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600">😊 Positif: <span id="sa-pos">0</span></div>
+          <div style="background:#fee2e2;color:#991b1b;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600">😠 Negatif: <span id="sa-neg">0</span></div>
+          <div style="background:#f3f4f6;color:#374151;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600">😐 Netral: <span id="sa-neu">0</span></div>
+        </div>
+        <div id="sa-list" style="display:grid;gap:8px"></div>
+      </div>
+    </div>
+
     <style>
       .ai-field { background:var(--c-bg-2,#f8f9fa);border-radius:8px;padding:12px }
       .ai-label { font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3,#888);margin-bottom:6px }
       .ai-value { font-size:13px;color:var(--c-text,#222);line-height:1.6 }
       .news-item { background:var(--c-bg-2,#f8f9fa);border-radius:8px;padding:10px 12px;cursor:pointer;border:1px solid transparent;transition:.15s }
       .news-item:hover { border-color:#1976d2;background:#e3f2fd }
+      .sent-pos { border-left:3px solid #22c55e }
+      .sent-neg { border-left:3px solid #ef4444 }
+      .sent-neu { border-left:3px solid #9ca3af }
     </style>
+
+    <!-- Schedule Strategy -->
+    <div class="card" style="border-left:3px solid #f59e0b;margin-top:0">
+      <div class="card-title">📅 Schedule Strategy</div>
+      <p style="font-size:12px;color:var(--c-text-3);margin:0 0 16px">Waktu posting optimal per platform berdasarkan data engagement.</p>
+
+      <div class="grid-2" style="margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label>Platform</label>
+          <select id="ss-platform" style="width:100%" onchange="showScheduleStrategy()">
+            <option value="instagram">📸 Instagram</option>
+            <option value="tiktok">🎵 TikTok</option>
+            <option value="youtube">▶️ YouTube</option>
+            <option value="facebook">📘 Facebook</option>
+            <option value="twitter">🐦 Twitter/X</option>
+            <option value="threads">🧵 Threads</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Tipe Konten</label>
+          <select id="ss-type" style="width:100%" onchange="showScheduleStrategy()">
+            <option value="default">📋 Default</option>
+            <option value="video">🎬 Video</option>
+            <option value="image">🖼️ Gambar</option>
+            <option value="reel">🎞️ Reel</option>
+            <option value="story">📱 Story</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="ss-result" style="margin-top:12px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--c-text-3);margin-bottom:10px">Rekomendasi Waktu Posting</div>
+        <div id="ss-content" style="display:grid;gap:10px"></div>
+      </div>
+    </div>
   `;
 }
 
@@ -2148,6 +2259,195 @@ async function generateAIContent() {
 
   renderAIResult(res.result, contentType);
   document.getElementById('ai-result').style.display = 'block';
+}
+
+// ─── AI CAPTION VARIATIONS ───────────────────────────────────────────────────
+async function generateCaptionVariations() {
+  const topic    = document.getElementById('cv-topic').value.trim();
+  const tone     = document.getElementById('cv-tone').value;
+  const platform = document.getElementById('cv-platform').value;
+  const model    = document.getElementById('ai-model')?.value || 'gemini-flash-latest';
+
+  if (!topic) { alert('Isi dulu Topik / Ide Konten.'); return; }
+
+  const btn    = document.getElementById('cv-btn');
+  const status = document.getElementById('cv-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  status.textContent = 'Menghubungi Gemini AI...';
+
+  const res = await window.api.generateCaptionVariations({ topic, tone, platform, model });
+
+  btn.disabled = false;
+  btn.textContent = '✨ Generate Variasi';
+
+  if (!res.success) {
+    status.textContent = '❌ ' + res.error;
+    return;
+  }
+
+  status.textContent = '✅ ' + (res.variations?.length || 0) + ' variasi siap!';
+  renderCaptionVariations(res.variations || []);
+  document.getElementById('cv-result').style.display = 'block';
+}
+
+function renderCaptionVariations(variations) {
+  const container = document.getElementById('cv-list');
+  if (!container) return;
+
+  container.innerHTML = variations.map((v, i) => {
+    const text = v.text || v.caption || '';
+    const tags = Array.isArray(v.hashtags) ? v.hashtags.join(' ') : (v.hashtags || '');
+    const fullText = text + (tags ? '\n\n' + tags : '');
+    return `
+      <div class="ai-field" style="position:relative">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="ai-label" style="margin:0">Variasi #${i + 1}</div>
+          <button onclick="navigator.clipboard.writeText(${JSON.stringify(fullText).replace(/"/g, '&quot;')})" style="background:none;border:1px solid var(--c-border);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;color:var(--c-text-2)">📋 Salin</button>
+        </div>
+        <div class="ai-value" style="white-space:pre-wrap">${escapeHtml(text)}</div>
+        ${tags ? `<div style="margin-top:8px;font-size:12px;color:#7c3aed">${escapeHtml(tags)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// ─── AI SENTIMENT ANALYSIS ───────────────────────────────────────────────────
+async function analyzeSentimentUI() {
+  const raw = document.getElementById('sa-texts').value.trim();
+  if (!raw) { alert('Isi dulu daftar teks yang ingin dianalisis.'); return; }
+
+  const texts = raw.split('\n').map(t => t.trim()).filter(t => t.length > 0);
+  if (texts.length === 0) { alert('Tidak ada teks valid untuk dianalisis.'); return; }
+
+  const btn    = document.getElementById('sa-btn');
+  const status = document.getElementById('sa-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Analyzing...';
+  status.textContent = 'Menghubungi Gemini AI...';
+
+  const res = await window.api.analyzeSentiment({ texts });
+
+  btn.disabled = false;
+  btn.textContent = '📊 Analisis Sentimen';
+
+  if (!res.success) {
+    status.textContent = '❌ ' + res.error;
+    return;
+  }
+
+  const summary = res.summary || {};
+  document.getElementById('sa-pos').textContent = summary.positif || 0;
+  document.getElementById('sa-neg').textContent = summary.negatif || 0;
+  document.getElementById('sa-neu').textContent = summary.netral || 0;
+
+  const container = document.getElementById('sa-list');
+  const results = res.results || [];
+  container.innerHTML = results.map((r) => {
+    const sent = r.sentiment || 'netral';
+    const cls = sent === 'positif' ? 'sent-pos' : (sent === 'negatif' ? 'sent-neg' : 'sent-neu');
+    const emoji = sent === 'positif' ? '😊' : (sent === 'negatif' ? '😠' : '😐');
+    const score = typeof r.score === 'number' ? r.score.toFixed(2) : '-';
+    return `
+      <div class="ai-field ${cls}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="font-size:12px;font-weight:600;color:var(--c-text)">${emoji} ${sent.toUpperCase()}</div>
+          <div style="font-size:11px;color:var(--c-text-3)">Score: ${score}</div>
+        </div>
+        <div class="ai-value" style="font-size:12.5px">${escapeHtml(r.text || '')}</div>
+        ${r.reason ? `<div style="margin-top:6px;font-size:11px;color:var(--c-text-3);font-style:italic">${escapeHtml(r.reason)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  status.textContent = '✅ ' + results.length + ' teks dianalisis!';
+  document.getElementById('sa-result').style.display = 'block';
+}
+
+// ─── SCHEDULE STRATEGY ───────────────────────────────────────────────────────
+const SCHEDULE_DATA = {
+  instagram: {
+    default: { times: ['11:00', '20:00'], days: 'Selasa, Rabu, Jumat' },
+    video:   { times: ['19:00', '21:00'], days: 'Selasa, Rabu, Jumat' },
+    image:   { times: ['11:00', '13:00'], days: 'Selasa, Rabu, Jumat' },
+    reel:    { times: ['19:00', '21:00'], days: 'Selasa, Rabu, Jumat' },
+    story:   { times: ['08:00', '21:00'], days: 'Senin–Minggu' },
+    color: '#D4537E',
+  },
+  tiktok: {
+    default: { times: ['07:00', '12:00', '19:00'], days: 'Senin–Minggu' },
+    video:   { times: ['07:00', '12:00', '19:00'], days: 'Senin–Minggu' },
+    image:   { times: ['08:00', '13:00', '20:00'], days: 'Senin–Minggu' },
+    color: '#333',
+  },
+  youtube: {
+    default: { times: ['15:00'], days: 'Kamis, Jumat, Sabtu' },
+    video:   { times: ['14:00', '16:00'], days: 'Kamis, Jumat, Sabtu' },
+    short:   { times: ['12:00', '18:00'], days: 'Kamis, Jumat, Sabtu' },
+    color: '#FF0000',
+  },
+  facebook: {
+    default: { times: ['14:00'], days: 'Rabu, Kamis, Jumat' },
+    post:    { times: ['13:00', '16:00'], days: 'Rabu, Kamis, Jumat' },
+    reel:    { times: ['14:00', '18:00'], days: 'Rabu, Kamis, Jumat' },
+    color: '#1877F2',
+  },
+  twitter: {
+    default: { times: ['09:00', '12:00', '17:00'], days: 'Senin–Sabtu' },
+    tweet:   { times: ['09:00', '12:00', '17:00'], days: 'Senin–Sabtu' },
+    thread:  { times: ['10:00', '15:00'], days: 'Senin–Sabtu' },
+    color: '#888780',
+  },
+  threads: {
+    default: { times: ['10:00', '19:00'], days: 'Senin, Rabu, Jumat' },
+    post:    { times: ['10:00', '19:00'], days: 'Senin, Rabu, Jumat' },
+    color: '#000',
+  },
+};
+
+function showScheduleStrategy() {
+  const platform = document.getElementById('ss-platform')?.value || 'instagram';
+  const type     = document.getElementById('ss-type')?.value || 'default';
+  const container = document.getElementById('ss-content');
+  if (!container) return;
+
+  const data = SCHEDULE_DATA[platform];
+  if (!data) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--c-text-3)">Data tidak tersedia untuk platform ini.</div>';
+    return;
+  }
+
+  const config = data[type] || data.default;
+  const timeBadges = config.times.map(t =>
+    `<span style="background:${data.color}15;color:${data.color};padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600">🕐 ${t} WIB</span>`
+  ).join(' ');
+
+  container.innerHTML = `
+    <div class="ai-field" style="border-left:3px solid ${data.color}">
+      <div class="ai-label">Waktu Optimal</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${timeBadges}</div>
+    </div>
+    <div class="ai-field">
+      <div class="ai-label">Hari Terbaik</div>
+      <div class="ai-value" style="margin-top:4px">${config.days}</div>
+    </div>
+    <div class="ai-field">
+      <div class="ai-label">💡 Tips</div>
+      <div class="ai-value" style="font-size:12px;color:var(--c-text-2);margin-top:4px">
+        Posting pada waktu yang ditampilkan untuk engagement tertinggi. Hindari weekend jika konten bersifat profesional/B2B.
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function renderAIResult(r, contentType) {
