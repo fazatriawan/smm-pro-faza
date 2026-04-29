@@ -64,14 +64,14 @@ router.get('/threads/callback', async (req, res) => {
 
     const profile = profileRes.data;
 
-    // Simpan akun Threads
+    // Simpan akun Threads (gunakan threadsUserId dari token, bukan profile.id)
     await SocialAccount.findOneAndUpdate(
-      { owner: userId, platform: 'threads', platformUserId: profile.id },
+      { owner: userId, platform: 'threads', platformUserId: threadsUserId },
       {
         owner: userId,
         label: `@${profile.username}`,
         platform: 'threads',
-        platformUserId: profile.id,
+        platformUserId: threadsUserId,
         platformUsername: profile.username,
         accessToken: longToken,
         tokenExpiresAt,
