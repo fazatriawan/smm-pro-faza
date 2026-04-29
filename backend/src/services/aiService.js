@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL  = 'gemini-1.5-flash';
+const GEMINI_MODEL  = 'gemini-flash-latest';
 
 async function generateWithGemini(prompt, systemPrompt = null, maxTokens = 2000) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY belum diset di environment');

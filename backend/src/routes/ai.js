@@ -5,7 +5,7 @@ const { generateCaption, generateCaptionVariations, generateComments, generateHa
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 async function callGemini(apiKey, model, systemPrompt, userPrompt, maxTokens = 2000) {
-  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${apiKey}`;
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-flash-latest'}:generateContent?key=${apiKey}`;
   const res  = await axios.post(url, {
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents:          [{ role: 'user', parts: [{ text: userPrompt }] }],
@@ -159,7 +159,7 @@ router.post('/imagen/generate', protect, async (req, res) => {
   if (!apiKey)          return res.status(500).json({ message: 'GEMINI_API_KEY belum diset' });
   if (!prompt?.trim())  return res.status(400).json({ message: 'Prompt kosong' });
 
-  const model      = 'gemini-2.5-flash-preview-05-20';
+  const model      = 'gemini-flash-latest';
   const url        = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const fullPrompt = `Generate a photorealistic vertical 9:16 B-roll image (no text, no watermarks, no UI elements): ${prompt.trim()}`;
 
@@ -193,7 +193,7 @@ router.post('/sentiment/analyze', protect, async (req, res) => {
   const user = `Analisis sentimen dari daftar teks berita/judul berikut. Klasifikasikan setiap item sebagai "positif", "negatif", atau "netral".\n\nTeks:\n${texts.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nKembalikan JSON: { "results": [{ "text": "...", "sentiment": "positif|negatif|netral", "score": 0.0-1.0, "reason": "alasan singkat" }], "summary": { "positif": N, "negatif": N, "netral": N } }`;
 
   try {
-    const raw   = await callGemini(apiKey, 'gemini-1.5-flash', sys, user, 2000);
+    const raw   = await callGemini(apiKey, 'gemini-flash-latest', sys, user, 2000);
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) return res.status(422).json({ message: 'Respons tidak valid' });
     res.json({ success: true, ...JSON.parse(match[0]) });
