@@ -173,11 +173,15 @@ async function publishToThreads({ token, content, mediaUrls = [], platformUid })
 
   let containerId;
 
+  const isVideo = (url) => ['.mp4','.mov','.avi','.webm','.mkv'].some(ext => url.toLowerCase().includes(ext));
+
   if (mediaUrls.length > 1) {
     const children = await Promise.all(
       mediaUrls.slice(0, 10).map(url =>
         apiFetchThreads(`${THREADS_BASE}/${threadsUserId}/threads`, 'POST', token, {
-          media_type: 'IMAGE', image_url: url, is_carousel_item: true,
+          media_type: isVideo(url) ? 'VIDEO' : 'IMAGE',
+          ...(isVideo(url) ? { video_url: url } : { image_url: url }),
+          is_carousel_item: true,
         })
       )
     );
@@ -187,8 +191,12 @@ async function publishToThreads({ token, content, mediaUrls = [], platformUid })
       children:   children.map(c => c.id).join(','),
     });
   } else if (mediaUrls.length === 1) {
+    const url = mediaUrls[0];
+    const video = isVideo(url);
     containerId = await apiFetchThreads(`${THREADS_BASE}/${threadsUserId}/threads`, 'POST', token, {
-      media_type: 'IMAGE', image_url: mediaUrls[0], text: content,
+      media_type: video ? 'VIDEO' : 'IMAGE',
+      ...(video ? { video_url: url } : { image_url: url }),
+      text: content,
     });
   } else {
     containerId = await apiFetchThreads(`${THREADS_BASE}/${threadsUserId}/threads`, 'POST', token, {
@@ -315,7 +323,7 @@ async function publishToTikTok({ token, content, mediaUrls = [] }) {
   const initBody = {
     post_info: {
       title:            content.slice(0, 2200),
-      privacy_level:    creatorInfo.privacy_level_options?.[0] || 'PUBLIC_TO_EVERYONE',
+      privacy_level:    'SELF_ONLY',
       disable_duet:     false,
       disable_comment:  false,
       disable_stitch:   false,
