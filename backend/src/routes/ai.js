@@ -203,6 +203,14 @@ router.post('/sentiment/analyze', protect, async (req, res) => {
 });
 
 // ─── YouTube Trends Indonesia ─────────────────────────────────────────────────
+// Keyword per kategori untuk search yang lebih relevan
+const YT_CATEGORY_QUERIES = {
+  '25': 'berita politik indonesia terbaru',
+  '22': 'vlog indonesia',
+  '24': 'entertainment indonesia',
+  '28': 'teknologi sains indonesia',
+};
+
 router.get('/youtube/trends', protect, async (req, res) => {
   const { categoryId = '0', regionCode = 'ID' } = req.query;
   if (!process.env.YOUTUBE_API_KEY) {
@@ -213,7 +221,7 @@ router.get('/youtube/trends', protect, async (req, res) => {
     let items = [];
 
     if (categoryId === '0' || !categoryId) {
-      // Semua kategori: gunakan trending chart (paling akurat untuk trending)
+      // Semua kategori: trending chart Indonesia
       const r = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
         params: {
           part:       'snippet,statistics',
@@ -225,23 +233,24 @@ router.get('/youtube/trends', protect, async (req, res) => {
       });
       items = r.data.items || [];
     } else {
-      // Kategori spesifik: gunakan search dengan videoCategoryId (lebih akurat filter)
+      // Kategori spesifik: search dengan keyword relevan + viewCount
+      const query = YT_CATEGORY_QUERIES[categoryId] || 'indonesia';
       const searchRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
         params: {
-          part:            'snippet',
-          type:            'video',
-          videoCategoryId: categoryId,
+          part:       'snippet',
+          type:       'video',
+          q:          query,
           regionCode,
-          order:           'viewCount',
-          maxResults:      20,
-          key:             process.env.YOUTUBE_API_KEY,
+          order:      'viewCount',
+          maxResults: 20,
+          key:        process.env.YOUTUBE_API_KEY,
         },
       });
       const videoIds = (searchRes.data.items || []).map(v => v.id.videoId).filter(Boolean);
       if (videoIds.length === 0) {
         return res.json({ success: true, items: [] });
       }
-      // Ambil statistics untuk video yang ditemukan
+      // Ambil statistics
       const videosRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
         params: {
           part: 'snippet,statistics',
