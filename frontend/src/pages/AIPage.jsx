@@ -68,7 +68,18 @@ export default function AIPage() {
   const [sentTexts, setSentTexts] = useState('');
   const [sentResults, setSentResults] = useState(null);
 
+  // YouTube Trends state
+  const [ytCategory, setYtCategory] = useState('0');
+  const [ytResults, setYtResults] = useState(null);
+
   const NEWS_SOURCES = ['antara', 'detik', 'kompas', 'tempo', 'tribun', 'cnn'];
+  const YT_CATEGORIES = [
+    { id: '0',  label: 'Semua' },
+    { id: '25', label: 'Berita & Politik' },
+    { id: '22', label: 'People & Blog' },
+    { id: '24', label: 'Entertainment' },
+    { id: '28', label: 'Sains & Teknologi' },
+  ];
 
   const generateCaption = async () => {
     if (!capTopic.trim()) return toast.error('Masukkan topik/produk!');
@@ -176,6 +187,16 @@ export default function AIPage() {
     finally { setLoading(false); }
   };
 
+  const fetchYoutubeTrends = async () => {
+    setLoading(true);
+    try {
+      const res = await aiAPI.getYoutubeTrends({ categoryId: ytCategory });
+      setYtResults(res.data.items || []);
+      toast.success(`${res.data.items?.length || 0} video trending ditemukan!`);
+    } catch (err) { toast.error(err.response?.data?.message || 'Gagal ambil YouTube Trends'); }
+    finally { setLoading(false); }
+  };
+
   const tabStyle = (key) => ({
     padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
     background: activeTab === key ? '#EEEDFE' : '#f5f4f2',
@@ -203,6 +224,7 @@ export default function AIPage() {
             { key: 'news',      label: '📰 Berita & Tren' },
             { key: 'imagen',    label: '🖼️ Imagen B-roll' },
             { key: 'sentiment', label: '📊 Sentimen' },
+            { key: 'youtube',   label: '📺 YouTube Trends' },
           ].map(t => (
             <div key={t.key} onClick={() => setActiveTab(t.key)} style={tabStyle(t.key)}>{t.label}</div>
           ))}
@@ -843,6 +865,50 @@ export default function AIPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'youtube' && (
+          <div>
+            <div className="card">
+              <div className="card-title">📺 YouTube Trends Indonesia</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
+                Video trending di Indonesia untuk riset konten dan inspirasi
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                {YT_CATEGORIES.map(c => (
+                  <button key={c.id} onClick={() => setYtCategory(c.id)} style={{
+                    padding: '6px 12px', borderRadius: 20, fontSize: 12, border: 'none', cursor: 'pointer',
+                    background: ytCategory === c.id ? '#E24B4A' : '#f5f4f2',
+                    color: ytCategory === c.id ? '#fff' : '#555',
+                  }}>{c.label}</button>
+                ))}
+              </div>
+              <button className="btn-primary" style={{ width: '100%', padding: 10 }}
+                onClick={fetchYoutubeTrends} disabled={loading}>
+                {loading ? '⟳ Mengambil...' : '📺 Ambil Video Trending'}
+              </button>
+            </div>
+
+            {ytResults && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginTop: 14 }}>
+                {ytResults.map((v, i) => (
+                  <a key={v.id} href={`https://youtube.com/watch?v=${v.id}`} target="_blank" rel="noopener noreferrer"
+                    style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                      {v.thumbnail && (
+                        <img src={v.thumbnail} alt={v.title} style={{ width: '100%', height: 140, objectFit: 'cover' }} />
+                      )}
+                      <div style={{ padding: '10px 12px' }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.4, marginBottom: 6, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{v.title}</div>
+                        <div style={{ fontSize: 11, color: '#888' }}>{v.channel}</div>
+                        <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>▶ {Number(v.viewCount).toLocaleString('id-ID')} views</div>
+                      </div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
