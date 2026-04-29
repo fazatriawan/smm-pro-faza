@@ -98,6 +98,7 @@ export const aiAPI = {
   getScheduleStrategy: (params) => api.get('/ai/schedule/strategy', { params }),
   getWeeklySchedule:   (params) => api.get('/ai/schedule/weekly', { params }),
   getBatchSchedule:    (params) => api.get('/ai/schedule/batch', { params }),
+  generateShortsIdea:  (data)   => api.post('/ai/youtube/shorts-idea', data),
 };
 
 export default api;

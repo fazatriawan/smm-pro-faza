@@ -277,6 +277,45 @@ router.get('/youtube/trends', protect, async (req, res) => {
   }
 });
 
+// ─── YouTube Shorts Idea Generator ────────────────────────────────────────────
+router.post('/youtube/shorts-idea', protect, async (req, res) => {
+  const { videoId, title, channel, viewCount, description } = req.body;
+  if (!title) return res.status(400).json({ message: 'Judul video wajib diisi' });
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ message: 'GEMINI_API_KEY belum diset' });
+
+  const systemPrompt = `Kamu adalah Content Creator Strategist spesialis YouTube Shorts/TikTok/Reels di Indonesia. 
+Tugasmu: analisis video trending dan buatkan ide clipping (shorts) yang viral-worthy.
+Kembalikan response MURNI dalam format JSON dengan key:
+- hook: hook 3 detik pertama yang mematikan (max 15 kata, bikin penasaran)
+- timestamp: bagian video mana yang paling worth di-clip (format MM:SS-MM:SS)
+- script: script voice over untuk shorts (30-50 detik, bahasa Indonesia santai, Gen Z/Millennial)
+- caption: caption Instagram/TikTok/YouTube Shorts siap pakai
+- hashtags: array hashtag relevan (5-8 hashtag)
+- brollIdeas: array ide visual B-roll pendukung (3-5 ide)
+- cta: call-to-action singkat
+
+Tone: santai, smart-casual, kekinian. Gunakan bahasa Indonesia.`;
+
+  const userPrompt = `Judul video trending: "${title}"
+Channel: ${channel || 'Unknown'}
+Views: ${Number(viewCount || 0).toLocaleString('id-ID')}
+Deskripsi: ${description || 'Tidak tersedia'}
+
+Buatkan ide shorts/clipping dari video ini yang berpotensi viral di Indonesia.`;
+
+  try {
+    const raw = await callGemini(apiKey, 'gemini-flash-latest', systemPrompt, userPrompt, 2000);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ message: 'Respons AI bukan JSON valid', raw });
+    const result = JSON.parse(match[0]);
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ─── Schedule Strategy ────────────────────────────────────────────────────────
 const { getOptimalPostingTime, generateWeeklySchedule, suggestBatchSchedule } = require('../services/scheduleStrategyService');
 

@@ -72,6 +72,11 @@ export default function AIPage() {
   const [ytCategory, setYtCategory] = useState('0');
   const [ytResults, setYtResults] = useState(null);
 
+  // YouTube Shorts Idea state
+  const [shortsIdea, setShortsIdea] = useState(null);
+  const [shortsLoading, setShortsLoading] = useState(false);
+  const [shortsVideo, setShortsVideo] = useState(null);
+
   // Schedule Strategy state
   const [ssPlatform, setSsPlatform] = useState('instagram');
   const [ssType, setSsType] = useState('default');
@@ -200,6 +205,25 @@ export default function AIPage() {
       toast.success(`${res.data.items?.length || 0} video trending ditemukan!`);
     } catch (err) { toast.error(err.response?.data?.message || 'Gagal ambil YouTube Trends'); }
     finally { setLoading(false); }
+  };
+
+  const generateShortsIdea = async (video) => {
+    setShortsLoading(true);
+    setShortsVideo(video);
+    try {
+      const res = await aiAPI.generateShortsIdea({
+        videoId: video.id,
+        title: video.title,
+        channel: video.channel,
+        viewCount: video.viewCount,
+      });
+      setShortsIdea(res.data.result);
+      toast.success('🎬 Ide shorts berhasil digenerate!');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Gagal generate shorts idea');
+    } finally {
+      setShortsLoading(false);
+    }
   };
 
   const fetchScheduleStrategy = async () => {
@@ -908,9 +932,9 @@ export default function AIPage() {
             {ytResults && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginTop: 14 }}>
                 {ytResults.map((v, i) => (
-                  <a key={v.id} href={`https://youtube.com/watch?v=${v.id}`} target="_blank" rel="noopener noreferrer"
-                    style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                  <div key={v.id} className="card" style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
+                    <a href={`https://youtube.com/watch?v=${v.id}`} target="_blank" rel="noopener noreferrer"
+                      style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
                       {v.thumbnail && (
                         <img src={v.thumbnail} alt={v.title} style={{ width: '100%', height: 140, objectFit: 'cover' }} />
                       )}
@@ -919,9 +943,107 @@ export default function AIPage() {
                         <div style={{ fontSize: 11, color: '#888' }}>{v.channel}</div>
                         <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>▶ {Number(v.viewCount).toLocaleString('id-ID')} views</div>
                       </div>
-                    </div>
-                  </a>
+                    </a>
+                    <button
+                      onClick={() => generateShortsIdea(v)}
+                      disabled={shortsLoading}
+                      style={{
+                        width: 'calc(100% - 24px)',
+                        margin: '0 12px 12px',
+                        padding: '8px 0',
+                        background: '#e91e8c',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {shortsLoading && shortsVideo?.id === v.id ? '⟳ Generating...' : '🎬 Generate Shorts Idea'}
+                    </button>
+                  </div>
                 ))}
+              </div>
+            )}
+
+            {/* Shorts Idea Modal */}
+            {shortsIdea && shortsVideo && (
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+              }} onClick={() => { setShortsIdea(null); setShortsVideo(null); }}>
+                <div style={{
+                  background: '#fff', borderRadius: 16, maxWidth: 600, width: '100%',
+                  maxHeight: '85vh', overflowY: 'auto', padding: 24,
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+                }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <div className="card-title" style={{ margin: 0 }}>🎬 Shorts Idea</div>
+                    <button onClick={() => { setShortsIdea(null); setShortsVideo(null); }}
+                      style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer' }}>✕</button>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>
+                    Dari: <strong>{shortsVideo.title}</strong>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ background: '#fff0f6', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#e91e8c', marginBottom: 6, textTransform: 'uppercase' }}>⚡ Hook (3 detik pertama)</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#333' }}>{shortsIdea.hook}</div>
+                    </div>
+
+                    <div style={{ background: '#f0f9ff', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0284c7', marginBottom: 6, textTransform: 'uppercase' }}>🎯 Timestamp Clip</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#333' }}>{shortsIdea.timestamp}</div>
+                    </div>
+
+                    <div style={{ background: '#f6f3ff', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', marginBottom: 6, textTransform: 'uppercase' }}>📝 Script Voice Over</div>
+                      <div style={{ fontSize: 13, color: '#333', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{shortsIdea.script}</div>
+                    </div>
+
+                    <div style={{ background: '#fefce8', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#a16207', marginBottom: 6, textTransform: 'uppercase' }}>💬 Caption</div>
+                      <div style={{ fontSize: 13, color: '#333', lineHeight: 1.6 }}>{shortsIdea.caption}</div>
+                    </div>
+
+                    <div style={{ background: '#f0fdf4', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d', marginBottom: 6, textTransform: 'uppercase' }}>#️⃣ Hashtag</div>
+                      <div style={{ fontSize: 13, color: '#15803d' }}>{Array.isArray(shortsIdea.hashtags) ? shortsIdea.hashtags.join(' ') : shortsIdea.hashtags}</div>
+                    </div>
+
+                    {shortsIdea.brollIdeas && (
+                      <div style={{ background: '#fff7ed', borderRadius: 10, padding: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#c2410c', marginBottom: 6, textTransform: 'uppercase' }}>🎨 Ide B-Roll Visual</div>
+                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#333' }}>
+                          {(Array.isArray(shortsIdea.brollIdeas) ? shortsIdea.brollIdeas : []).map((idea, i) => (
+                            <li key={i} style={{ marginBottom: 4 }}>{idea}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div style={{ background: '#eef2ff', borderRadius: 10, padding: 14 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#4f46e5', marginBottom: 6, textTransform: 'uppercase' }}>📢 Call to Action</div>
+                      <div style={{ fontSize: 13, color: '#333' }}>{shortsIdea.cta}</div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(
+                      `🎬 SHORTS IDEA\n\n⚡ Hook: ${shortsIdea.hook}\n🎯 Timestamp: ${shortsIdea.timestamp}\n\n📝 Script:\n${shortsIdea.script}\n\n💬 Caption:\n${shortsIdea.caption}\n\n${Array.isArray(shortsIdea.hashtags) ? shortsIdea.hashtags.join(' ') : shortsIdea.hashtags}\n\n📢 CTA: ${shortsIdea.cta}`
+                    ); toast.success('📋 Disalin ke clipboard!'); }}
+                    style={{
+                      width: '100%', marginTop: 16, padding: 12,
+                      background: '#e91e8c', color: '#fff', border: 'none',
+                      borderRadius: 10, cursor: 'pointer', fontSize: 14, fontWeight: 600
+                    }}
+                  >
+                    📋 Salin Semua ke Clipboard
+                  </button>
+                </div>
               </div>
             )}
           </div>
