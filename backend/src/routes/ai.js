@@ -205,30 +205,64 @@ router.post('/sentiment/analyze', protect, async (req, res) => {
 // ─── YouTube Trends Indonesia ─────────────────────────────────────────────────
 router.get('/youtube/trends', protect, async (req, res) => {
   const { categoryId = '0', regionCode = 'ID' } = req.query;
-  const apiKey = process.env.YOUTUBE_API_KEY || process.env.GEMINI_API_KEY; // fallback
-  if (!process.env.YOUTUBE_API_KEY) return res.status(500).json({ message: 'YOUTUBE_API_KEY belum diset di environment' });
+  if (!process.env.YOUTUBE_API_KEY) {
+    return res.status(500).json({ message: 'YOUTUBE_API_KEY belum diset di environment' });
+  }
 
   try {
-    const r = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-      params: {
-        part:       'snippet,statistics',
-        chart:      'mostPopular',
-        regionCode,
-        categoryId,
-        maxResults: 20,
-        key:        process.env.YOUTUBE_API_KEY,
-      },
-    });
-    const items = (r.data.items || []).map(v => ({
+    let items = [];
+
+    if (categoryId === '0' || !categoryId) {
+      // Semua kategori: gunakan trending chart (paling akurat untuk trending)
+      const r = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+        params: {
+          part:       'snippet,statistics',
+          chart:      'mostPopular',
+          regionCode,
+          maxResults: 20,
+          key:        process.env.YOUTUBE_API_KEY,
+        },
+      });
+      items = r.data.items || [];
+    } else {
+      // Kategori spesifik: gunakan search dengan videoCategoryId (lebih akurat filter)
+      const searchRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+        params: {
+          part:            'snippet',
+          type:            'video',
+          videoCategoryId: categoryId,
+          regionCode,
+          order:           'viewCount',
+          maxResults:      20,
+          key:             process.env.YOUTUBE_API_KEY,
+        },
+      });
+      const videoIds = (searchRes.data.items || []).map(v => v.id.videoId).filter(Boolean);
+      if (videoIds.length === 0) {
+        return res.json({ success: true, items: [] });
+      }
+      // Ambil statistics untuk video yang ditemukan
+      const videosRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+        params: {
+          part: 'snippet,statistics',
+          id:   videoIds.join(','),
+          key:  process.env.YOUTUBE_API_KEY,
+        },
+      });
+      items = videosRes.data.items || [];
+    }
+
+    const result = items.map(v => ({
       id:          v.id,
-      title:       v.snippet.title,
-      channel:     v.snippet.channelTitle,
-      thumbnail:   v.snippet.thumbnails?.medium?.url,
+      title:       v.snippet?.title,
+      channel:     v.snippet?.channelTitle,
+      thumbnail:   v.snippet?.thumbnails?.medium?.url,
       viewCount:   Number(v.statistics?.viewCount || 0),
       likeCount:   Number(v.statistics?.likeCount || 0),
-      publishedAt: v.snippet.publishedAt,
+      publishedAt: v.snippet?.publishedAt,
     }));
-    res.json({ success: true, items });
+
+    res.json({ success: true, items: result });
   } catch (err) {
     res.status(500).json({ message: err.response?.data?.error?.message || err.message });
   }
