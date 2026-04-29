@@ -698,7 +698,7 @@ ${texts.map((t, i) => `${i + 1}. ${t}`).join('\n')}
 Kembalikan JSON: { "results": [{ "text": "...", "sentiment": "positif|negatif|netral", "score": 0.0-1.0, "reason": "alasan singkat" }], "summary": { "positif": N, "negatif": N, "netral": N } }`;
 
   try {
-    const raw   = await callGemini(s.geminiApiKey, 'gemini-2.0-flash', systemPrompt, userPrompt);
+    const raw   = await callGemini(s.geminiApiKey, 'gemini-1.5-flash', systemPrompt, userPrompt);
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) return { success: false, error: 'Respons tidak valid' };
     return { success: true, ...JSON.parse(match[0]) };

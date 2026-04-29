@@ -2049,8 +2049,8 @@ function pageAIContent() {
           <label>Model</label>
           <select id="ai-model" style="width:100%">
             <option value="gemini-flash-latest">Gemini Flash Latest (Recommended)</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-            <option value="gemini-2.5-flash-preview-04-17">Gemini 2.5 Flash</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash</option>
             <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
           </select>
         </div>
