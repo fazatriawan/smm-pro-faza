@@ -53,4 +53,5 @@ contextBridge.exposeInMainWorld('api', {
   downloadBrollImage:  (data)    => ipcRenderer.invoke('download-broll-image', data),
   getYoutubeTrends:    (data)    => ipcRenderer.invoke('get-youtube-trends', data),
   generateCaptionVariations: (data) => ipcRenderer.invoke('generate-caption-variations', data),
+  fetchYoutubeInfo:    (url)     => ipcRenderer.invoke('fetch-youtube-info', url),
 });

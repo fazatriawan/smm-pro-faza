@@ -238,6 +238,52 @@ ipcMain.handle('save-settings', (_, settings) => {
   return settings;
 });
 
+// ─── YOUTUBE VIDEO INFO ────────────────────────────────────────────────────
+ipcMain.handle('fetch-youtube-info', async (_, url) => {
+  const settings = store.get('settings', {});
+  const apiKey = settings.youtubeApiKey;
+
+  // Extract video ID
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+  const videoId = match ? match[1] : null;
+  if (!videoId) return { success: false, error: 'URL YouTube tidak valid' };
+
+  // Try YouTube Data API v3 if key exists
+  if (apiKey) {
+    try {
+      const res = await nodeFetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${apiKey}`);
+      const data = await res.json();
+      if (data.items?.[0]?.snippet) {
+        const s = data.items[0].snippet;
+        return {
+          success: true,
+          title: s.title,
+          description: s.description,
+          channelName: s.channelTitle,
+          context: `${s.title}\n${(s.description || '').slice(0, 300)}`
+        };
+      }
+    } catch (err) {
+      // Fallback to oEmbed
+    }
+  }
+
+  // Fallback to oEmbed (title only, no API key needed)
+  try {
+    const res = await nodeFetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+    const data = await res.json();
+    return {
+      success: true,
+      title: data.title,
+      description: '',
+      channelName: data.author_name || '',
+      context: data.title || ''
+    };
+  } catch (err) {
+    return { success: false, error: 'Gagal mengambil info video' };
+  }
+});
+
 // ─── LOGS ─────────────────────────────────────────────────────────────────
 ipcMain.handle('get-logs', () => store.get('logs', []));
 ipcMain.handle('clear-logs', () => { store.set('logs', []); return []; });

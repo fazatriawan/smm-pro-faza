@@ -1510,6 +1510,13 @@ function pageAmplify() {
             `).join('')}
           </div>
         </div>
+        <!-- URL Target -->
+        <div class="card">
+          <div class="card-title">🎯 URL Target</div>
+          <textarea id="amp-urls" rows="2" placeholder="https://www.youtube.com/watch?v=..." style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;box-sizing:border-box" oninput="handleAmpUrlInput()"></textarea>
+          <div style="font-size:11px;color:#888;margin-top:4px">Masukkan 1 atau lebih URL (satu per baris)</div>
+        </div>
+
         <div class="card">
           <div class="card-title">Pilih Aksi</div>
           <div id="amp-actions" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -1682,6 +1689,34 @@ document.addEventListener('change', function(e) {
     updateAICount();
   }
 });
+
+async function handleAmpUrlInput() {
+  const urlInput = document.getElementById('amp-urls');
+  const contextInput = document.getElementById('amp-context');
+  if (!urlInput || !contextInput) return;
+
+  const urls = urlInput.value.split('\n').map(u => u.trim()).filter(u => u);
+  if (!urls.length) return;
+
+  const firstUrl = urls[0];
+  const isYouTube = /youtube\.com|youtu\.be/.test(firstUrl);
+  if (!isYouTube) return;
+
+  // Check if context already has content (don't overwrite user input)
+  if (contextInput.value.trim()) return;
+
+  try {
+    const res = await window.api.fetchYoutubeInfo(firstUrl);
+    if (res.success && res.context) {
+      contextInput.value = res.context;
+      // Update hint
+      const hint = document.getElementById('amp-context-hint');
+      if (hint) hint.textContent = '✅ Info video berhasil diambil otomatis';
+    }
+  } catch (err) {
+    // Silently fail
+  }
+}
 
 function toggleAmpAction(key, color) {
   const btn = document.getElementById(`amp-action-${key}`);
