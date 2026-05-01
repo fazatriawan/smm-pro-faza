@@ -47,6 +47,15 @@ const SocialAccountSchema = new mongoose.Schema({
     lastLoginAt: Date,
     lastWarmupAt: Date
   },
+  // Connection status tracking
+  connectionStatus: {
+    type: String,
+    enum: ['connected', 'disconnected', 'expired', 'unknown'],
+    default: 'unknown'
+  },
+  lastVerifiedAt: { type: Date },
+  statusMessage: { type: String }, // error message if disconnected
+
   // Warmup settings per account
   warmup: {
     enabled: { type: Boolean, default: false },
@@ -159,6 +168,14 @@ const AmplifyJobSchema = new mongoose.Schema({
     executedAt: Date
   }],
   status: { type: String, enum: ['pending', 'running', 'completed', 'failed', 'stopped'], default: 'pending' },
+  // AI-generated comments for amplify
+  aiConfig: {
+    useAI: { type: Boolean, default: false },
+    tone: { type: String, enum: ['pro', 'kontra', 'netral'], default: 'netral' },
+    style: { type: String, enum: ['santai', 'formal', 'kritis', 'lucu', 'pendek'], default: 'santai' },
+    generatedComments: [String],
+    targetDescription: String
+  }
 }, { timestamps: true });
 const AmplifyJob = mongoose.model('AmplifyJob', AmplifyJobSchema);
 

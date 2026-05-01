@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { protect } = require('../middleware/auth');
 const { SocialAccount } = require('../models');
+const { verifyAccountStatus, verifyAllAccounts } = require('../services/accountStatusService');
 
 // GET all accounts (admin sees all active, operator sees own active)
 router.get('/', protect, async (req, res) => {
@@ -225,6 +226,44 @@ router.delete('/sync/:platform/:username', protect, async (req, res) => {
       { isActive: false }
     );
     res.json({ message: 'Account removed from sync' });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// POST verify single account status
+router.post('/:id/verify', protect, async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin'
+      ? { _id: req.params.id, isActive: true }
+      : { _id: req.params.id, owner: req.user._id, isActive: true };
+
+    const account = await SocialAccount.findOne(filter);
+    if (!account) return res.status(404).json({ message: 'Akun tidak ditemukan' });
+
+    const status = await verifyAccountStatus(account);
+
+    // Update DB
+    await SocialAccount.findByIdAndUpdate(account._id, {
+      connectionStatus: status.status,
+      lastVerifiedAt: new Date(),
+      statusMessage: status.message
+    });
+
+    res.json({ accountId: account._id, ...status });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// POST verify all accounts status
+router.post('/verify-all', protect, async (req, res) => {
+  try {
+    const results = await verifyAllAccounts(req.user._id, req.user.role === 'admin');
+    res.json({
+      message: `${results.length} akun diverifikasi`,
+      connected: results.filter(r => r.status === 'connected').length,
+      disconnected: results.filter(r => r.status === 'disconnected').length,
+      expired: results.filter(r => r.status === 'expired').length,
+      unknown: results.filter(r => r.status === 'unknown').length,
+      results
+    });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
