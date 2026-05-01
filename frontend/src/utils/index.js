@@ -67,3 +67,21 @@ export const timeAgo = (date) => {
   if (diff < 86400) return `${Math.floor(diff / 3600)}j lalu`;
   return `${Math.floor(diff / 86400)}h lalu`;
 };
+
+/**
+ * Deduplicate accounts by platformUserId.
+ * Prefer OAuth accounts over automation accounts when duplicate exists.
+ */
+export const deduplicateAccounts = (accounts) => {
+  const seen = new Map();
+  for (const a of accounts) {
+    const key = a.platformUserId || a._id;
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, a);
+    } else if (a.loginType === 'oauth' && existing.loginType !== 'oauth') {
+      seen.set(key, a);
+    }
+  }
+  return Array.from(seen.values());
+};

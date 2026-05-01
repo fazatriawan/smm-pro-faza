@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { amplifyAPI, accountsAPI, aiAPI } from '../api';
-import { PLATFORMS } from '../utils';
+import { PLATFORMS, deduplicateAccounts } from '../utils';
 import {
   ThumbsUp, MessageCircle, Share2, Bookmark, ThumbsDown, Bell, UserPlus, RotateCw,
   Globe, Video, Hash, Target, Link2, Plus, Sparkles, Wand2, Zap, ChevronDown, X,
@@ -182,10 +182,11 @@ export default function AmplifyPage() {
     }
   }, [urls, activePlatform, youtubeApiKey]);
 
-  const { data: accounts = [] } = useQuery({
+  const { data: rawAccounts = [] } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsAPI.getAll().then(r => r.data)
   });
+  const accounts = deduplicateAccounts(rawAccounts);
 
   const { data: jobs = [], refetch } = useQuery({
     queryKey: ['amplify-jobs'],

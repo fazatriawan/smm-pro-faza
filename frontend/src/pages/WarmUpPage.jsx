@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { warmupAPI } from '../api';
-import { Card, Button, EmptyState, Badge } from '../components/ui';
-import { Heart, MessageCircle, UserPlus, Search, Bookmark, Activity, CheckCircle2, XCircle } from 'lucide-react';
+import { warmupAPI, accountsAPI } from '../api';
+import { PLATFORMS, deduplicateAccounts } from '../utils';
+import { Card, Button, EmptyState, Badge, Avatar } from '../components/ui';
+import { Heart, MessageCircle, UserPlus, Search, Bookmark, Activity, CheckCircle2, XCircle, Info } from 'lucide-react';
 import dayjs from 'dayjs';
 
 const STAT_ITEMS = [
@@ -30,6 +31,9 @@ const MOCK_LOGS = Array.from({ length: 10 }, (_, i) => ({
 
 export default function WarmUpPage() {
   const [settings, setSettings] = useState({ likes: 50, comments: 15, follows: 5, searches: 20, saves: 10 });
+  const [selectedAccountIds, setSelectedAccountIds] = useState(new Set());
+  const [selectAll, setSelectAll] = useState(true);
+
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['warmup-stats'],
     queryFn: () => warmupAPI.getStats().then(r => r.data),
@@ -39,6 +43,33 @@ export default function WarmUpPage() {
     queryKey: ['warmup-logs'],
     queryFn: () => warmupAPI.getLogs().then(r => r.data)
   });
+  const { data: rawAccounts = [] } = useQuery({
+    queryKey: ['accounts'],
+    queryFn: () => accountsAPI.getAll().then(r => r.data)
+  });
+
+  const accounts = deduplicateAccounts(rawAccounts);
+  // Warm up hanya untuk automation accounts
+  const automationAccounts = accounts.filter(a => a.loginType === 'automation');
+
+  const toggleAccount = (id) => {
+    setSelectedAccountIds(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+    setSelectAll(false);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectAll) {
+      setSelectedAccountIds(new Set());
+      setSelectAll(false);
+    } else {
+      setSelectedAccountIds(new Set(automationAccounts.map(a => a._id)));
+      setSelectAll(true);
+    }
+  };
 
   const displayStats = stats || { like: 1240, comment: 320, follow: 85, search: 450, save: 210 };
   const displayLogs = logs.length > 0 ? logs : MOCK_LOGS;
@@ -70,13 +101,80 @@ export default function WarmUpPage() {
                   <Icon size={20} />
                 </div>
                 <div className="stat-value" style={{ fontSize: 24 }}>
-                  {statsLoading ? '—' : (displayStats[s.key] || 0).toLocaleString()}
+                  {statsLoading ? 'â€”' : (displayStats[s.key] || 0).toLocaleString()}
                 </div>
                 <div className="stat-label">{s.label} hari ini</div>
               </div>
             );
           })}
         </div>
+
+        {/* Account Selector */}
+        <Card header="Pilih Akun Warm Up" headerAction={
+          <span style={{ fontSize: 'var(--font-caption)', color: 'var(--color-text-tertiary)' }}>
+            {automationAccounts.length} akun automation
+          </span>
+        } style={{ marginBottom: 16 }}>
+          {automationAccounts.length === 0 ? (
+            <div className="alert alert-info" style={{ marginBottom: 0 }}>
+              <Info size={14} />
+              <span>Warm up hanya tersedia untuk akun automation (desktop app). Akun OAuth tidak dapat digunakan untuk warm up.</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <input
+                  type="checkbox"
+                  checked={selectAll}
+                  onChange={toggleSelectAll}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 'var(--font-small)', fontWeight: 500, color: 'var(--color-text-primary)' }}>
+                  Semua Akun ({automationAccounts.length})
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+                {automationAccounts.map(acc => {
+                  const p = PLATFORMS[acc.platform];
+                  const isSelected = selectAll || selectedAccountIds.has(acc._id);
+                  return (
+                    <div
+                      key={acc._id}
+                      onClick={() => toggleAccount(acc._id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '6px 8px', borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                        background: isSelected ? 'var(--color-primary-light)' : 'transparent',
+                        transition: 'background var(--transition-fast)',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleAccount(acc._id)}
+                        style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+                      />
+                      <Avatar name={acc.platformUsername || acc.label} size={24} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 'var(--font-small)', fontWeight: 500, color: 'var(--color-text-primary)' }}>{acc.label}</div>
+                        <div style={{ fontSize: 'var(--font-xs)', color: 'var(--color-text-tertiary)' }}>@{acc.platformUsername}</div>
+                      </div>
+                      {p && (
+                        <span style={{
+                          fontSize: 'var(--font-xs)', padding: '1px 6px', borderRadius: 'var(--radius-full)',
+                          background: p.bg, color: p.text, fontWeight: 600, flexShrink: 0
+                        }}>
+                          {p.short}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </Card>
 
         <div className="two-col">
           <Card header="Pengaturan Warm Up Harian">
@@ -106,8 +204,8 @@ export default function WarmUpPage() {
             <div className="alert alert-warning" style={{ marginBottom: 16, marginTop: 8 }}>
               Limit disesuaikan dengan rate limit resmi masing-masing platform untuk menghindari pembatasan akun.
             </div>
-            <Button variant="primary" size="md" style={{ width: '100%' }}>
-              Simpan & Terapkan ke Semua Akun
+            <Button variant="primary" size="md" style={{ width: '100%' }} disabled={automationAccounts.length === 0}>
+              Simpan & Terapkan ke {selectAll ? automationAccounts.length : selectedAccountIds.size} Akun
             </Button>
           </Card>
 

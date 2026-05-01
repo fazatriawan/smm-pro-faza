@@ -17,7 +17,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { postsAPI, accountsAPI } from '../api';
-import { PLATFORMS, PlatformPill } from '../utils';
+import { PLATFORMS, PlatformPill, deduplicateAccounts } from '../utils';
 import {
   Button,
   Card,
@@ -60,10 +60,11 @@ export default function BulkPostPage() {
   const [expandedPost, setExpandedPost] = useState(null);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
 
-  const { data: accounts = [], isLoading: accountsLoading } = useQuery({
+  const { data: rawAccounts = [], isLoading: accountsLoading } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsAPI.getAll().then(r => r.data)
   });
+  const accounts = deduplicateAccounts(rawAccounts);
 
   const { data: postsData, isLoading: postsLoading, refetch } = useQuery({
     queryKey: ['posts-all'],
