@@ -1,11 +1,50 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  Send,
+  Calendar,
+  Clock,
+  Upload,
+  RefreshCw,
+  Square,
+  FileSpreadsheet,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
+  Image as ImageIcon,
+  Video,
+  Check,
+  FileText,
+} from 'lucide-react';
 import { postsAPI, accountsAPI } from '../api';
 import { PLATFORMS, PlatformPill } from '../utils';
+import {
+  Button,
+  Card,
+  Badge,
+  Skeleton,
+  EmptyState,
+  Spinner,
+} from '../components/ui';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 
 const PLATFORM_KEYS = ['facebook', 'instagram', 'youtube', 'twitter', 'tiktok', 'threads'];
+
+const STATUS_VARIANTS = {
+  completed: { variant: 'success', label: 'Terkirim' },
+  partial:   { variant: 'warning', label: 'Sebagian' },
+  failed:    { variant: 'error',   label: 'Gagal' },
+  sending:   { variant: 'info',    label: 'Mengirim' },
+  processing:{ variant: 'info',    label: 'Mengirim' },
+  scheduled: { variant: 'default', label: 'Terjadwal' },
+};
+
+const TARGET_STATUS_VARIANTS = {
+  sent:    { variant: 'success', label: 'Terkirim' },
+  failed:  { variant: 'error',   label: 'Gagal' },
+  pending: { variant: 'default', label: 'Pending' },
+};
 
 export default function BulkPostPage() {
   const qc = useQueryClient();
@@ -21,12 +60,12 @@ export default function BulkPostPage() {
   const [expandedPost, setExpandedPost] = useState(null);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
 
-  const { data: accounts = [] } = useQuery({
+  const { data: accounts = [], isLoading: accountsLoading } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsAPI.getAll().then(r => r.data)
   });
 
-  const { data: postsData, refetch } = useQuery({
+  const { data: postsData, isLoading: postsLoading, refetch } = useQuery({
     queryKey: ['posts-all'],
     queryFn: () => postsAPI.getAll({ limit: 30 }).then(r => r.data),
     refetchInterval: 5000
@@ -51,7 +90,6 @@ export default function BulkPostPage() {
     });
   };
 
-  // Filter akun berdasarkan platform yang dipilih
   const filteredAccounts = accounts.filter(a => selectedPlatforms.has(a.platform));
 
   const toggleAccount = (id) => {
@@ -163,7 +201,6 @@ export default function BulkPostPage() {
     const id = String(platformPostId);
     switch (platform) {
       case 'facebook':
-        // video ID (pure number) → reel URL; post ID (contains _) → permalink
         if (id.includes('_')) return `https://www.facebook.com/permalink.php?story_fbid=${id.split('_')[1]}&id=${id.split('_')[0]}`;
         return `https://www.facebook.com/video/${id}`;
       case 'instagram': return `https://www.instagram.com/p/${id}`;
@@ -174,33 +211,21 @@ export default function BulkPostPage() {
     }
   };
 
-  const getStatusColor = (status) => {
-    switch(status) {
-      case 'completed': return '#1D9E75';
-      case 'partial': return '#EF9F27';
-      case 'failed': return '#E24B4A';
-      case 'sending': return '#378ADD';
-      default: return '#888';
-    }
-  };
-
-  const getStatusLabel = (status) => {
-    switch(status) {
-      case 'completed': return '✓ Terkirim';
-      case 'partial': return '~ Sebagian';
-      case 'failed': return '✗ Gagal';
-      case 'sending': return '⟳ Mengirim';
-      default: return '◷ Terjadwal';
-    }
-  };
+  const posts = postsData?.posts || [];
 
   return (
     <div>
       <div className="page-header">
         <span className="page-title">Bulk Post</span>
         <div className="page-actions">
-          <button className={`tab ${activeTab==='compose'?'active':''}`} onClick={() => setActiveTab('compose')}>Buat Post</button>
-          <button className={`tab ${activeTab==='history'?'active':''}`} onClick={() => { setActiveTab('history'); refetch(); }}>Riwayat</button>
+          <button className={`tab ${activeTab === 'compose' ? 'active' : ''}`} onClick={() => setActiveTab('compose')}>
+            <FileText size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+            Buat Post
+          </button>
+          <button className={`tab ${activeTab === 'history' ? 'active' : ''}`} onClick={() => { setActiveTab('history'); refetch(); }}>
+            <Clock size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+            Riwayat
+          </button>
         </div>
       </div>
 
@@ -209,385 +234,365 @@ export default function BulkPostPage() {
           <div className="two-col" style={{ alignItems: 'start' }}>
             <div>
               {/* Platform Target */}
-              <div className="card">
-                <div className="card-title">Platform Target</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8 }}>
-                  {PLATFORM_KEYS.map(p => (
-                    <div key={p} onClick={() => togglePlatform(p)} style={{
-                      textAlign: 'center', padding: '10px 6px', borderRadius: 10,
-                      cursor: 'pointer',
-                      border: `1.5px solid ${selectedPlatforms.has(p) ? PLATFORMS[p].color : 'transparent'}`,
-                      background: selectedPlatforms.has(p) ? PLATFORMS[p].bg : '#f5f4f2',
-                      transition: 'all 0.12s',
-                    }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: PLATFORMS[p].text }}>{PLATFORMS[p].short}</div>
-                      <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>{PLATFORMS[p].label}</div>
-                    </div>
-                  ))}
+              <Card header="Platform Target">
+                <div className="platform-grid">
+                  {PLATFORM_KEYS.map(p => {
+                    const isActive = selectedPlatforms.has(p);
+                    const platform = PLATFORMS[p];
+                    return (
+                      <div
+                        key={p}
+                        onClick={() => togglePlatform(p)}
+                        className={`platform-chip ${isActive ? 'active' : ''}`}
+                        style={{
+                          borderColor: isActive ? platform.color : 'transparent',
+                          background: isActive ? platform.bg : 'var(--color-background-subtle)',
+                        }}
+                      >
+                        <div className="platform-chip-short" style={{ color: platform.text }}>
+                          {platform.short}
+                        </div>
+                        <div className="platform-chip-label">{platform.label}</div>
+                      </div>
+                    );
+                  })}
                 </div>
-              </div>
+              </Card>
 
-              {/* Pilih Akun dengan Ceklis */}
-              <div className="card">
-                <div className="card-title">Target Akun</div>
-                <div style={{ position: 'relative' }}>
-                  <div
-                    onClick={() => setShowAccountDropdown(!showAccountDropdown)}
-                    style={{
-                      padding: '10px 14px', border: '1px solid rgba(0,0,0,0.12)',
-                      borderRadius: 8, cursor: 'pointer', display: 'flex',
-                      justifyContent: 'space-between', alignItems: 'center',
-                      background: '#fff', fontSize: 13
-                    }}
-                  >
-                    <span>
-                      {getSelectedCount() === 0
-                        ? 'Pilih akun...'
-                        : `${getSelectedCount()} akun dipilih`}
-                    </span>
-                    <span style={{ color: '#888' }}>{showAccountDropdown ? '▲' : '▼'}</span>
+              {/* Target Akun */}
+              <Card header="Target Akun">
+                {accountsLoading ? (
+                  <div className="flex flex-col gap-2">
+                    <Skeleton height={40} />
+                    <Skeleton height={40} />
+                    <Skeleton height={40} />
                   </div>
-
-                  {showAccountDropdown && (
-                    <div style={{
-                      position: 'absolute', top: '100%', left: 0, right: 0,
-                      background: '#fff', border: '1px solid rgba(0,0,0,0.12)',
-                      borderRadius: 8, zIndex: 100, maxHeight: 300,
-                      overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                      marginTop: 4
-                    }}>
-                      {/* Select All */}
-                      <div
-                        onClick={toggleSelectAll}
-                        style={{
-                          padding: '10px 14px', display: 'flex', alignItems: 'center',
-                          gap: 10, cursor: 'pointer', borderBottom: '1px solid rgba(0,0,0,0.06)',
-                          background: selectAll ? '#EEEDFE' : '#f9f9f9'
-                        }}
-                      >
-                        <div style={{
-                          width: 16, height: 16, borderRadius: 4,
-                          border: `1.5px solid ${selectAll ? '#7F77DD' : '#ccc'}`,
-                          background: selectAll ? '#7F77DD' : '#fff',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          flexShrink: 0
-                        }}>
-                          {selectAll && <span style={{ color: '#fff', fontSize: 10 }}>✓</span>}
-                        </div>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: selectAll ? '#534AB7' : '#333' }}>
-                          Semua Akun ({filteredAccounts.length})
-                        </span>
-                      </div>
-
-                      {/* Per Platform Group */}
-                      {PLATFORM_KEYS.map(platform => {
-                        const platformAccounts = filteredAccounts.filter(a => a.platform === platform);
-                        if (platformAccounts.length === 0) return null;
-                        return (
-                          <div key={platform}>
-                            <div style={{
-                              padding: '6px 14px', fontSize: 11,
-                              color: '#888', background: '#f5f4f2',
-                              fontWeight: 600, textTransform: 'uppercase'
-                            }}>
-                              {PLATFORMS[platform]?.label || platform} ({platformAccounts.length})
-                            </div>
-                            {platformAccounts.map(a => {
-                              const isChecked = selectAll || selectedAccountIds.has(a._id);
-                              return (
-                                <div
-                                  key={a._id}
-                                  onClick={() => toggleAccount(a._id)}
-                                  style={{
-                                    padding: '8px 14px', display: 'flex',
-                                    alignItems: 'center', gap: 10, cursor: 'pointer',
-                                    background: isChecked ? `${PLATFORMS[platform]?.color}08` : '#fff',
-                                    borderBottom: '0.5px solid rgba(0,0,0,0.04)'
-                                  }}
-                                >
-                                  <div style={{
-                                    width: 16, height: 16, borderRadius: 4,
-                                    border: `1.5px solid ${isChecked ? PLATFORMS[platform]?.color : '#ccc'}`,
-                                    background: isChecked ? PLATFORMS[platform]?.color : '#fff',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    flexShrink: 0
-                                  }}>
-                                    {isChecked && <span style={{ color: '#fff', fontSize: 10 }}>✓</span>}
-                                  </div>
-                                  <PlatformPill platform={platform} size="sm" />
-                                  <span style={{ fontSize: 12, flex: 1 }}>{a.label}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
-
-                      {filteredAccounts.length === 0 && (
-                        <div style={{ padding: '16px', textAlign: 'center', fontSize: 12, color: '#aaa' }}>
-                          Tidak ada akun untuk platform yang dipilih
-                        </div>
-                      )}
-
-                      <div
-                        onClick={() => setShowAccountDropdown(false)}
-                        style={{
-                          padding: '10px 14px', textAlign: 'center',
-                          fontSize: 12, color: '#7F77DD', cursor: 'pointer',
-                          borderTop: '1px solid rgba(0,0,0,0.06)', fontWeight: 500
-                        }}
-                      >
-                        Selesai Pilih ✓
-                      </div>
+                ) : (
+                  <div className="account-dropdown-wrapper">
+                    <div
+                      className="account-dropdown-trigger"
+                      onClick={() => setShowAccountDropdown(!showAccountDropdown)}
+                    >
+                      <span className="text-small">
+                        {getSelectedCount() === 0
+                          ? 'Pilih akun...'
+                          : `${getSelectedCount()} akun dipilih`}
+                      </span>
+                      <span className="text-tertiary">
+                        {showAccountDropdown ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </span>
                     </div>
-                  )}
-                </div>
-                {getSelectedCount() > 0 && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: '#1D9E75' }}>
-                    ✓ {getSelectedCount()} akun akan menerima post ini
+
+                    {showAccountDropdown && (
+                      <div className="account-dropdown-menu">
+                        {/* Select All */}
+                        <div
+                          className={`account-dropdown-item select-all ${selectAll ? 'checked' : ''}`}
+                          onClick={toggleSelectAll}
+                        >
+                          <div className="custom-checkbox" style={{
+                            borderColor: selectAll ? 'var(--color-primary)' : 'var(--color-border)',
+                            background: selectAll ? 'var(--color-primary)' : 'var(--color-surface)',
+                          }}>
+                            {selectAll && <Check size={10} color="#fff" />}
+                          </div>
+                          <span className="text-small" style={{ fontWeight: selectAll ? 600 : 400, color: selectAll ? 'var(--color-primary)' : 'var(--color-text-primary)' }}>
+                            Semua Akun ({filteredAccounts.length})
+                          </span>
+                        </div>
+
+                        {/* Per Platform Group */}
+                        {PLATFORM_KEYS.map(platform => {
+                          const platformAccounts = filteredAccounts.filter(a => a.platform === platform);
+                          if (platformAccounts.length === 0) return null;
+                          return (
+                            <div key={platform}>
+                              <div className="account-dropdown-group">
+                                {PLATFORMS[platform]?.label || platform} ({platformAccounts.length})
+                              </div>
+                              {platformAccounts.map(a => {
+                                const isChecked = selectAll || selectedAccountIds.has(a._id);
+                                return (
+                                  <div
+                                    key={a._id}
+                                    className={`account-dropdown-item ${isChecked ? 'checked' : ''}`}
+                                    onClick={() => toggleAccount(a._id)}
+                                    style={{ background: isChecked ? `${PLATFORMS[platform]?.color}08` : 'var(--color-surface)' }}
+                                  >
+                                    <div className="custom-checkbox" style={{
+                                      borderColor: isChecked ? PLATFORMS[platform]?.color : 'var(--color-border)',
+                                      background: isChecked ? PLATFORMS[platform]?.color : 'var(--color-surface)',
+                                    }}>
+                                      {isChecked && <Check size={10} color="#fff" />}
+                                    </div>
+                                    <PlatformPill platform={platform} size="sm" />
+                                    <span className="text-caption" style={{ flex: 1 }}>{a.label}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+
+                        {filteredAccounts.length === 0 && (
+                          <div className="empty-state" style={{ padding: '16px' }}>
+                            Tidak ada akun untuk platform yang dipilih
+                          </div>
+                        )}
+
+                        <div className="account-dropdown-footer" onClick={() => setShowAccountDropdown(false)}>
+                          Selesai Pilih
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+                {getSelectedCount() > 0 && (
+                  <div className="text-success text-caption mt-2">
+                    <span className="inline-icon mr-1"><Check size={12} /></span>
+                    {getSelectedCount()} akun akan menerima post ini
+                  </div>
+                )}
+              </Card>
 
               {/* Konten Post */}
-              <div className="card">
-                <div className="card-title">Konten Post</div>
+              <Card header="Konten Post">
                 <textarea
                   placeholder="Tulis caption/konten di sini..."
                   value={caption}
                   onChange={e => setCaption(e.target.value)}
                   style={{ minHeight: 120, marginBottom: 10 }}
                 />
-                <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>Upload Media (opsional)</div>
+                <div className="text-caption text-secondary mb-2">Upload Media (opsional)</div>
                 <div
-                  style={{
-                    border: '1.5px dashed rgba(0,0,0,0.15)', borderRadius: 10,
-                    padding: '20px', textAlign: 'center', cursor: 'pointer',
-                    color: '#aaa', fontSize: 13
-                  }}
+                  className="media-dropzone"
                   onClick={() => document.getElementById('media-input').click()}
                 >
-                  {mediaFiles.length > 0
-                    ? `${mediaFiles.length} file: ${mediaFiles.map(f=>f.name).join(', ')}`
-                    : '+ Klik atau drag & drop gambar/video'}
+                  {mediaFiles.length > 0 ? (
+                    <span className="text-small">
+                      {mediaFiles.length} file: {mediaFiles.map(f => f.name).join(', ')}
+                    </span>
+                  ) : (
+                    <>
+                      <Upload size={20} className="text-tertiary mb-1" />
+                      <span className="text-caption text-tertiary">Klik atau drag &amp; drop gambar/video</span>
+                    </>
+                  )}
                 </div>
                 <input id="media-input" type="file" multiple accept="image/*,video/*"
                   style={{ display: 'none' }}
                   onChange={e => setMediaFiles(Array.from(e.target.files))} />
-              </div>
+              </Card>
 
               {/* TikTok Privacy */}
               {selectedPlatforms.has('tiktok') && (
-                <div className="card">
-                  <div className="card-title">🎵 Pengaturan TikTok</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                <Card header="Pengaturan TikTok">
+                  <div className="tiktok-privacy-grid">
                     {[
-                      { value: 'SELF', label: '🔒 Pribadi (Private)', desc: 'Hanya kamu yang bisa lihat — works now' },
-                      { value: 'PUBLIC', label: '🌐 Publik (Public)', desc: 'Semua orang bisa lihat — butuh audit TikTok' },
+                      { value: 'SELF', label: 'Pribadi (Private)', desc: 'Hanya kamu yang bisa lihat — works now', icon: <ImageIcon size={16} /> },
+                      { value: 'PUBLIC', label: 'Publik (Public)', desc: 'Semua orang bisa lihat — butuh audit TikTok', icon: <Video size={16} /> },
                     ].map(opt => (
                       <div
                         key={opt.value}
                         onClick={() => setTiktokPrivacy(opt.value)}
-                        style={{
-                          flex: 1, padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
-                          border: `1.5px solid ${tiktokPrivacy === opt.value ? '#639922' : 'rgba(0,0,0,0.1)'}`,
-                          background: tiktokPrivacy === opt.value ? '#EAF3DE' : '#f9f9f9',
-                          transition: 'all 0.12s'
-                        }}
+                        className={`tiktok-privacy-option ${tiktokPrivacy === opt.value ? 'active' : ''}`}
                       >
-                        <div style={{ fontSize: 13, fontWeight: 600, color: tiktokPrivacy === opt.value ? '#3B6D11' : '#333' }}>
-                          {opt.label}
+                        <div className="flex items-center gap-2 mb-1">
+                          {opt.icon}
+                          <span className="text-small" style={{ fontWeight: 600 }}>{opt.label}</span>
                         </div>
-                        <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                          {opt.desc}
-                        </div>
+                        <span className="text-caption text-secondary">{opt.desc}</span>
                       </div>
                     ))}
                   </div>
-                </div>
+                </Card>
               )}
 
               {/* Waktu */}
-              <div className="card">
-                <div className="card-title">Waktu Posting</div>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                  {['now', 'schedule'].map(t => (
-                    <button key={t} onClick={() => setScheduleType(t)} style={{
-                      flex: 1, padding: '8px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
-                      background: scheduleType === t ? '#EEEDFE' : '#f5f4f2',
-                      border: `1.5px solid ${scheduleType === t ? '#7F77DD' : 'transparent'}`,
-                      color: scheduleType === t ? '#534AB7' : '#666',
-                    }}>
-                      {t === 'now' ? 'Kirim Sekarang' : 'Jadwalkan'}
-                    </button>
-                  ))}
+              <Card header="Waktu Posting">
+                <div className="schedule-type-grid">
+                  <button
+                    className={`schedule-type-btn ${scheduleType === 'now' ? 'active' : ''}`}
+                    onClick={() => setScheduleType('now')}
+                  >
+                    <Send size={14} />
+                    Kirim Sekarang
+                  </button>
+                  <button
+                    className={`schedule-type-btn ${scheduleType === 'schedule' ? 'active' : ''}`}
+                    onClick={() => setScheduleType('schedule')}
+                  >
+                    <Calendar size={14} />
+                    Jadwalkan
+                  </button>
                 </div>
                 {scheduleType === 'schedule' && (
-                  <input type="datetime-local" value={scheduledAt}
-                    onChange={e => setScheduledAt(e.target.value)} />
+                  <input
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChange={e => setScheduledAt(e.target.value)}
+                    className="mt-3"
+                  />
                 )}
-                <button
-                  className="btn-primary"
-                  style={{ width: '100%', marginTop: 12, padding: 10 }}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  style={{ width: '100%', marginTop: 12 }}
                   onClick={handleSubmit}
-                  disabled={createPost.isPending}
+                  loading={createPost.isPending}
+                  iconLeft={<Send size={16} />}
                 >
-                  {createPost.isPending ? 'Mengirim...' : scheduleType === 'now' ? '✦ Posting Serentak Sekarang' : '◷ Jadwalkan Post'}
-                </button>
-              </div>
+                  {scheduleType === 'now' ? 'Posting Serentak Sekarang' : 'Jadwalkan Post'}
+                </Button>
+              </Card>
             </div>
 
             {/* Preview */}
             <div>
-              <div className="card">
-                <div className="card-title">Preview</div>
-                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+              <Card header="Preview">
+                <div className="text-caption text-secondary mb-3">
                   Akan diposting ke {getSelectedCount()} akun
                 </div>
                 {[...selectedPlatforms].map(p => (
-                  <div key={p} style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 10,
-                    padding: '10px 0', borderBottom: '0.5px solid rgba(0,0,0,0.06)'
-                  }}>
+                  <div key={p} className="preview-platform-row">
                     <PlatformPill platform={p} />
-                    <div style={{ flex: 1, fontSize: 12, color: '#555' }}>
-                      {caption.slice(0, 80) || <span style={{ color: '#aaa' }}>Tulis caption...</span>}
+                    <span className="text-caption text-secondary" style={{ flex: 1 }}>
+                      {caption.slice(0, 80) || <span className="text-tertiary">Tulis caption...</span>}
                       {caption.length > 80 && '...'}
-                    </div>
+                    </span>
                   </div>
                 ))}
-              </div>
+                {selectedPlatforms.size === 0 && (
+                  <EmptyState
+                    icon={<FileText size={32} />}
+                    title="Belum ada platform dipilih"
+                    description="Pilih minimal satu platform untuk melihat preview"
+                  />
+                )}
+              </Card>
             </div>
           </div>
         ) : (
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div className="card-title" style={{ margin: 0 }}>Riwayat Post Bulk</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => refetch()}>↻ Refresh</button>
-                <button className="btn-secondary" style={{ fontSize: 12, background: '#EAF3DE', color: '#3B6D11' }} onClick={exportAllToExcel}>
-                  📊 Export Semua ke Excel
-                </button>
+          <Card
+            header="Riwayat Post Bulk"
+            headerAction={
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => refetch()} iconLeft={<RefreshCw size={14} />}>
+                  Refresh
+                </Button>
+                <Button variant="ghost" size="sm" onClick={exportAllToExcel} iconLeft={<FileSpreadsheet size={14} />}>
+                  Export Semua
+                </Button>
               </div>
-            </div>
-            {(postsData?.posts || []).length === 0 ? (
-              <div className="empty-state">Belum ada post</div>
-            ) : (postsData?.posts || []).map(p => (
-              <div key={p._id}>
-                <div
-                  style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 12,
-                    padding: '12px 0', borderBottom: '0.5px solid rgba(0,0,0,0.06)',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => setExpandedPost(expandedPost === p._id ? null : p._id)}
-                >
-                  <div style={{ fontSize: 12, color: '#888', minWidth: 80, flexShrink: 0 }}>
-                    {dayjs(p.createdAt).format('DD/MM HH:mm')}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, marginBottom: 4 }}>
-                      {p.caption?.slice(0, 60)}{p.caption?.length > 60 ? '...' : ''}
+            }
+          >
+            {postsLoading ? (
+              <div className="flex flex-col gap-3">
+                <Skeleton height={60} />
+                <Skeleton height={60} />
+                <Skeleton height={60} />
+              </div>
+            ) : posts.length === 0 ? (
+              <EmptyState
+                icon={<FileText size={40} />}
+                title="Belum ada post"
+                description="Buat post pertama kamu di tab Buat Post"
+              />
+            ) : (
+              posts.map(p => (
+                <div key={p._id} className="post-history-item">
+                  <div
+                    className="post-history-summary"
+                    onClick={() => setExpandedPost(expandedPost === p._id ? null : p._id)}
+                  >
+                    <div className="post-history-meta">
+                      {dayjs(p.createdAt).format('DD/MM HH:mm')}
                     </div>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                      {[...new Set(p.targetAccounts?.map(ta => ta.account?.platform).filter(Boolean))].map(pl => (
-                        <PlatformPill key={pl} platform={pl} size="sm" />
-                      ))}
-                      <span style={{ fontSize: 11, color: '#aaa' }}>{p.targetAccounts?.length} akun</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="text-small mb-1">
+                        {p.caption?.slice(0, 60)}{p.caption?.length > 60 ? '...' : ''}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {[...new Set(p.targetAccounts?.map(ta => ta.account?.platform).filter(Boolean))].map(pl => (
+                          <PlatformPill key={pl} platform={pl} size="sm" />
+                        ))}
+                        <span className="text-xs text-tertiary">{p.targetAccounts?.length} akun</span>
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{
-                        fontSize: 11, padding: '2px 8px', borderRadius: 20, fontWeight: 500,
-                        background: p.status === 'completed' ? '#EAF3DE' : p.status === 'failed' ? '#FCEBEB' : p.status === 'sending' || p.status === 'processing' ? '#E6F1FB' : '#FAEEDA',
-                        color: getStatusColor(p.status)
-                      }}>
-                        {p.status === 'sending' || p.status === 'processing' ? '⟳ Mengirim...' : getStatusLabel(p.status)}
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={STATUS_VARIANTS[p.status]?.variant || 'default'}
+                          size="sm"
+                        >
+                          {STATUS_VARIANTS[p.status]?.label || p.status}
+                        </Badge>
+                        {(p.status === 'sending' || p.status === 'processing') && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={(e) => { e.stopPropagation(); stopPost.mutate(p._id); }}
+                            iconLeft={<Square size={10} />}
+                          >
+                            Stop
+                          </Button>
+                        )}
+                      </div>
+                      <span className="text-tertiary">
+                        {expandedPost === p._id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </span>
-                      {(p.status === 'sending' || p.status === 'processing') && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); stopPost.mutate(p._id); }}
-                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#FCEBEB', color: '#E24B4A', border: '1px solid #E24B4A', cursor: 'pointer', fontWeight: 500 }}
-                        >
-                          ⏹ Stop
-                        </button>
-                      )}
                     </div>
-                    <span style={{ fontSize: 11, color: '#aaa' }}>{expandedPost === p._id ? '▲' : '▼'}</span>
                   </div>
-                </div>
 
-                {expandedPost === p._id && (
-                  <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '10px 14px', marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, color: '#888', marginBottom: 8, fontWeight: 500 }}>Detail per akun:</div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
-                      {(p.status === 'sending' || p.status === 'processing') && (
-                        <button
-                          onClick={() => stopPost.mutate(p._id)}
-                          style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#FCEBEB', color: '#A32D2D', border: '1px solid #E24B4A', cursor: 'pointer', fontWeight: 500 }}
-                        >
-                          ⏹ Stop
-                        </button>
-                      )}
-                      {(p.status === 'failed' || p.status === 'partial') && (
-                        <button
-                          onClick={() => retryPost.mutate(p._id)}
-                          style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#FAEEDA', color: '#633806', border: 'none', cursor: 'pointer', fontWeight: 500 }}
-                        >
-                          🔄 Ulangi yang Gagal
-                        </button>
-                      )}
-                      <button
-                        onClick={() => exportToExcel(p._id)}
-                        style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, background: '#EAF3DE', color: '#3B6D11', border: 'none', cursor: 'pointer', fontWeight: 500 }}
-                      >
-                        📊 Export Excel
-                      </button>
-                    </div>
-                    {p.targetAccounts?.map((ta, i) => {
-                      const link = getPostLink(ta.platformPostId, ta.account?.platform);
-                      return (
-                        <div key={i} style={{
-                          display: 'flex', alignItems: 'center', gap: 10,
-                          padding: '6px 0', borderBottom: '0.5px solid rgba(0,0,0,0.05)'
-                        }}>
-                          <PlatformPill platform={ta.account?.platform} size="sm" />
-                          <span style={{ flex: 1, fontSize: 12 }}>
-                            {ta.account?.label || ta.account?.platformUsername || '—'}
-                          </span>
-                          <span style={{
-                            fontSize: 11, padding: '2px 6px', borderRadius: 10,
-                            background: ta.status === 'sent' ? '#EAF3DE' : ta.status === 'failed' ? '#FCEBEB' : '#f0efec',
-                            color: ta.status === 'sent' ? '#3B6D11' : ta.status === 'failed' ? '#A32D2D' : '#888'
-                          }}>
-                            {ta.status === 'sent' ? '✓ Terkirim' : ta.status === 'failed' ? '✗ Gagal' : '⟳ Pending'}
-                          </span>
-                          {link && ta.status === 'sent' && (
-                            <a href={link} target="_blank" rel="noopener noreferrer" style={{
-                              fontSize: 11, padding: '3px 10px', borderRadius: 6,
-                              background: '#EEEDFE', color: '#534AB7',
-                              textDecoration: 'none', fontWeight: 500
-                            }}>
-                              Lihat Post ↗
-                            </a>
-                          )}
-                          {ta.error && (
-                            <span style={{
-                              fontSize: 10, color: '#E24B4A', maxWidth: 200,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                            }} title={ta.error}>
-                              {ta.error.slice(0, 50)}
+                  {expandedPost === p._id && (
+                    <div className="post-history-detail">
+                      <div className="text-caption text-secondary mb-2" style={{ fontWeight: 500 }}>
+                        Detail per akun:
+                      </div>
+                      <div className="flex gap-2 mb-2 justify-end">
+                        {(p.status === 'sending' || p.status === 'processing') && (
+                          <Button variant="danger" size="sm" onClick={() => stopPost.mutate(p._id)} iconLeft={<Square size={12} />}>
+                            Stop
+                          </Button>
+                        )}
+                        {(p.status === 'failed' || p.status === 'partial') && (
+                          <Button variant="secondary" size="sm" onClick={() => retryPost.mutate(p._id)} iconLeft={<RotateCcw size={12} />}>
+                            Ulangi yang Gagal
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" onClick={() => exportToExcel(p._id)} iconLeft={<FileSpreadsheet size={12} />}>
+                          Export Excel
+                        </Button>
+                      </div>
+                      {p.targetAccounts?.map((ta, i) => {
+                        const link = getPostLink(ta.platformPostId, ta.account?.platform);
+                        const statusCfg = TARGET_STATUS_VARIANTS[ta.status] || TARGET_STATUS_VARIANTS.pending;
+                        return (
+                          <div key={i} className="target-account-row">
+                            <PlatformPill platform={ta.account?.platform} size="sm" />
+                            <span className="text-caption" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {ta.account?.label || ta.account?.platformUsername || '—'}
                             </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+                            <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
+                            {link && ta.status === 'sent' && (
+                              <a href={link} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ fontSize: 'var(--font-xs)', padding: '3px 10px', textDecoration: 'none' }}>
+                                Lihat Post
+                              </a>
+                            )}
+                            {ta.error && (
+                              <span className="text-xs text-error" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ta.error}>
+                                {ta.error.slice(0, 50)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </Card>
         )}
       </div>
     </div>
