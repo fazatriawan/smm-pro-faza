@@ -223,6 +223,12 @@ export default function AmplifyPage() {
   };
 
   const generateAIComments = async () => {
+    const validUrls = urls.filter(u => u.trim());
+    if (!validUrls.length) {
+      toast.error('Masukkan minimal 1 URL target terlebih dahulu');
+      return;
+    }
+
     const count = getSelectedCount() || 5;
     if (count === 0) {
       toast.error('Pilih minimal 1 akun terlebih dahulu');
