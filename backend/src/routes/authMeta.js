@@ -6,8 +6,8 @@ const { protect } = require('../middleware/auth');
 const META_APP_ID = process.env.META_APP_ID;
 const META_APP_SECRET = process.env.META_APP_SECRET;
 const META_REDIRECT_URI = process.env.META_REDIRECT_URI;
-const META_PERSONAL_REDIRECT_URI = process.env.META_PERSONAL_REDIRECT_URI || 
-  process.env.META_REDIRECT_URI.replace('/callback', '/personal/callback');
+const META_PERSONAL_REDIRECT_URI = process.env.META_PERSONAL_REDIRECT_URI ||
+  (process.env.META_REDIRECT_URI ? process.env.META_REDIRECT_URI.replace('/callback', '/personal/callback') : null);
 
 // Step 1 — Redirect ke Facebook login (Pages)
 router.get('/facebook', protect, (req, res) => {
