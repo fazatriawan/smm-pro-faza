@@ -19,6 +19,7 @@ router.post('/', protect, async (req, res) => {
     const accounts = await SocialAccount.find({
       _id: { $in: accountIds }, owner: req.user._id, isActive: true
     });
+    console.log(`[Amplify] POST user=${req.user._id} accountIds=${accountIds?.length} found=${accounts.length} platform=${platform}`);
     const job = await AmplifyJob.create({
       createdBy: req.user._id, targetUrl: targetUrl || (targetUrls && targetUrls[0]), targetUrls: targetUrls || [targetUrl], platform, actions,
       accounts: accounts.map(a => a._id), status: 'pending'
