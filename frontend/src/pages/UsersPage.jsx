@@ -27,7 +27,8 @@ export default function UsersPage() {
 
   const disconnect = useMutation({
     mutationFn: (id) => accountsAPI.disconnect(id),
-    onSuccess: () => { toast.success('Akun diputus'); qc.invalidateQueries({ queryKey: ['accounts'] }); }
+    onSuccess: () => { toast.success('Akun diputus'); qc.invalidateQueries({ queryKey: ['accounts'] }); },
+    onError: (err) => { toast.error(err?.response?.data?.message || 'Gagal memutuskan akun'); }
   });
 
   // Verify single account
@@ -216,9 +217,18 @@ export default function UsersPage() {
     (a.tokenExpiresAt && new Date(a.tokenExpiresAt) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000))
   );
 
+  // Deduplicate by platformUserId; prefer OAuth over automation if duplicate exists
   const byPlatform = accounts.reduce((acc, a) => {
     if (!acc[a.platform]) acc[a.platform] = [];
-    acc[a.platform].push(a);
+    const key = a.platformUserId || a._id;
+    const idx = acc[a.platform].findIndex(
+      x => (x.platformUserId || x._id) === key
+    );
+    if (idx === -1) {
+      acc[a.platform].push(a);
+    } else if (a.loginType === 'oauth' && acc[a.platform][idx].loginType !== 'oauth') {
+      acc[a.platform][idx] = a; // prefer OAuth
+    }
     return acc;
   }, {});
 

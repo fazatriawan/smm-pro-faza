@@ -80,10 +80,15 @@ router.patch('/:id/warmup', protect, async (req, res) => {
 // DELETE / deactivate
 router.delete('/:id', protect, async (req, res) => {
   try {
-    await SocialAccount.findOneAndUpdate(
-      { _id: req.params.id, owner: req.user._id },
-      { isActive: false }
+    const filter = req.user.role === 'admin'
+      ? { _id: req.params.id }
+      : { _id: req.params.id, owner: req.user._id };
+    const account = await SocialAccount.findOneAndUpdate(
+      filter,
+      { isActive: false },
+      { new: true }
     );
+    if (!account) return res.status(404).json({ message: 'Account not found' });
     res.json({ message: 'Account disconnected' });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -136,8 +141,9 @@ router.post('/sync-desktop', async (req, res) => {
         }
       };
 
+      const lookupKey = acc.platformUserId || acc.username;
       const account = await SocialAccount.findOneAndUpdate(
-        { owner: userId, platform: acc.platform, platformUserId: acc.username },
+        { owner: userId, platform: acc.platform, platformUserId: lookupKey },
         { $set: update },
         { upsert: true, new: true }
       );
@@ -206,8 +212,9 @@ router.post('/sync', protect, async (req, res) => {
         }
       };
 
+      const lookupKey = acc.platformUserId || acc.username;
       const account = await SocialAccount.findOneAndUpdate(
-        { owner: req.user._id, platform: acc.platform, platformUserId: acc.username },
+        { owner: req.user._id, platform: acc.platform, platformUserId: lookupKey },
         { $set: update },
         { upsert: true, new: true }
       );
