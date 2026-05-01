@@ -36,6 +36,17 @@ const SocialAccountSchema = new mongoose.Schema({
   pageId: String,            // for Facebook Pages
   isActive: { type: Boolean, default: true },
   connectedAt: { type: Date, default: Date.now },
+  // Account type: oauth (API) or automation (browser)
+  loginType: { type: String, enum: ['oauth', 'automation'], default: 'oauth' },
+  // Automation-specific fields (for desktop app sync)
+  automationData: {
+    password: String,          // encrypted
+    cookies: mongoose.Schema.Types.Mixed,
+    twoFactorSecret: String,
+    userAgent: String,
+    lastLoginAt: Date,
+    lastWarmupAt: Date
+  },
   // Warmup settings per account
   warmup: {
     enabled: { type: Boolean, default: false },

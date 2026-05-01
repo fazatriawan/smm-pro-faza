@@ -14,6 +14,68 @@ const store = new Store({ encryptionKey: 'smm-pro-secret-2024' });
 let mainWindow;
 let isRunning = false;
 
+// Desktop sync configuration
+const DESKTOP_API_KEY = 'smm-pro-desktop-sync-2024';
+
+async function syncAccountsToBackend(accounts) {
+  try {
+    const settings = store.get('settings', {});
+    const apiUrl = settings.apiUrl || 'https://smm-pro-faza.onrender.com';
+    const userId = store.get('userId');
+    if (!userId) return;
+
+    const res = await nodeFetch(`${apiUrl}/api/accounts/sync-desktop`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-desktop-api-key': DESKTOP_API_KEY
+      },
+      body: JSON.stringify({ userId, accounts })
+    });
+
+    if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error('[Sync] Failed to sync accounts:', err.message);
+  }
+}
+
+async function deleteAccountFromBackend(platform, username) {
+  try {
+    const settings = store.get('settings', {});
+    const apiUrl = settings.apiUrl || 'https://smm-pro-faza.onrender.com';
+    const userId = store.get('userId');
+    if (!userId) return;
+
+    await nodeFetch(`${apiUrl}/api/accounts/sync-desktop/${userId}/${platform}/${username}`, {
+      method: 'DELETE',
+      headers: { 'x-desktop-api-key': DESKTOP_API_KEY }
+    });
+  } catch (err) {
+    console.error('[Sync] Failed to delete account:', err.message);
+  }
+}
+
+async function fetchAccountsFromBackend() {
+  try {
+    const settings = store.get('settings', {});
+    const apiUrl = settings.apiUrl || 'https://smm-pro-faza.onrender.com';
+    const userId = store.get('userId');
+    if (!userId) return [];
+
+    const res = await nodeFetch(`${apiUrl}/api/accounts/sync-desktop/${userId}`, {
+      headers: { 'x-desktop-api-key': DESKTOP_API_KEY }
+    });
+
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+    const data = await res.json();
+    return data || [];
+  } catch (err) {
+    console.error('[Sync] Failed to fetch accounts:', err.message);
+    return [];
+  }
+}
+
 function createWindow() {
   const fs = require('fs');
   const iconPath = path.join(__dirname, '../../assets/icon.png');
@@ -101,20 +163,59 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 // ─── ACCOUNTS ─────────────────────────────────────────────────────────────
-ipcMain.handle('get-accounts', () => store.get('accounts', []));
-ipcMain.handle('save-account', (_, account) => {
+ipcMain.handle('get-accounts', async () => {
+  const localAccounts = store.get('accounts', []);
+  try {
+    // Try to fetch from backend and merge
+    const backendAccounts = await fetchAccountsFromBackend();
+    const oauthAccounts = backendAccounts
+      .filter(a => a.loginType === 'oauth')
+      .map(a => ({
+        id: a._id,
+        platform: a.platform,
+        username: a.platformUsername || a.platformUserId,
+        label: a.label,
+        accessToken: a.accessToken,
+        refreshToken: a.refreshToken,
+        loginType: 'oauth'
+      }));
+
+    // Merge: local automation accounts + backend OAuth accounts
+    const merged = [...localAccounts.filter(a => !oauthAccounts.find(o => o.username === a.username && o.platform === a.platform))];
+    return [...merged, ...oauthAccounts];
+  } catch (err) {
+    return localAccounts;
+  }
+});
+
+ipcMain.handle('save-account', async (_, account) => {
   const accounts = store.get('accounts', []);
   const idx = accounts.findIndex(a => a.id === account.id);
   if (idx >= 0) accounts[idx] = account;
   else { account.id = Date.now().toString(); accounts.push(account); }
   store.set('accounts', accounts);
+
+  // Sync automation accounts to backend
+  const automationAccounts = accounts.filter(a => !a.accessToken); // automation = no OAuth token
+  await syncAccountsToBackend(automationAccounts);
+
   return accounts;
 });
-ipcMain.handle('delete-account', (_, id) => {
-  const accounts = store.get('accounts', []).filter(a => a.id !== id);
-  store.set('accounts', accounts);
-  return accounts;
+
+ipcMain.handle('delete-account', async (_, id) => {
+  const accounts = store.get('accounts', []);
+  const deleted = accounts.find(a => a.id === id);
+  const filtered = accounts.filter(a => a.id !== id);
+  store.set('accounts', filtered);
+
+  // Sync delete to backend
+  if (deleted) {
+    await deleteAccountFromBackend(deleted.platform, deleted.username);
+  }
+
+  return filtered;
 });
+
 ipcMain.handle('clear-cookies', (_, id) => {
   const accounts = store.get('accounts', []);
   const idx = accounts.findIndex(a => a.id === id);
@@ -126,7 +227,8 @@ ipcMain.handle('clear-cookies', (_, id) => {
 ipcMain.handle('get-settings', () => store.get('settings', {
   headless: false, delayMin: 3, delayMax: 10,
   restBetweenAccounts: 30, maxActionsPerHour: 30,
-  apiUrl: 'https://smm-pro-faza.onrender.com'
+  apiUrl: 'https://smm-pro-faza.onrender.com',
+  userId: ''
 }));
 ipcMain.handle('save-settings', (_, settings) => {
   store.set('settings', settings);

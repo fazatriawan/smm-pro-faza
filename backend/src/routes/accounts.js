@@ -73,4 +73,131 @@ router.patch('/:id', protect, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
+// POST sync accounts from desktop app (automation accounts) - uses API key
+router.post('/sync-desktop', async (req, res) => {
+  try {
+    // Simple API key auth for desktop sync
+    const apiKey = req.headers['x-desktop-api-key'];
+    if (apiKey !== process.env.DESKTOP_API_KEY) {
+      return res.status(401).json({ message: 'Invalid API key' });
+    }
+
+    const { userId, accounts } = req.body;
+    if (!userId || !accounts) {
+      return res.status(400).json({ message: 'userId and accounts required' });
+    }
+
+    const results = [];
+    for (const acc of accounts) {
+      const update = {
+        owner: userId,
+        label: acc.label || acc.username,
+        platform: acc.platform,
+        platformUserId: acc.platformUserId || acc.username,
+        platformUsername: acc.platformUsername || acc.username,
+        loginType: 'automation',
+        isActive: true,
+        automationData: {
+          password: acc.password,
+          cookies: acc.cookies,
+          twoFactorSecret: acc.twoFactorSecret,
+          userAgent: acc.userAgent,
+          lastLoginAt: acc.lastLoginAt,
+          lastWarmupAt: acc.lastWarmupAt
+        }
+      };
+
+      const account = await SocialAccount.findOneAndUpdate(
+        { owner: userId, platform: acc.platform, platformUserId: acc.username },
+        { $set: update },
+        { upsert: true, new: true }
+      );
+      results.push(account);
+    }
+
+    res.status(201).json({ message: 'Accounts synced', count: results.length, accounts: results });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// GET automation accounts for desktop sync
+router.get('/sync-desktop/:userId', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-desktop-api-key'];
+    if (apiKey !== process.env.DESKTOP_API_KEY) {
+      return res.status(401).json({ message: 'Invalid API key' });
+    }
+
+    const accounts = await SocialAccount.find({
+      owner: req.params.userId,
+      isActive: true
+    }).sort('-connectedAt');
+
+    res.json(accounts);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// DELETE automation account by desktop
+router.delete('/sync-desktop/:userId/:platform/:username', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-desktop-api-key'];
+    if (apiKey !== process.env.DESKTOP_API_KEY) {
+      return res.status(401).json({ message: 'Invalid API key' });
+    }
+
+    await SocialAccount.findOneAndUpdate(
+      { owner: req.params.userId, platform: req.params.platform, platformUserId: req.params.username },
+      { isActive: false }
+    );
+    res.json({ message: 'Account removed from sync' });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// POST sync accounts from desktop app (automation accounts)
+router.post('/sync', protect, async (req, res) => {
+  try {
+    const { accounts } = req.body;
+    const results = [];
+
+    for (const acc of accounts) {
+      const update = {
+        owner: req.user._id,
+        label: acc.label || acc.username,
+        platform: acc.platform,
+        platformUserId: acc.platformUserId || acc.username,
+        platformUsername: acc.platformUsername || acc.username,
+        loginType: 'automation',
+        isActive: true,
+        automationData: {
+          password: acc.password,
+          cookies: acc.cookies,
+          twoFactorSecret: acc.twoFactorSecret,
+          userAgent: acc.userAgent,
+          lastLoginAt: acc.lastLoginAt,
+          lastWarmupAt: acc.lastWarmupAt
+        }
+      };
+
+      const account = await SocialAccount.findOneAndUpdate(
+        { owner: req.user._id, platform: acc.platform, platformUserId: acc.username },
+        { $set: update },
+        { upsert: true, new: true }
+      );
+      results.push(account);
+    }
+
+    res.status(201).json({ message: 'Accounts synced', count: results.length, accounts: results });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// DELETE automation account by platform + username (for desktop sync)
+router.delete('/sync/:platform/:username', protect, async (req, res) => {
+  try {
+    await SocialAccount.findOneAndUpdate(
+      { owner: req.user._id, platform: req.params.platform, platformUserId: req.params.username },
+      { isActive: false }
+    );
+    res.json({ message: 'Account removed from sync' });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
 module.exports = router;
