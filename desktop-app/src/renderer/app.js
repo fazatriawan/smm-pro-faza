@@ -467,7 +467,22 @@ function pageAccounts() {
                             <span data-acc-status="${a.id}">${a.cookies ? '✅ Sudah Login' : '○ Belum Login'}</span>
                           </div>
                         </div>
-                        <span class="badge ${a.cookies ? 'badge-success' : 'badge-warn'}" data-acc-badge="${a.id}">${a.cookies ? 'Aktif' : 'Belum Login'}</span>
+                        ${(() => {
+                          const lastLogin = a.automationData?.lastLoginAt;
+                          const daysSince = lastLogin ? (Date.now() - new Date(lastLogin).getTime()) / (1000*60*60*24) : null;
+                          let statusLabel, statusClass;
+                          if (!a.cookies) {
+                            statusLabel = 'Belum Login';
+                            statusClass = 'badge-warn';
+                          } else if (!daysSince || daysSince < 7) {
+                            statusLabel = 'Connected';
+                            statusClass = 'badge-success';
+                          } else {
+                            statusLabel = `Login ${Math.floor(daysSince)}h lalu`;
+                            statusClass = 'badge-warn';
+                          }
+                          return `<span class="badge ${statusClass}" data-acc-badge="${a.id}">${statusLabel}</span>`;
+                        })()}
                         <button class="btn btn-primary" style="font-size:11px;padding:4px 8px;background:#6960c8" onclick="loginAccount('${a.id}')">🔑 Login</button>
                         <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="editAccount('${a.id}')">✏️ Edit</button>
                         <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px" onclick="clearCookies('${a.id}')">Reset Sesi</button>
