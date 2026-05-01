@@ -16,17 +16,72 @@ router.get('/', protect, async (req, res) => {
 router.post('/', protect, async (req, res) => {
   try {
     const { targetUrl, targetUrls, platform, actions, accountIds } = req.body;
+
+    // Validasi input
+    if (!accountIds || accountIds.length === 0) {
+      return res.status(400).json({ message: 'Tidak ada akun yang dipilih', code: 'NO_ACCOUNTS' });
+    }
+
+    // Cari akun yang valid
     const accounts = await SocialAccount.find({
       _id: { $in: accountIds }, owner: req.user._id, isActive: true
     });
+
     console.log(`[Amplify] POST user=${req.user._id} accountIds=${accountIds?.length} found=${accounts.length} platform=${platform}`);
+
+    // Warning jika found=0
+    if (accounts.length === 0) {
+      // Cek kenapa 0 — apakah akun tidak aktif, bukan milik user, atau platform beda
+      const allSelected = await SocialAccount.find({ _id: { $in: accountIds } });
+      const reasons = [];
+
+      const notOwned = allSelected.filter(a => a.owner.toString() !== req.user._id.toString());
+      const inactive = allSelected.filter(a => !a.isActive);
+      const wrongPlatform = allSelected.filter(a => a.platform !== platform);
+
+      if (notOwned.length) reasons.push(`${notOwned.length} akun bukan milik Anda`);
+      if (inactive.length) reasons.push(`${inactive.length} akun tidak aktif`);
+      if (wrongPlatform.length) reasons.push(`${wrongPlatform.length} akun platformnya bukan ${platform}`);
+      if (allSelected.length === 0) reasons.push('ID akun tidak ditemukan di database');
+
+      return res.status(400).json({
+        message: `Tidak ada akun yang valid untuk amplifikasi (${reasons.join(', ')})`,
+        code: 'NO_VALID_ACCOUNTS',
+        reasons,
+        suggestion: 'Pastikan akun sudah login dan platform sesuai dengan target amplifikasi.',
+        totalSelected: accountIds.length,
+        notOwned: notOwned.length,
+        inactive: inactive.length,
+        wrongPlatform: wrongPlatform.length
+      });
+    }
+
+    // Warning jika found < selected
+    if (accounts.length < accountIds.length) {
+      console.log(`[Amplify] WARNING: Only ${accounts.length}/${accountIds.length} accounts are valid`);
+    }
+
     const job = await AmplifyJob.create({
-      createdBy: req.user._id, targetUrl: targetUrl || (targetUrls && targetUrls[0]), targetUrls: targetUrls || [targetUrl], platform, actions,
-      accounts: accounts.map(a => a._id), status: 'pending'
+      createdBy: req.user._id,
+      targetUrl: targetUrl || (targetUrls && targetUrls[0]),
+      targetUrls: targetUrls || [targetUrl],
+      platform,
+      actions,
+      accounts: accounts.map(a => a._id),
+      status: 'pending',
+      meta: {
+        totalSelected: accountIds.length,
+        validAccounts: accounts.length,
+        skippedReasons: []
+      }
     });
+
     runAmplifyJob(job._id).catch(console.error);
     res.status(201).json(job);
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    console.error('[Amplify] Error creating job:', err);
+    res.status(500).json({ message: err.message });
+  }
 });
 
 // Stop job

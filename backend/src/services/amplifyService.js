@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { AmplifyJob } = require('../models');
+const { refreshTokenIfNeeded } = require('./tokenRefreshService');
 
 async function runAmplifyJob(jobId) {
   const job = await AmplifyJob.findById(jobId).populate('accounts');
@@ -58,14 +59,16 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   if (!token) throw new Error('Token tidak ada');
 
-  // Auto refresh token YouTube sebelum aksi
-  if (account.platform === 'youtube') {
-    try {
-      const newToken = await refreshYouTubeTokenIfNeeded(account);
-      if (newToken) token = newToken;
-    } catch (e) {
-      console.log('[Amplify] Token refresh warning:', e.message);
+  // Auto refresh token sebelum aksi (semua platform)
+  try {
+    const refreshedToken = await refreshTokenIfNeeded(account);
+    if (refreshedToken) {
+      token = refreshedToken;
+      console.log('[Amplify] Token refreshed for:', account.label);
     }
+  } catch (e) {
+    console.log('[Amplify] Token refresh warning:', e.message);
+    // Continue with existing token - might fail but we'll know why
   }
 
   console.log('[Amplify] Action:', action.type, '| Platform:', account.platform, '| URL:', targetUrl);
