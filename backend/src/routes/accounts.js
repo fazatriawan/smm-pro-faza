@@ -5,8 +5,36 @@ const { SocialAccount } = require('../models');
 // GET all accounts (admin sees all active, operator sees own active)
 router.get('/', protect, async (req, res) => {
   try {
+    const { loginType } = req.query;
     const baseFilter = { isActive: true };
-    const filter = req.user.role === 'admin' ? baseFilter : { ...baseFilter, owner: req.user._id };
+    let filter = req.user.role === 'admin' ? baseFilter : { ...baseFilter, owner: req.user._id };
+    if (loginType) filter = { ...filter, loginType };
+    const accounts = await SocialAccount.find(filter)
+      .populate('owner', 'name email')
+      .sort('-connectedAt');
+    res.json(accounts);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// GET OAuth accounts only
+router.get('/oauth', protect, async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin'
+      ? { isActive: true, loginType: 'oauth' }
+      : { isActive: true, owner: req.user._id, loginType: 'oauth' };
+    const accounts = await SocialAccount.find(filter)
+      .populate('owner', 'name email')
+      .sort('-connectedAt');
+    res.json(accounts);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// GET Automation accounts only
+router.get('/automation', protect, async (req, res) => {
+  try {
+    const filter = req.user.role === 'admin'
+      ? { isActive: true, loginType: 'automation' }
+      : { isActive: true, owner: req.user._id, loginType: 'automation' };
     const accounts = await SocialAccount.find(filter)
       .populate('owner', 'name email')
       .sort('-connectedAt');
