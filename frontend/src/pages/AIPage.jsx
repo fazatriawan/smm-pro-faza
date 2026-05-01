@@ -1064,7 +1064,7 @@ export default function AIPage() {
                     <option value="tiktok">🎵 TikTok</option>
                     <option value="youtube">▶️ YouTube</option>
                     <option value="facebook">📘 Facebook</option>
-                    <option value="twitter">🐦 Twitter/X</option>
+                    <option value="twitter">Twitter/X</option>
                     <option value="threads">🧵 Threads</option>
                   </select>
                 </div>

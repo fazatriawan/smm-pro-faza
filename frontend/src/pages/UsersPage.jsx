@@ -16,7 +16,7 @@ const PLATFORMS_EXTENDED = {
   instagram:         { label: 'Instagram',         short: 'IG', color: '#D4537E', bg: '#FBEAF0', text: '#A02060', icon: MessageCircle },
   threads:           { label: 'Threads',           short: 'TH', color: '#000000', bg: '#f0efec', text: '#333',    icon: Hash },
   youtube:           { label: 'YouTube',           short: 'YT', color: '#FF0000', bg: '#FAECE7', text: '#CC0000', icon: Video },
-  twitter:           { label: 'X/Twitter',         short: 'X',  color: '#888780', bg: '#F1EFE8', text: '#555',    icon: Twitter },
+  twitter:           { label: 'X/Twitter',         short: 'X',  color: '#888780', bg: '#F1EFE8', text: '#555',    icon: MessageCircle },
   tiktok:            { label: 'TikTok',            short: 'TT', color: '#639922', bg: '#EAF3DE', text: '#3B6D11', icon: Hash },
 };
 
