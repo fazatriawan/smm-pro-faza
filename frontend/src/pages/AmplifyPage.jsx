@@ -86,6 +86,8 @@ export default function AmplifyPage() {
   const [contentContext, setContentContext] = useState('');
   const [contentType, setContentType] = useState('other');
   const [isScrapingTitle, setIsScrapingTitle] = useState(false);
+  const [youtubeApiKey, setYoutubeApiKey] = useState(() => localStorage.getItem('smm_youtube_api_key') || '');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   const dropdownRef = useRef(null);
 
@@ -93,6 +95,38 @@ export default function AmplifyPage() {
   const extractYouTubeId = (url) => {
     const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
+  };
+
+  // Fetch YouTube video info via Data API v3 (free, 10k quota/day)
+  const fetchYouTubeInfo = async (url) => {
+    const videoId = extractYouTubeId(url);
+    if (!videoId) return;
+    if (!youtubeApiKey.trim()) {
+      // Fallback to oEmbed (title only)
+      scrapeYouTubeTitle(url);
+      return;
+    }
+    setIsScrapingTitle(true);
+    try {
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${youtubeApiKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        const snippet = data.items?.[0]?.snippet;
+        if (snippet) {
+          const context = `${snippet.title}\n${snippet.description?.slice(0, 300) || ''}`;
+          setContentContext(context);
+        } else {
+          scrapeYouTubeTitle(url);
+        }
+      } else {
+        // API key invalid or quota exceeded, fallback to oEmbed
+        scrapeYouTubeTitle(url);
+      }
+    } catch (err) {
+      scrapeYouTubeTitle(url);
+    } finally {
+      setIsScrapingTitle(false);
+    }
   };
 
   // Scrape YouTube title via oEmbed (no API key needed)
@@ -114,16 +148,26 @@ export default function AmplifyPage() {
     }
   };
 
-  // Auto-scrape YouTube title when URL changes
+  // Save API key to localStorage
+  const saveYoutubeApiKey = (key) => {
+    setYoutubeApiKey(key);
+    if (key.trim()) {
+      localStorage.setItem('smm_youtube_api_key', key);
+    } else {
+      localStorage.removeItem('smm_youtube_api_key');
+    }
+  };
+
+  // Auto-fetch YouTube info when URL changes
   useEffect(() => {
     if (activePlatform === 'youtube' && urls.length > 0) {
       const firstUrl = urls[0]?.trim();
       if (firstUrl && extractYouTubeId(firstUrl)) {
-        scrapeYouTubeTitle(firstUrl);
+        fetchYouTubeInfo(firstUrl);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urls[0], activePlatform]);
+  }, [urls[0], activePlatform, youtubeApiKey]);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
@@ -520,6 +564,52 @@ export default function AmplifyPage() {
                       }
                     </div>
                   </div>
+
+                  {/* YouTube Data API Key */}
+                  {activePlatform === 'youtube' && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <button
+                          onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            fontSize: 11, color: '#7F77DD', fontWeight: 500,
+                            display: 'flex', alignItems: 'center', gap: 4
+                          }}
+                        >
+                          🔑 {showApiKeyInput ? 'Sembunyikan' : 'Tambah'} YouTube Data API Key (Opsional)
+                        </button>
+                        {youtubeApiKey.trim() && (
+                          <span style={{ fontSize: 10, color: '#1D9E75', fontWeight: 600 }}>
+                            ✅ Aktif — judul + deskripsi auto
+                          </span>
+                        )}
+                      </div>
+                      {showApiKeyInput && (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <input
+                            type="password"
+                            placeholder="Paste YouTube Data API Key dari Google Cloud..."
+                            value={youtubeApiKey}
+                            onChange={e => saveYoutubeApiKey(e.target.value)}
+                            style={{
+                              flex: 1, padding: '8px 12px', borderRadius: 8,
+                              border: '1.5px solid #E0E0E0', fontSize: 12,
+                              background: '#FAFAFA', outline: 'none'
+                            }}
+                          />
+                        </div>
+                      )}
+                      {!youtubeApiKey.trim() && (
+                        <div style={{ fontSize: 10, color: '#888' }}>
+                          💡 Tanpa API key: hanya judul yang diambil. Dengan API key: judul + deskripsi lengkap.
+                          <a href="https://developers.google.com/youtube/registering_an_application" target="_blank" rel="noopener noreferrer" style={{ color: '#7F77DD', marginLeft: 4 }}>
+                            Cara dapat API Key (Gratis)
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {platformAccounts.length === 0 && (
                     <div style={{
