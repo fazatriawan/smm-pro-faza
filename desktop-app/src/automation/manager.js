@@ -528,7 +528,7 @@ function loadCookiesFromFile(platform, username) {
           for (const action of sortedActions) {
             if (!isRunning) break;
             try {
-              await performAction(page, platform, action, url, commentTemplates, onLog, tag);
+              await performAction(page, platform, action, url, commentTemplates, onLog, tag, actualIndex);
               
               // Ambil screenshot HANYA untuk aksi interaksi agar bukti tersimpan jelas (scroll/follow diabaikan)
               if (['like', 'comment', 'share', 'repost', 'auto_reply'].includes(action)) {
@@ -577,7 +577,7 @@ function loadCookiesFromFile(platform, username) {
             try {
               // For natural activity, targetUrl optional — if none, operate on home
               const target = (targetUrls && targetUrls.length) ? targetUrls[Math.floor(Math.random() * targetUrls.length)] : getPlatformHome(platform);
-              await performAction(page, platform, action, target, commentTemplates, onLog, tag);
+              await performAction(page, platform, action, target, commentTemplates, onLog, tag, actualIndex);
               
               // Ambil screenshot HANYA untuk aksi interaksi (bukti relevan untuk dipantau)
               if (['like', 'comment', 'share', 'repost', 'auto_reply'].includes(action)) {
@@ -1210,7 +1210,7 @@ function generateTOTP(secret) {
 }
 
 // ---------- Actions ----------
-async function performAction(page, platform, action, targetUrl, commentTemplates, onLog, tag = '') {
+async function performAction(page, platform, action, targetUrl, commentTemplates, onLog, tag = '', accountIndex = 0) {
   // targetUrl can be undefined -> fallback to platform home
   const url = targetUrl || getPlatformHome(platform);
   try {
@@ -1230,24 +1230,24 @@ async function performAction(page, platform, action, targetUrl, commentTemplates
 
   switch (platform) {
     case 'facebook':
-      return performFacebookAction(page, action, commentTemplates, onLog, tag);
+      return performFacebookAction(page, action, commentTemplates, onLog, tag, accountIndex);
     case 'instagram':
-      return performInstagramAction(page, action, commentTemplates, onLog, tag);
+      return performInstagramAction(page, action, commentTemplates, onLog, tag, accountIndex);
     case 'tiktok':
-      return performTikTokAction(page, action, commentTemplates, onLog, tag);
+      return performTikTokAction(page, action, commentTemplates, onLog, tag, accountIndex);
     case 'twitter':
-      return performTwitterAction(page, action, commentTemplates, onLog, tag);
+      return performTwitterAction(page, action, commentTemplates, onLog, tag, accountIndex);
     case 'youtube':
-      return performYouTubeAction(page, action, commentTemplates, onLog, tag);
+      return performYouTubeAction(page, action, commentTemplates, onLog, tag, accountIndex);
     case 'threads':
-      return performThreadsAction(page, action, commentTemplates, onLog, tag);
+      return performThreadsAction(page, action, commentTemplates, onLog, tag, accountIndex);
     default:
       throw new Error(`Platform ${platform} belum didukung`);
   }
 }
 
 // Facebook action functions
-async function performFacebookAction(page, action, commentTemplates, onLog, tag = '') {
+async function performFacebookAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   switch (action) {
     case 'like':
       try {
@@ -1259,7 +1259,7 @@ async function performFacebookAction(page, action, commentTemplates, onLog, tag 
     
     case 'comment':
       try {
-        await commentFacebookPost(page, commentTemplates, onLog, tag);
+        await commentFacebookPost(page, commentTemplates, onLog, tag, accountIndex);
       } catch (e) {
         onLog({ type: 'warn', message: `${tag} Komentar error: ${e.message}` });
       }
@@ -1295,7 +1295,7 @@ async function performFacebookAction(page, action, commentTemplates, onLog, tag 
 
     case 'auto_reply':
       try {
-        await autoReplyFacebook(page, commentTemplates, onLog, tag);
+        await autoReplyFacebook(page, commentTemplates, onLog, tag, accountIndex);
       } catch (e) {
         onLog({ type: 'warn', message: `${tag} Auto-reply error: ${e.message}` });
       }
@@ -1379,9 +1379,9 @@ async function likeFacebookPost(page, onLog, tag = '') {
 }
 
 // ---------- Facebook: Comment on Post ----------
-async function commentFacebookPost(page, commentTemplates, onLog, tag = '') {
+async function commentFacebookPost(page, commentTemplates, onLog, tag = '', accountIndex = 0) {
   const comment = (commentTemplates && commentTemplates.length) 
-    ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] 
+    ? commentTemplates[accountIndex % commentTemplates.length] 
     : 'Mantap! 👍';
   
   const commentAriaSelectors = [
@@ -1799,7 +1799,7 @@ async function shareFacebookPost(page, onLog, tag = '') {
 }
 
 // ---------- Facebook: Auto Reply Comment ----------
-async function autoReplyFacebook(page, commentTemplates, onLog, tag = '') {
+async function autoReplyFacebook(page, commentTemplates, onLog, tag = '', accountIndex = 0) {
   onLog({ type: 'info', message: `${tag} 🤖 Mencari komentar untuk dibalas...` });
   await sleep(2000);
   await page.evaluate(() => window.scrollBy(0, 500));
@@ -1835,7 +1835,7 @@ async function autoReplyFacebook(page, commentTemplates, onLog, tag = '') {
 
   await sleep(1500);
   const comment = (commentTemplates && commentTemplates.length) 
-    ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] 
+    ? commentTemplates[accountIndex % commentTemplates.length] 
     : 'Terima kasih! 🙏';
 
   // Ketik balasan
@@ -1895,7 +1895,7 @@ async function scrapeCommentsFacebook(page, onLog, tag = '') {
 // Implementations for Instagram / TikTok / Twitter / YouTube / Threads follow same pattern
 // For brevity, keep original logic but replace Playwright-specific calls with Puppeteer-friendly ones.
 // Example for Instagram like (using $eval to read attribute):
-async function performInstagramAction(page, action, commentTemplates, onLog, tag = '') {
+async function performInstagramAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   switch (action) {
     case 'like':
       try {
@@ -1939,7 +1939,7 @@ async function performInstagramAction(page, action, commentTemplates, onLog, tag
     
     case 'comment':
       try {
-        await commentInstagramPost(page, commentTemplates, onLog, tag);
+        await commentInstagramPost(page, commentTemplates, onLog, tag, accountIndex);
       } catch (e) {
         onLog({ type: 'warn', message: `${tag} Instagram comment error: ${e.message}` });
       }
@@ -1955,7 +1955,7 @@ async function performInstagramAction(page, action, commentTemplates, onLog, tag
 
     case 'auto_reply':
       try {
-        await autoReplyInstagram(page, commentTemplates, onLog, tag);
+        await autoReplyInstagram(page, commentTemplates, onLog, tag, accountIndex);
       } catch (e) {
         onLog({ type: 'warn', message: `${tag} Instagram auto-reply error: ${e.message}` });
       }
@@ -2522,9 +2522,9 @@ async function followInstagramRandom(page, onLog, tag = '') {
 
 // ---------- Instagram: Comment on Post ----------
 // ---------- Instagram: Comment on Post ----------
-async function commentInstagramPost(page, commentTemplates, onLog, tag = '') {
+async function commentInstagramPost(page, commentTemplates, onLog, tag = '', accountIndex = 0) {
   const comment = (commentTemplates && commentTemplates.length) 
-    ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] 
+    ? commentTemplates[accountIndex % commentTemplates.length] 
     : '🔥';
   
   if (!page.url().includes('instagram.com')) {
@@ -2620,7 +2620,7 @@ async function commentInstagramPost(page, commentTemplates, onLog, tag = '') {
 }
 
 // ---------- Instagram: Auto Reply Comment ----------
-async function autoReplyInstagram(page, commentTemplates, onLog, tag = '') {
+async function autoReplyInstagram(page, commentTemplates, onLog, tag = '', accountIndex = 0) {
   onLog({ type: 'info', message: `${tag} 🤖 Mencari komentar untuk dibalas...` });
   await sleep(2000);
   await page.evaluate(() => window.scrollBy(0, 500));
@@ -2656,7 +2656,7 @@ async function autoReplyInstagram(page, commentTemplates, onLog, tag = '') {
 
   await sleep(1500);
   const comment = (commentTemplates && commentTemplates.length) 
-    ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] 
+    ? commentTemplates[accountIndex % commentTemplates.length] 
     : 'Makasih ya! 😊';
 
   await page.keyboard.type(comment, { delay: 60 + Math.random() * 50 });
@@ -2728,7 +2728,7 @@ async function saveScrapedData(platform, users, onLog) {
   }
 }
 
-async function performTikTokAction(page, action, commentTemplates, onLog, tag = '') {
+async function performTikTokAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   await sleep(1500 + Math.random() * 1500);
   switch (action) {
     case 'like':
@@ -2740,7 +2740,7 @@ async function performTikTokAction(page, action, commentTemplates, onLog, tag = 
       else onLog({ type: 'warn', message: `${tag} Tombol like TikTok tidak ditemukan` });
       break;
     case 'comment':
-      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] : 'Keren! 🔥';
+      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[accountIndex % commentTemplates.length] : 'Keren! 🔥';
       const cIcon = await page.evaluate(() => {
         const btn = document.querySelector('[data-e2e="comment-icon"], [data-e2e="browse-comment-icon"]');
         if (btn) { btn.click(); return true; } return false;
@@ -2806,7 +2806,7 @@ async function performTikTokAction(page, action, commentTemplates, onLog, tag = 
   }
 }
 
-async function performTwitterAction(page, action, commentTemplates, onLog, tag = '') {
+async function performTwitterAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   await sleep(1500 + Math.random() * 1500);
   switch (action) {
     case 'like':
@@ -2821,7 +2821,7 @@ async function performTwitterAction(page, action, commentTemplates, onLog, tag =
       if (rted) onLog({ type: 'success', message: `${tag} 🔄 Retweet Twitter berhasil!` });
       break;
     case 'comment':
-      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] : 'Keren! 🔥';
+      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[accountIndex % commentTemplates.length] : 'Keren! 🔥';
       await page.evaluate(() => { const b = document.querySelector('[data-testid="reply"]'); if(b) b.click(); });
       await sleep(1500);
       const boxFound = await page.evaluate(() => { const b = document.querySelector('[data-testid="tweetTextarea_0"]'); if(b) { b.focus(); return true; } return false; });
@@ -2852,7 +2852,7 @@ async function performTwitterAction(page, action, commentTemplates, onLog, tag =
   }
 }
 
-async function performYouTubeAction(page, action, commentTemplates, onLog, tag = '') {
+async function performYouTubeAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   await sleep(2000);
   switch (action) {
     case 'like':
@@ -2867,7 +2867,7 @@ async function performYouTubeAction(page, action, commentTemplates, onLog, tag =
     case 'comment':
       await page.evaluate(() => window.scrollBy(0, 600));
       await sleep(2500);
-      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] : 'Keren videonya!';
+      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[accountIndex % commentTemplates.length] : 'Keren videonya!';
       const clicked = await page.evaluate(() => { const b = document.querySelector('#simple-box'); if(b) { b.click(); return true; } return false; });
       if (clicked) {
         await sleep(1000);
@@ -2898,7 +2898,7 @@ async function performYouTubeAction(page, action, commentTemplates, onLog, tag =
   }
 }
 
-async function performThreadsAction(page, action, commentTemplates, onLog, tag = '') {
+async function performThreadsAction(page, action, commentTemplates, onLog, tag = '', accountIndex = 0) {
   await sleep(2000);
   switch (action) {
     case 'like':
@@ -2912,7 +2912,7 @@ async function performThreadsAction(page, action, commentTemplates, onLog, tag =
       break;
     case 'comment':
     case 'reply':
-      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[Math.floor(Math.random() * commentTemplates.length)] : 'Menarik!';
+      const comment = (commentTemplates && commentTemplates.length) ? commentTemplates[accountIndex % commentTemplates.length] : 'Menarik!';
       const rep = await page.evaluate(() => {
         const svgs = Array.from(document.querySelectorAll('svg[aria-label]'));
         const r = svgs.find(s => s.getAttribute('aria-label').toLowerCase() === 'reply' || s.getAttribute('aria-label').toLowerCase() === 'balas');

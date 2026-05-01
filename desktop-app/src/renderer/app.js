@@ -107,6 +107,9 @@ function go(page) {
     if (page === 'aicontent') {
       setTimeout(() => { showScheduleStrategy(); }, 0);
     }
+    if (page === 'amplify') {
+      setTimeout(() => { updateAICount(); toggleAICommentOptions(); }, 0);
+    }
   } catch (e) {
     console.error(`Error rendering page "${page}":`, e);
     document.getElementById('content').innerHTML = `
@@ -1515,8 +1518,44 @@ function pageAmplify() {
         </div>
 
         <div class="card">
-          <div class="card-title">Template Komentar (satu per baris)</div>
+          <div class="card-title">Template Komentar</div>
+
+          <!-- AI Comment Options -->
+          <div style="margin-bottom:12px;padding:10px;background:#F0EEFB;border-radius:8px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px">
+              <input type="checkbox" id="amp-use-ai" onchange="toggleAICommentOptions()">
+              <span style="font-size:13px;font-weight:600;color:#7a72dc">✨ Gunakan AI Gemini untuk komentar</span>
+            </label>
+
+            <div id="amp-ai-options" style="display:none;gap:8px;flex-direction:column">
+              <div style="display:flex;gap:8px">
+                <div style="flex:1">
+                  <label style="font-size:11px;color:#666">Tone/Narasi</label>
+                  <select id="amp-ai-tone" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd">
+                    <option value="pro">👍 Pro (Mendukung)</option>
+                    <option value="kontra">👎 Kontra (Kritis)</option>
+                    <option value="netral">😐 Netral</option>
+                  </select>
+                </div>
+                <div style="flex:1">
+                  <label style="font-size:11px;color:#666">Gaya Penulisan</label>
+                  <select id="amp-ai-style" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd">
+                    <option value="santai">Santai & Friendly</option>
+                    <option value="formal">Formal & Profesional</option>
+                    <option value="kritis">Kritis & Analitis</option>
+                    <option value="lucu">Lucu & Menghibur</option>
+                    <option value="pendek">Singkat & Padat</option>
+                  </select>
+                </div>
+              </div>
+              <div style="font-size:11px;color:#7a72dc">
+                💡 AI akan generate <b id="amp-ai-count">0</b> komentar unik (sesuai jumlah akun yang dipilih)
+              </div>
+            </div>
+          </div>
+
           <textarea id="amp-comments" rows="3" placeholder="Bagus banget!&#10;Keren!&#10;Mantap bro!"></textarea>
+          <div style="font-size:11px;color:#888;margin-top:4px">Isi manual atau gunakan AI di atas</div>
         </div>
 
         <div class="card">
@@ -1589,7 +1628,35 @@ function setAmpPlatform(platform) {
   if (tab) { tab.classList.add('active'); tab.style.background = p.bg; tab.style.color = p.color; tab.style.borderColor = p.color; }
   document.getElementById('amp-actions').innerHTML = renderAmpActions(platform);
   document.getElementById('amp-accounts').innerHTML = renderAmpAccounts(platform);
+  updateAICount();
 }
+
+function toggleAICommentOptions() {
+  const useAI = document.getElementById('amp-use-ai').checked;
+  const options = document.getElementById('amp-ai-options');
+  const manualInput = document.getElementById('amp-comments');
+  if (options) {
+    options.style.display = useAI ? 'flex' : 'none';
+  }
+  if (manualInput) {
+    manualInput.disabled = useAI;
+    manualInput.style.opacity = useAI ? '0.5' : '1';
+  }
+  updateAICount();
+}
+
+function updateAICount() {
+  const selectedCount = document.querySelectorAll('.amp-check:checked').length;
+  const countEl = document.getElementById('amp-ai-count');
+  if (countEl) countEl.textContent = selectedCount;
+}
+
+// Update AI count when accounts are selected
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.classList.contains('amp-check')) {
+    updateAICount();
+  }
+});
 
 function toggleAmpAction(key, color) {
   const btn = document.getElementById(`amp-action-${key}`);
@@ -1614,12 +1681,21 @@ async function runAmplify() {
   const commentTemplates = commentsText.split('\n').map(c=>c.trim()).filter(c=>c);
   const selectedIds = [...document.querySelectorAll('.amp-check:checked')].map(c=>c.value);
   const actions = [...ampSelectedActions];
+  const useAI = document.getElementById('amp-use-ai')?.checked || false;
 
   if (!targetUrls.length) { alert('Masukkan minimal 1 URL!'); return; }
   if (!selectedIds.length) { alert('Pilih minimal 1 akun!'); return; }
   if (!actions.length) { alert('Pilih minimal 1 aksi!'); return; }
 
   const selectedAccounts = accounts.filter(a => selectedIds.includes(a.id));
+
+  // Build AI config
+  let aiConfig = null;
+  if (useAI && actions.includes('comment')) {
+    const tone = document.getElementById('amp-ai-tone')?.value || 'netral';
+    const style = document.getElementById('amp-ai-style')?.value || 'santai';
+    aiConfig = { useAI: true, tone, style };
+  }
 
   document.getElementById('amp-btn').disabled = true;
   document.getElementById('amp-btn').textContent = '⟳ Berjalan...';
@@ -1629,7 +1705,8 @@ async function runAmplify() {
     accounts: selectedAccounts,
     platform: ampPlatform,
     targetUrls, actions,
-    commentTemplates: commentTemplates.length ? commentTemplates : ['Bagus!', 'Keren!', 'Mantap!']
+    commentTemplates: commentTemplates.length ? commentTemplates : ['Bagus!', 'Keren!', 'Mantap!'],
+    aiConfig
   });
 
   setRunning(false);
@@ -2772,8 +2849,19 @@ function pageSettings() {
       <div class="card">
         <div class="card-title">🌐 Koneksi Backend</div>
         <div class="form-group">
+          <label>Environment</label>
+          <select id="s-env" onchange="updateApiUrlFromEnv()">
+            <option value="production" ${(settings.apiUrl||'').includes('onrender.com')?'selected':''}>Production (Render)</option>
+            <option value="local" ${(settings.apiUrl||'').includes('localhost')?'selected':''}>Local Development (localhost:10000)</option>
+            <option value="custom" ${!(settings.apiUrl||'').includes('onrender.com')&&!(settings.apiUrl||'').includes('localhost')?'selected':''}>Custom</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>URL Backend</label>
           <input type="text" id="s-api" value="${settings.apiUrl||'https://smm-pro-faza.onrender.com'}">
+          <div style="font-size:11px;color:var(--c-text-3);margin-top:5px">
+            💡 <b>Local:</b> http://localhost:10000 &nbsp;|&nbsp; <b>Production:</b> https://smm-pro-faza.onrender.com
+          </div>
         </div>
         <div class="form-group">
           <label>Gemini API Key <span style="font-size:10px;color:var(--c-text-3);text-transform:none;font-weight:400">(AI Caption &amp; Komentar)</span></label>
@@ -2888,6 +2976,17 @@ function toggleVisible(id) {
   el.type = el.type === 'password' ? 'text' : 'password';
   const btn = el.nextElementSibling;
   if (btn) btn.textContent = el.type === 'password' ? '👁' : '🙈';
+}
+
+function updateApiUrlFromEnv() {
+  const env = document.getElementById('s-env').value;
+  const apiInput = document.getElementById('s-api');
+  if (env === 'production') {
+    apiInput.value = 'https://smm-pro-faza.onrender.com';
+  } else if (env === 'local') {
+    apiInput.value = 'http://localhost:10000';
+  }
+  // 'custom' tidak mengubah apa pun
 }
 
 async function saveSettings() {

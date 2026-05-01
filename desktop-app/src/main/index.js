@@ -304,6 +304,15 @@ ipcMain.handle('amplify', async (_, config) => {
   isRunning = true;
   try {
     const settings = store.get('settings', {});
+
+    // Generate AI comments if enabled
+    if (config.aiConfig?.useAI && config.actions.includes('comment')) {
+      addLog({ type: 'info', message: '[AI] Generating comments via Gemini...' });
+      const generatedComments = await generateAICommentsForAmplify(config, settings);
+      config.commentTemplates = generatedComments;
+      addLog({ type: 'info', message: `[AI] Generated ${generatedComments.length} unique comments` });
+    }
+
     config.mode = 'amplify'; // Paksa mode amplify agar manager.js tahu
     await startAutomation(config, settings, addLog);
     isRunning = false;
@@ -313,6 +322,78 @@ ipcMain.handle('amplify', async (_, config) => {
     return { success: false, error: err.message };
   }
 });
+
+async function generateAICommentsForAmplify(config, settings) {
+  const geminiKey = settings.geminiApiKey;
+  if (!geminiKey) throw new Error('Gemini API Key belum diatur di Pengaturan');
+
+  const accountCount = config.accounts?.length || 1;
+  const aiConfig = config.aiConfig;
+
+  const toneMap = {
+    pro: 'mendukung penuh, memuji, dan merekomendasikan konten ini',
+    kontra: 'kritis, menyanggah, atau menunjukkan kekurangan dengan sopan',
+    netral: 'netral, memberikan pendapat seimbang'
+  };
+
+  const styleMap = {
+    santai: 'santai dan friendly, seperti ngobrol sama teman di social media',
+    formal: 'formal dan profesional, seperti review resmi',
+    kritis: 'kritis dan analitis, menyoroti detail',
+    lucu: 'lucu dan menghibur dengan humor ringan Indonesia',
+    pendek: 'singkat dan padat, maksimal 5-10 kata saja'
+  };
+
+  const tone = toneMap[aiConfig.tone] || toneMap.netral;
+  const style = styleMap[aiConfig.style] || styleMap.santai;
+
+  const prompt = `Kamu adalah ${accountCount} pengguna social media Indonesia yang berbeda-beda.
+
+Buat ${accountCount} komentar BERBEDA-BEDA dan NATURAL untuk sebuah konten video.
+
+TONE/NARASI: ${tone}
+GAYA PENULISAN: ${style}
+
+Persyaratan PENTING:
+- Setiap komentar HARUS terlihat ditulis oleh orang berbeda
+- Gunakan variasi bahasa: formal, semi-formal, gaul Indonesia
+- Variasi panjang: ada yang 1 kata, ada yang 1-2 kalimat
+- Sertakan emoji secukupnya (tidak berlebihan)
+- Jangan ada komentar yang mirip satu sama lain
+- Terlihat natural, bukan seperti bot
+- Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
+- Sesuaikan dengan tone dan gaya yang diminta
+
+Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
+[komentar 1]
+[komentar 2]
+...dst`;
+
+  const res = await nodeFetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.9, maxOutputTokens: 2000 }
+    })
+  });
+
+  const data = await res.json();
+  if (!data.candidates?.[0]) throw new Error('Respons Gemini kosong');
+
+  const raw = data.candidates[0].content.parts[0].text;
+  const comments = raw.split('\n')
+    .map(c => c.trim())
+    .filter(c => c && !c.startsWith('[') && c.length > 1);
+
+  // Ensure we have enough comments
+  const fallbacks = ['Mantap! 👍', 'Keren banget 🔥', 'Nice! 👌', 'Oke lah 👍', 'Sip', 'Bagus!', 'Mantul! ✨'];
+  while (comments.length < accountCount) {
+    comments.push(fallbacks[comments.length % fallbacks.length]);
+  }
+
+  return comments.slice(0, accountCount);
+}
 
 // ─── AUTOMATION & WARMUP ───────────────────────────────────────────────────
 ipcMain.handle('start-automation', async (_, config) => {
