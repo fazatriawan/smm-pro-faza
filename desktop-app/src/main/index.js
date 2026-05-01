@@ -346,10 +346,17 @@ async function generateAICommentsForAmplify(config, settings) {
 
   const tone = toneMap[aiConfig.tone] || toneMap.netral;
   const style = styleMap[aiConfig.style] || styleMap.santai;
+  const context = aiConfig.contentContext || '';
 
-  const prompt = `Kamu adalah ${accountCount} pengguna social media Indonesia yang berbeda-beda.
+  const contextHint = context
+    ? `Konten spesifik yang dibahas: "${context}". Setiap komentar HARUS merujuk atau berkaitan dengan konten ini. Jangan buat komentar generic.`
+    : '';
 
-Buat ${accountCount} komentar BERBEDA-BEDA dan NATURAL untuk sebuah konten video.
+  const prompt = `Kamu adalah ${accountCount} pengguna social media Indonesia yang berbeda-beda, sedang menonton sebuah video.
+
+${contextHint}
+
+Buat ${accountCount} komentar BERBEDA-BEDA dan NATURAL.
 
 TONE/NARASI: ${tone}
 GAYA PENULISAN: ${style}
@@ -363,6 +370,7 @@ Persyaratan PENTING:
 - Terlihat natural, bukan seperti bot
 - Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
 - Sesuaikan dengan tone dan gaya yang diminta
+- Komentar HARUS relevan dengan konten spesifik, jangan generic
 
 Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
 [komentar 1]

@@ -1558,6 +1558,15 @@ function pageAmplify() {
           <div style="font-size:11px;color:#888;margin-top:4px">Isi manual atau gunakan AI di atas</div>
         </div>
 
+        <!-- Konteks Konten -->
+        <div class="card">
+          <div class="card-title">📝 Konteks Konten</div>
+          <input type="text" id="amp-context" placeholder="Deskripsikan konten (mis: stand up comedy Raditya Dika)..." style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;font-size:13px;box-sizing:border-box">
+          <div style="font-size:11px;color:#888;margin-top:4px">
+            <span id="amp-context-hint">💡 Deskripsikan konten agar AI membuat komentar yang sesuai</span>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-title">Pilih Akun</div>
           <div id="amp-accounts" style="max-height:180px;overflow-y:auto;border:1px solid rgba(0,0,0,0.1);border-radius:8px;padding:8px">
@@ -1694,7 +1703,8 @@ async function runAmplify() {
   if (useAI && actions.includes('comment')) {
     const tone = document.getElementById('amp-ai-tone')?.value || 'netral';
     const style = document.getElementById('amp-ai-style')?.value || 'santai';
-    aiConfig = { useAI: true, tone, style };
+    const contentContext = document.getElementById('amp-context')?.value || '';
+    aiConfig = { useAI: true, tone, style, contentContext };
   }
 
   document.getElementById('amp-btn').disabled = true;
