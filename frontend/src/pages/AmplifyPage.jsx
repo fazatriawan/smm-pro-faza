@@ -84,6 +84,7 @@ export default function AmplifyPage() {
 
   // Content context for AI
   const [contentContext, setContentContext] = useState('');
+  const [contentType, setContentType] = useState('other');
   const [isScrapingTitle, setIsScrapingTitle] = useState(false);
 
   const dropdownRef = useRef(null);
@@ -235,6 +236,7 @@ export default function AmplifyPage() {
         count,
         stance: aiTone,
         style: aiStyle,
+        contentType,
         topic: contentContext || 'konten video'
       });
       const generated = res.data?.comments || [];
@@ -703,6 +705,37 @@ export default function AmplifyPage() {
                                 <option value="pendek">⚡ Singkat & Padat</option>
                                 <option value="mixed">🎲 Campuran Gaya</option>
                               </select>
+                            </div>
+                          </div>
+
+                          {/* Content Type */}
+                          <div>
+                            <label style={{ fontSize: 11, fontWeight: 500, color: '#666', marginBottom: 4, display: 'block' }}>
+                              🎬 Jenis Konten (Penting!)
+                            </label>
+                            <select
+                              value={contentType}
+                              onChange={e => setContentType(e.target.value)}
+                              style={{
+                                width: '100%', padding: '10px 12px', borderRadius: 10,
+                                border: '1.5px solid #E0E0E0', fontSize: 12, background: '#fff',
+                                outline: 'none', cursor: 'pointer'
+                              }}
+                            >
+                              <option value="other">🎯 Lainnya / Umum</option>
+                              <option value="standup_comedy">🎤 Stand Up Comedy</option>
+                              <option value="tutorial">📚 Tutorial / Edukasi</option>
+                              <option value="review">⭐ Review Produk</option>
+                              <option value="vlog">📹 Vlog / Lifestyle</option>
+                              <option value="music">🎵 Musik / Entertainment</option>
+                              <option value="gaming">🎮 Gaming</option>
+                              <option value="news">📰 Berita / Informasi</option>
+                              <option value="motivasi">💪 Motivasi / Inspirasi</option>
+                              <option value="cooking">🍳 Masak / Kuliner</option>
+                              <option value="sports">⚽ Olahraga</option>
+                            </select>
+                            <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                              💡 Pilih jenis konten agar AI membuat komentar yang sesuai
                             </div>
                           </div>
 
