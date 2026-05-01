@@ -82,7 +82,47 @@ export default function AmplifyPage() {
   const [aiStyle, setAiStyle] = useState('santai');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
+  // Content context for AI
+  const [contentContext, setContentContext] = useState('');
+  const [isScrapingTitle, setIsScrapingTitle] = useState(false);
+
   const dropdownRef = useRef(null);
+
+  // Extract YouTube video ID from URL
+  const extractYouTubeId = (url) => {
+    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+    return match ? match[1] : null;
+  };
+
+  // Scrape YouTube title via oEmbed (no API key needed)
+  const scrapeYouTubeTitle = async (url) => {
+    if (!url || !extractYouTubeId(url)) return;
+    setIsScrapingTitle(true);
+    try {
+      const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.title) {
+          setContentContext(data.title);
+        }
+      }
+    } catch (err) {
+      // Silently fail, user can input manually
+    } finally {
+      setIsScrapingTitle(false);
+    }
+  };
+
+  // Auto-scrape YouTube title when URL changes
+  useEffect(() => {
+    if (activePlatform === 'youtube' && urls.length > 0) {
+      const firstUrl = urls[0]?.trim();
+      if (firstUrl && extractYouTubeId(firstUrl)) {
+        scrapeYouTubeTitle(firstUrl);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urls[0], activePlatform]);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
@@ -195,7 +235,7 @@ export default function AmplifyPage() {
         count,
         stance: aiTone,
         style: aiStyle,
-        topic: 'konten video'
+        topic: contentContext || 'konten video'
       });
       const generated = res.data?.comments || [];
       if (generated.length > 0) {
@@ -433,6 +473,44 @@ export default function AmplifyPage() {
                         )}
                       </div>
                     ))}
+                  </div>
+
+                  {/* Content Context Input */}
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: '#1a1a1a' }}>
+                        📝 Konteks Konten
+                      </label>
+                      {isScrapingTitle && (
+                        <span style={{ fontSize: 11, color: '#7F77DD' }}>
+                          ⟳ Mengambil judul video...
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder={
+                        activePlatform === 'youtube'
+                          ? 'Judul video akan diambil otomatis, atau isi manual...'
+                          : 'Deskripsikan konten target (mis: stand up comedy, tutorial masak, dll)...'
+                      }
+                      value={contentContext}
+                      onChange={e => setContentContext(e.target.value)}
+                      style={{
+                        width: '100%', padding: '10px 14px', borderRadius: 10,
+                        border: '1.5px solid #E8E8E8', fontSize: 13,
+                        background: '#FAFAFA', transition: 'all 0.15s',
+                        outline: 'none', boxSizing: 'border-box'
+                      }}
+                      onFocus={e => e.target.style.borderColor = '#534AB7'}
+                      onBlur={e => e.target.style.borderColor = '#E8E8E8'}
+                    />
+                    <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                      {activePlatform === 'youtube'
+                        ? '💡 AI akan membaca judul video untuk membuat komentar yang relevan'
+                        : '💡 Deskripsikan konten agar AI membuat komentar yang sesuai'
+                      }
+                    </div>
                   </div>
 
                   {platformAccounts.length === 0 && (
