@@ -2,58 +2,72 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { amplifyAPI, accountsAPI, aiAPI } from '../api';
 import { PLATFORMS } from '../utils';
+import {
+  ThumbsUp, MessageCircle, Share2, Bookmark, ThumbsDown, Bell, UserPlus, RotateCw,
+  Globe, Video, Hash, Target, Link2, Plus, Sparkles, Wand2, Zap, ChevronDown, X,
+  CheckCircle2, AlertTriangle, Loader2, Trash2
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 
+const ACTION_ICON_MAP = {
+  like: ThumbsUp, comment: MessageCircle, share: Share2, save: Bookmark,
+  dislike: ThumbsDown, subscribe: Bell, follow: UserPlus, repost: RotateCw, bookmark: Bookmark,
+};
+
+const PLATFORM_ICON_MAP = {
+  facebook: Globe, instagram: Hash, youtube: Video, twitter: MessageCircle, tiktok: Hash,
+};
+
 const PLATFORM_ACTIONS = {
   facebook: [
-    { key: 'like', icon: '👍', label: 'Like', color: '#1877F2', desc: 'Suka postingan' },
-    { key: 'comment', icon: '💬', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
-    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75', desc: 'Bagikan ke timeline' },
-    { key: 'save', icon: '🔖', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
+    { key: 'like', label: 'Like', color: '#1877F2', desc: 'Suka postingan' },
+    { key: 'comment', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
+    { key: 'share', label: 'Share', color: '#1D9E75', desc: 'Bagikan ke timeline' },
+    { key: 'save', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
   ],
   facebook_personal: [
-    { key: 'like', icon: '👍', label: 'Like', color: '#1877F2', desc: 'Suka postingan' },
-    { key: 'comment', icon: '💬', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
-    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75', desc: 'Bagikan ke timeline' },
-    { key: 'save', icon: '🔖', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
+    { key: 'like', label: 'Like', color: '#1877F2', desc: 'Suka postingan' },
+    { key: 'comment', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
+    { key: 'share', label: 'Share', color: '#1D9E75', desc: 'Bagikan ke timeline' },
+    { key: 'save', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
   ],
   youtube: [
-    { key: 'like', icon: '👍', label: 'Like', color: '#FF0000', desc: 'Suka video' },
-    { key: 'dislike', icon: '👎', label: 'Dislike', color: '#E24B4A', desc: 'Tidak suka video' },
-    { key: 'comment', icon: '💬', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
-    { key: 'subscribe', icon: '🔔', label: 'Subscribe', color: '#FF0000', desc: 'Langganan channel' },
-    { key: 'save', icon: '🔖', label: 'Save', color: '#7F77DD', desc: 'Simpan ke playlist' },
+    { key: 'like', label: 'Like', color: '#FF0000', desc: 'Suka video' },
+    { key: 'dislike', label: 'Dislike', color: '#E24B4A', desc: 'Tidak suka video' },
+    { key: 'comment', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
+    { key: 'subscribe', label: 'Subscribe', color: '#FF0000', desc: 'Langganan channel' },
+    { key: 'save', label: 'Save', color: '#7F77DD', desc: 'Simpan ke playlist' },
   ],
   instagram: [
-    { key: 'like', icon: '❤️', label: 'Like', color: '#D4537E', desc: 'Suka postingan' },
-    { key: 'comment', icon: '💬', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
-    { key: 'save', icon: '🔖', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
-    { key: 'follow', icon: '✅', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
+    { key: 'like', label: 'Like', color: '#D4537E', desc: 'Suka postingan' },
+    { key: 'comment', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
+    { key: 'save', label: 'Save', color: '#7F77DD', desc: 'Simpan postingan' },
+    { key: 'follow', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
   ],
   twitter: [
-    { key: 'like', icon: '❤️', label: 'Like', color: '#D4537E', desc: 'Suka tweet' },
-    { key: 'comment', icon: '💬', label: 'Reply', color: '#378ADD', desc: 'Balas tweet' },
-    { key: 'share', icon: '🔄', label: 'Retweet', color: '#1D9E75', desc: 'Retweet postingan' },
-    { key: 'bookmark', icon: '🔖', label: 'Bookmark', color: '#7F77DD', desc: 'Simpan tweet' },
-    { key: 'follow', icon: '✅', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
+    { key: 'like', label: 'Like', color: '#D4537E', desc: 'Suka tweet' },
+    { key: 'comment', label: 'Reply', color: '#378ADD', desc: 'Balas tweet' },
+    { key: 'share', label: 'Retweet', color: '#1D9E75', desc: 'Retweet postingan' },
+    { key: 'bookmark', label: 'Bookmark', color: '#7F77DD', desc: 'Simpan tweet' },
+    { key: 'follow', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
   ],
   tiktok: [
-    { key: 'like', icon: '❤️', label: 'Like', color: '#D4537E', desc: 'Suka video' },
-    { key: 'comment', icon: '💬', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
-    { key: 'share', icon: '↗', label: 'Share', color: '#1D9E75', desc: 'Bagikan video' },
-    { key: 'repost', icon: '🔄', label: 'Repost', color: '#639922', desc: 'Repost video' },
-    { key: 'save', icon: '🔖', label: 'Favorit', color: '#7F77DD', desc: 'Tambah ke favorit' },
-    { key: 'follow', icon: '✅', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
+    { key: 'like', label: 'Like', color: '#D4537E', desc: 'Suka video' },
+    { key: 'comment', label: 'Komentar', color: '#378ADD', desc: 'Tulis komentar' },
+    { key: 'share', label: 'Share', color: '#1D9E75', desc: 'Bagikan video' },
+    { key: 'repost', label: 'Repost', color: '#639922', desc: 'Repost video' },
+    { key: 'save', label: 'Favorit', color: '#7F77DD', desc: 'Tambah ke favorit' },
+    { key: 'follow', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
   ],
 };
 
 const PLATFORM_TABS = [
-  { key: 'facebook', label: 'Facebook', icon: '📘', color: '#1877F2', bg: '#E6F1FB', badgeBg: '#1877F220' },
-  { key: 'instagram', label: 'Instagram', icon: '📸', color: '#D4537E', bg: '#FBEAF0', badgeBg: '#D4537E20' },
-  { key: 'youtube', label: 'YouTube', icon: '▶️', color: '#FF0000', bg: '#FAECE7', badgeBg: '#FF000020' },
-  { key: 'twitter', label: 'X/Twitter', icon: '🐦', color: '#888780', bg: '#F1EFE8', badgeBg: '#88878020' },
-  { key: 'tiktok', label: 'TikTok', icon: '🎵', color: '#639922', bg: '#EAF3DE', badgeBg: '#63992220' },
+  { key: 'facebook', label: 'Facebook', color: '#1877F2', bg: '#E6F1FB', badgeBg: '#1877F220' },
+  { key: 'instagram', label: 'Instagram', color: '#D4537E', bg: '#FBEAF0', badgeBg: '#D4537E20' },
+  { key: 'youtube', label: 'YouTube', color: '#FF0000', bg: '#FAECE7', badgeBg: '#FF000020' },
+  { key: 'twitter', label: 'X/Twitter', color: '#888780', bg: '#F1EFE8', badgeBg: '#88878020' },
+  { key: 'tiktok', label: 'TikTok', color: '#639922', bg: '#EAF3DE', badgeBg: '#63992220' },
 ];
 
 const URL_PLACEHOLDERS = {
@@ -426,7 +440,7 @@ export default function AmplifyPage() {
                       if (!isActive) e.currentTarget.style.background = '#f8f8f6';
                     }}
                   >
-                    <span style={{ fontSize: 16 }}>{p.icon}</span>
+                    {(() => { const Icon = PLATFORM_ICON_MAP[p.key]; return Icon ? <Icon size={16} color={p.color} /> : null; })()}
                     <span style={{
                       fontSize: 13, fontWeight: isActive ? 600 : 500,
                       color: isActive ? p.color : '#555'
@@ -659,7 +673,7 @@ export default function AmplifyPage() {
                             if (!isSelected) e.currentTarget.style.background = '#f8f8f6';
                           }}
                         >
-                          <div style={{ fontSize: 24, marginBottom: 6 }}>{a.icon}</div>
+                          {(() => { const Icon = ACTION_ICON_MAP[a.key]; return Icon ? <Icon size={22} style={{ marginBottom: 6 }} /> : null; })()}
                           <div style={{
                             fontSize: 12, fontWeight: 600,
                             color: isSelected ? a.color : '#555'
@@ -1162,7 +1176,7 @@ export default function AmplifyPage() {
                           background: `${a.color}15`, color: a.color, fontWeight: 600,
                           display: 'flex', alignItems: 'center', gap: 4
                         }}>
-                          {a.icon} {a.label}
+                          {(() => { const Icon = ACTION_ICON_MAP[a.key]; return Icon ? <><Icon size={12} /> {a.label}</> : a.label; })()}
                         </span>
                       ))}
                       {!Object.values(selectedActions).some(v => v) && (
@@ -1339,7 +1353,7 @@ export default function AmplifyPage() {
                               color: r.success ? '#3B6D11' : '#A32D2D',
                               fontWeight: 500
                             }}>
-                              {r.success ? '✓' : '✗'} {r.action}
+                              {r.success ? <CheckCircle2 size={12} color="var(--color-success)" /> : <XCircle size={12} color="var(--color-error)" />} {r.action}
                               {r.error && ` · ${r.error.slice(0, 30)}`}
                             </span>
                           ))}

@@ -1,24 +1,24 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { aiAPI } from '../api';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
 
 const PLATFORMS = ['facebook', 'instagram', 'youtube', 'twitter', 'tiktok', 'threads'];
 const TONES = [
-  { key: 'casual', label: '😊 Santai' },
-  { key: 'formal', label: '👔 Formal' },
-  { key: 'funny', label: '😂 Lucu' },
-  { key: 'persuasive', label: '🎯 Persuasif' },
-  { key: 'informative', label: '📚 Informatif' },
-  { key: 'emotional', label: '❤️ Emosional' },
+  { key: 'casual', label: 'Santai' },
+  { key: 'formal', label: 'Formal' },
+  { key: 'funny', label: 'Lucu' },
+  { key: 'persuasive', label: 'Persuasif' },
+  { key: 'informative', label: 'Informatif' },
+  { key: 'emotional', label: 'Emosional' },
 ];
 const COMMENT_STYLES = [
-  { key: 'mixed', label: '🎲 Campuran' },
-  { key: 'appreciative', label: '👏 Memuji' },
-  { key: 'questioning', label: '❓ Bertanya' },
-  { key: 'sharing', label: '💬 Berbagi' },
-  { key: 'supportive', label: '💪 Mendukung' },
-  { key: 'funny', label: '😄 Lucu' },
+  { key: 'mixed', label: 'Campuran' },
+  { key: 'appreciative', label: 'Memuji' },
+  { key: 'questioning', label: 'Bertanya' },
+  { key: 'sharing', label: 'Berbagi' },
+  { key: 'supportive', label: 'Mendukung' },
+  { key: 'funny', label: 'Lucu' },
 ];
 
 export default function AIPage() {
@@ -218,7 +218,7 @@ export default function AIPage() {
         viewCount: video.viewCount,
       });
       setShortsIdea(res.data.result);
-      toast.success('🎬 Ide shorts berhasil digenerate!');
+      toast.success('Ide shorts berhasil digenerate!');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Gagal generate shorts idea');
     } finally {
@@ -255,15 +255,15 @@ export default function AIPage() {
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
           {[
-            { key: 'caption',   label: '📝 Caption' },
-            { key: 'comment',   label: '💬 Komentar' },
-            { key: 'hashtag',   label: '#️⃣ Hashtag' },
-            { key: 'content',   label: '🎬 Content Generator' },
-            { key: 'news',      label: '📰 Berita & Tren' },
-            { key: 'imagen',    label: '🖼️ Imagen B-roll' },
-            { key: 'sentiment', label: '📊 Sentimen' },
-            { key: 'youtube',   label: '📺 YouTube Trends' },
-            { key: 'schedule',  label: '📅 Jadwal Optimal' },
+            { key: 'caption',   label: 'Caption' },
+            { key: 'comment',   label: 'Komentar' },
+            { key: 'hashtag',   label: 'Hashtag' },
+            { key: 'content',   label: 'Content Generator' },
+            { key: 'news',      label: 'Berita & Tren' },
+            { key: 'imagen',    label: 'Imagen B-roll' },
+            { key: 'sentiment', label: 'Sentimen' },
+            { key: 'youtube',   label: 'YouTube Trends' },
+            { key: 'schedule',  label: 'Jadwal Optimal' },
           ].map(t => (
             <div key={t.key} onClick={() => setActiveTab(t.key)} style={tabStyle(t.key)}>{t.label}</div>
           ))}
@@ -274,7 +274,7 @@ export default function AIPage() {
           <div className="two-col" style={{ alignItems: 'start' }}>
             <div>
               <div className="card">
-                <div className="card-title">✨ Generate Caption</div>
+                <div className="card-title">Generate Caption</div>
 
                 {/* Mode */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
@@ -332,7 +332,7 @@ export default function AIPage() {
 
                 <button className="btn-primary" style={{ width: '100%', padding: 10 }}
                   onClick={generateCaption} disabled={loading}>
-                  {loading ? '⟳ Generating...' : `✨ Generate ${capMode === 'variations' ? '5 Variasi' : 'Caption'}`}
+                  {loading ? 'Generating...' : `Generate ${capMode === 'variations' ? '5 Variasi' : 'Caption'}`}
                 </button>
               </div>
             </div>
@@ -344,7 +344,7 @@ export default function AIPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <div className="card-title" style={{ margin: 0 }}>✅ Hasil Caption</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => copyToClipboard(capResult)}>
-                      📋 Copy
+                      Copy
                     </button>
                   </div>
                   <div style={{ background: '#f9f9f9', borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
@@ -352,7 +352,7 @@ export default function AIPage() {
                   </div>
                   <button className="btn-primary" style={{ width: '100%', marginTop: 10, padding: 8, fontSize: 12 }}
                     onClick={() => { navigator.clipboard.writeText(capResult); toast.success('Caption disalin — paste di Bulk Post!'); }}>
-                    ✦ Gunakan di Bulk Post
+                    Gunakan di Bulk Post
                   </button>
                 </div>
               )}
@@ -364,14 +364,14 @@ export default function AIPage() {
                     <div className="card-title" style={{ margin: 0 }}>✅ {capVariations.length} Variasi Caption</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }}
                       onClick={() => copyToClipboard(capVariations.join('\n\n---\n\n'))}>
-                      📋 Copy Semua
+                      Copy Semua
                     </button>
                   </div>
                   {capVariations.map((v, i) => (
                     <div key={i} style={{ marginBottom: 12, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, overflow: 'hidden' }}>
                       <div style={{ background: '#EEEDFE', padding: '6px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: 12, fontWeight: 600, color: '#534AB7' }}>Variasi {i+1}</span>
-                        <button onClick={() => copyToClipboard(v)} style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#534AB7' }}>📋 Copy</button>
+                        <button onClick={() => copyToClipboard(v)} style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', color: '#534AB7' }}>Copy</button>
                       </div>
                       <div style={{ padding: 12, fontSize: 12, lineHeight: 1.7, whiteSpace: 'pre-wrap', background: '#f9f9f9' }}>
                         {v}
@@ -379,14 +379,14 @@ export default function AIPage() {
                     </div>
                   ))}
                   <div style={{ fontSize: 12, color: '#888', textAlign: 'center', padding: '8px', background: '#EAF3DE', borderRadius: 8 }}>
-                    💡 Gunakan variasi berbeda untuk setiap Facebook Page agar konten tidak terlihat spam
+                    Gunakan variasi berbeda untuk setiap Facebook Page agar konten tidak terlihat spam
                   </div>
                 </div>
               )}
 
               {!capResult && capVariations.length === 0 && (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>✨</div>
                   <div>Isi form dan klik Generate untuk membuat caption dengan AI</div>
                 </div>
               )}
@@ -399,7 +399,7 @@ export default function AIPage() {
           <div className="two-col" style={{ alignItems: 'start' }}>
             <div>
               <div className="card">
-                <div className="card-title">💬 Generate Komentar AI</div>
+                <div className="card-title">Generate Komentar AI</div>
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
                   Generate komentar natural yang berbeda-beda untuk amplifikasi — setiap akun akan menggunakan komentar berbeda
                 </div>
@@ -445,7 +445,7 @@ export default function AIPage() {
 
                 <button className="btn-primary" style={{ width: '100%', padding: 10 }}
                   onClick={generateComments} disabled={loading}>
-                  {loading ? '⟳ Generating...' : `💬 Generate ${comCount} Komentar`}
+                  {loading ? 'Generating...' : `Generate ${comCount} Komentar`}
                 </button>
               </div>
             </div>
@@ -457,7 +457,7 @@ export default function AIPage() {
                     <div className="card-title" style={{ margin: 0 }}>✅ {comResults.length} Komentar Siap</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }}
                       onClick={() => copyToClipboard(comResults.join('\n'))}>
-                      📋 Copy Semua
+                      Copy Semua
                     </button>
                   </div>
                   <div style={{ maxHeight: 450, overflowY: 'auto' }}>
@@ -485,7 +485,7 @@ export default function AIPage() {
                 </div>
               ) : (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>💬</div>
                   <div>Generate komentar natural yang berbeda untuk setiap akun amplifikasi</div>
                 </div>
               )}
@@ -504,7 +504,7 @@ export default function AIPage() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                  {[{ key: 'video', label: '🎬 Video / Reels' }, { key: 'gambar', label: '🖼️ Carousel / Infografis' }].map(m => (
+                  {[{ key: 'video', label: 'Video / Reels' }, { key: 'gambar', label: 'Carousel / Infografis' }].map(m => (
                     <div key={m.key} onClick={() => setCgType(m.key)} style={{
                       padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
                       background: cgType === m.key ? '#EEEDFE' : '#f5f4f2',
@@ -523,11 +523,11 @@ export default function AIPage() {
                   <label>Referensi Data / Berita (opsional)</label>
                   <textarea value={cgData} onChange={e => setCgData(e.target.value)} rows={3}
                     placeholder="Paste berita, data statistik, atau info tambahan sebagai referensi konten..." />
-                  <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>💡 Gunakan tab Berita & Tren untuk ambil berita terbaru, lalu paste di sini</div>
+                  <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>Gunakan tab Berita & Tren untuk ambil berita terbaru, lalu paste di sini</div>
                 </div>
                 <button className="btn-primary" style={{ width: '100%', padding: 10 }}
                   onClick={generateContentJSON} disabled={loading}>
-                  {loading ? '⟳ Generating...' : '🎬 Generate Konten'}
+                  {loading ? 'Generating...' : 'Generate Konten'}
                 </button>
               </div>
             </div>
@@ -538,16 +538,16 @@ export default function AIPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <div className="card-title" style={{ margin: 0 }}>✅ Hasil Konten</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }}
-                      onClick={() => copyToClipboard(JSON.stringify(cgResult, null, 2))}>📋 Copy JSON</button>
+                      onClick={() => copyToClipboard(JSON.stringify(cgResult, null, 2))}>Copy JSON</button>
                   </div>
                   {cgType === 'video' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {[
-                        { label: '🎯 Judul', value: cgResult.judul },
+                        { label: 'Judul', value: cgResult.judul },
                         { label: '🪝 Hook (3 detik)', value: cgResult.hook },
-                        { label: '🎬 Visual', value: cgResult.visual },
-                        { label: '📜 Script', value: cgResult.script },
-                        { label: '📣 CTA', value: cgResult.cta },
+                        { label: 'Visual', value: cgResult.visual },
+                        { label: 'Script', value: cgResult.script },
+                        { label: 'CTA', value: cgResult.cta },
                       ].map(({ label, value }) => value && (
                         <div key={label} style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, overflow: 'hidden' }}>
                           <div style={{ background: '#EEEDFE', padding: '5px 12px', fontSize: 11, fontWeight: 600, color: '#534AB7' }}>{label}</div>
@@ -557,8 +557,8 @@ export default function AIPage() {
                       {cgResult.caption && (
                         <div style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, overflow: 'hidden' }}>
                           <div style={{ background: '#EEEDFE', padding: '5px 12px', fontSize: 11, fontWeight: 600, color: '#534AB7', display: 'flex', justifyContent: 'space-between' }}>
-                            📝 Caption
-                            <button onClick={() => copyToClipboard(cgResult.caption)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#534AB7' }}>📋 Copy</button>
+                            Caption
+                            <button onClick={() => copyToClipboard(cgResult.caption)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#534AB7' }}>Copy</button>
                           </div>
                           <div style={{ padding: 10, fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{cgResult.caption}</div>
                         </div>
@@ -593,15 +593,15 @@ export default function AIPage() {
                           <div style={{ background: '#f0f0f0', padding: '5px 12px', fontSize: 11, fontWeight: 600 }}>Slide {s.nomor}: {s.judul_slide}</div>
                           <div style={{ padding: 10 }}>
                             <div style={{ fontSize: 12, lineHeight: 1.6, marginBottom: 6 }}>{s.isi}</div>
-                            <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic' }}>🖼️ Visual: {s.deskripsi_visual_inggris}</div>
+                            <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic' }}>Visual: {s.deskripsi_visual_inggris}</div>
                           </div>
                         </div>
                       ))}
                       {cgResult.caption && (
                         <div style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 8, overflow: 'hidden' }}>
                           <div style={{ background: '#EEEDFE', padding: '5px 12px', fontSize: 11, fontWeight: 600, color: '#534AB7', display: 'flex', justifyContent: 'space-between' }}>
-                            📝 Caption
-                            <button onClick={() => copyToClipboard(cgResult.caption)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#534AB7' }}>📋 Copy</button>
+                            Caption
+                            <button onClick={() => copyToClipboard(cgResult.caption)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#534AB7' }}>Copy</button>
                           </div>
                           <div style={{ padding: 10, fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{cgResult.caption}</div>
                         </div>
@@ -611,7 +611,7 @@ export default function AIPage() {
                 </div>
               ) : (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>🎬</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>🎬</div>
                   <div>Generate script konten lengkap dengan hook, visual, script, caption, dan hashtag</div>
                 </div>
               )}
@@ -647,7 +647,7 @@ export default function AIPage() {
 
                 <button className="btn-primary" style={{ width: '100%', padding: 10 }}
                   onClick={generateHashtags} disabled={loading}>
-                  {loading ? '⟳ Generating...' : '#️⃣ Generate 20 Hashtag'}
+                  {loading ? 'Generating...' : '#️⃣ Generate 20 Hashtag'}
                 </button>
               </div>
             </div>
@@ -659,7 +659,7 @@ export default function AIPage() {
                     <div className="card-title" style={{ margin: 0 }}>✅ {hashResults.length} Hashtag</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }}
                       onClick={() => copyToClipboard(hashResults.join(' '))}>
-                      📋 Copy Semua
+                      Copy Semua
                     </button>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -671,12 +671,12 @@ export default function AIPage() {
                     ))}
                   </div>
                   <div style={{ marginTop: 10, padding: 10, background: '#E6F1FB', borderRadius: 8, fontSize: 12, color: '#185FA5' }}>
-                    💡 Klik hashtag untuk menyalin satu per satu, atau "Copy Semua" untuk sekaligus
+                    Klik hashtag untuk menyalin satu per satu, atau "Copy Semua" untuk sekaligus
                   </div>
                 </div>
               ) : (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>#️⃣</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>#️⃣</div>
                   <div>Generate hashtag relevan untuk meningkatkan jangkauan konten</div>
                 </div>
               )}
@@ -687,7 +687,7 @@ export default function AIPage() {
         {activeTab === 'news' && (
           <div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-              {[{ key: 'berita', label: '📰 Scrape Berita' }, { key: 'trends', label: '🔥 Google Trends ID' }].map(t => (
+              {[{ key: 'berita', label: 'Scrape Berita' }, { key: 'trends', label: 'Google Trends ID' }].map(t => (
                 <div key={t.key} onClick={() => { if (t.key === 'trends' && !trendsResults.length) scrapeTrends(); }} style={tabStyle(t.key === 'berita' ? 'news_berita' : 'news_trends')}>
                   {t.label}
                 </div>
@@ -730,7 +730,7 @@ export default function AIPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div className="card-title" style={{ margin: 0 }}>🔥 Google Trends Indonesia</div>
                     <button className="btn-secondary" style={{ fontSize: 12 }} onClick={scrapeTrends} disabled={loading}>
-                      {loading ? '⟳' : '↻ Refresh'}
+                      {loading ? '' : '↻ Refresh'}
                     </button>
                   </div>
                   {trendsResults.length > 0 ? (
@@ -745,7 +745,7 @@ export default function AIPage() {
                   ) : (
                     <div style={{ textAlign: 'center', color: '#aaa', padding: '20px 0', fontSize: 12 }}>Klik Refresh untuk ambil trending topic</div>
                   )}
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 10 }}>💡 Klik trend untuk langsung gunakan sebagai tema Content Generator</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 10 }}>Klik trend untuk langsung gunakan sebagai tema Content Generator</div>
                 </div>
               </div>
 
@@ -783,7 +783,7 @@ export default function AIPage() {
                   </div>
                 ) : (
                   <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                    <div style={{ fontSize: 48, marginBottom: 12 }}>📰</div>
+                    <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>📰</div>
                     <div>Scrape berita terkini dari 6 sumber media Indonesia terpercaya</div>
                   </div>
                 )}
@@ -805,7 +805,7 @@ export default function AIPage() {
                   <label>Deskripsi Gambar (dalam Bahasa Inggris) *</label>
                   <textarea value={imgPrompt} onChange={e => setImgPrompt(e.target.value)} rows={4}
                     placeholder="contoh: A person using smartphone in a modern coffee shop, warm lighting, bokeh background, vertical 9:16 format..." />
-                  <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>💡 Gunakan prompt dari Content Generator atau tulis sendiri dalam Bahasa Inggris</div>
+                  <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>Gunakan prompt dari Content Generator atau tulis sendiri dalam Bahasa Inggris</div>
                 </div>
                 <button className="btn-primary" style={{ width: '100%', padding: 10 }}
                   onClick={generateImagen} disabled={loading}>
@@ -832,7 +832,7 @@ export default function AIPage() {
                 </div>
               ) : (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>🖼️</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>🖼️</div>
                   <div>Generate gambar B-roll realistis vertikal 9:16 untuk konten video</div>
                 </div>
               )}
@@ -899,7 +899,7 @@ export default function AIPage() {
                 </div>
               ) : (
                 <div className="card" style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
+                  <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.3 }}>📊</div>
                   <div>Analisis sentimen positif/negatif/netral dari judul berita atau teks</div>
                 </div>
               )}
@@ -960,7 +960,7 @@ export default function AIPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {shortsLoading && shortsVideo?.id === v.id ? '⟳ Generating...' : '🎬 Generate Shorts Idea'}
+                      {shortsLoading && shortsVideo?.id === v.id ? 'Generating...' : '🎬 Generate Shorts Idea'}
                     </button>
                   </div>
                 ))}
