@@ -15,16 +15,81 @@ export default function UsersPage() {
     threads: true, youtube: true, twitter: true, tiktok: true,
   });
   const [showNotifications, setShowNotifications] = useState(false);
+  const [verifyingId, setVerifyingId] = useState(null);
+  const [isVerifyingAll, setIsVerifyingAll] = useState(false);
+  const [lastVerified, setLastVerified] = useState(null);
 
-  const { data: accounts = [] } = useQuery({
+  const { data: accounts = [], refetch: refetchAccounts } = useQuery({
     queryKey: ['accounts'],
-    queryFn: () => accountsAPI.getAll().then(r => r.data)
+    queryFn: () => accountsAPI.getAll().then(r => r.data),
+    refetchInterval: 30000 // Auto-refresh setiap 30 detik
   });
 
   const disconnect = useMutation({
     mutationFn: (id) => accountsAPI.disconnect(id),
     onSuccess: () => { toast.success('Akun diputus'); qc.invalidateQueries({ queryKey: ['accounts'] }); }
   });
+
+  // Verify single account
+  const verifyAccount = async (id) => {
+    setVerifyingId(id);
+    try {
+      const res = await accountsAPI.verify(id);
+      toast.success(`${res.data.status === 'connected' ? '✅' : '⚠️'} ${res.data.message}`);
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setLastVerified(new Date());
+    } catch (err) {
+      toast.error('Gagal memverifikasi akun');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // Verify all accounts
+  const verifyAll = async () => {
+    setIsVerifyingAll(true);
+    try {
+      const res = await accountsAPI.verifyAll();
+      toast.success(`✅ ${res.data.connected} connected · ⚠️ ${res.data.expired} expired · ❌ ${res.data.disconnected} disconnected`);
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setLastVerified(new Date());
+    } catch (err) {
+      toast.error('Gagal memverifikasi akun');
+    } finally {
+      setIsVerifyingAll(false);
+    }
+  };
+
+  // Auto-refresh status every 60 seconds when on page
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      refetchAccounts();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [refetchAccounts]);
+
+  // Status badge renderer
+  const getStatusBadge = (acc) => {
+    const status = acc.connectionStatus || 'unknown';
+    const statusConfig = {
+      connected: { color: '#1D9E75', bg: '#EAF3DE', label: 'Terhubung', icon: '✓' },
+      disconnected: { color: '#E24B4A', bg: '#FCEBEB', label: 'Terputus', icon: '✗' },
+      expired: { color: '#EF9F27', bg: '#FAEEDA', label: 'Expired', icon: '⚠' },
+      unknown: { color: '#888', bg: '#f0f0f0', label: 'Belum dicek', icon: '?' },
+    };
+    const cfg = statusConfig[status] || statusConfig.unknown;
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '2px 8px', borderRadius: 10,
+        background: cfg.bg, color: cfg.color,
+        fontSize: 10, fontWeight: 600
+      }}>
+        <span>{cfg.icon}</span>
+        <span>{cfg.label}</span>
+      </div>
+    );
+  };
 
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -78,15 +143,32 @@ export default function UsersPage() {
     }
   };
 
+  const copyToClipboard = async (text) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(el);
+      if (!ok) throw new Error('execCommand failed');
+    }
+  };
+
   const copyOAuthLink = async (platform) => {
     try {
       setConnecting(true);
       const url = await fetchOAuthUrl(platform);
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       setCopiedPlatform(platform);
       toast.success('Link disalin! Buka di Chrome profile yang sesuai.');
       setTimeout(() => setCopiedPlatform(null), 3000);
-    } catch {
+    } catch (err) {
+      console.error('[copyOAuthLink]', err);
       toast.error('Gagal menyalin link');
     } finally {
       setConnecting(false);
@@ -147,9 +229,28 @@ export default function UsersPage() {
       <div className="page-header">
         <span className="page-title">Akun & User</span>
         <div className="page-actions">
-          <span style={{ fontSize: 12, color: '#888' }}>
-            {accounts.length} akun terhubung
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 12, color: '#888' }}>
+              {accounts.length} akun terhubung
+            </span>
+            <button
+              onClick={verifyAll}
+              disabled={isVerifyingAll || accounts.length === 0}
+              style={{
+                padding: '6px 12px', borderRadius: 8, border: '1.5px solid #E0E0E0',
+                background: '#fff', cursor: isVerifyingAll ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 500, color: '#534AB7',
+                display: 'flex', alignItems: 'center', gap: 4
+              }}
+            >
+              {isVerifyingAll ? '⟳' : '🔄'} {isVerifyingAll ? 'Memeriksa...' : 'Cek Status'}
+            </button>
+            {lastVerified && (
+              <span style={{ fontSize: 10, color: '#aaa' }}>
+                Terakhir: {lastVerified.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {CONNECT_BUTTONS.map(({ key, label, bg, color, border }) => (
               <div key={key} style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: border || 'none' }}>
@@ -223,6 +324,35 @@ export default function UsersPage() {
           <span>Klik <b>"f+ Facebook & IG"</b> untuk menghubungkan semua Facebook Pages dan Instagram bisnis sekaligus.</span>
         </div>
 
+        {/* Status Summary */}
+        {accounts.length > 0 && (
+          <div style={{
+            display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12,
+            padding: '10px 14px', background: '#f8f8f6', borderRadius: 10,
+            border: '1px solid rgba(0,0,0,0.06)'
+          }}>
+            {[
+              { label: 'Terhubung', count: accounts.filter(a => a.connectionStatus === 'connected').length, color: '#1D9E75', bg: '#EAF3DE' },
+              { label: 'Terputus', count: accounts.filter(a => a.connectionStatus === 'disconnected').length, color: '#E24B4A', bg: '#FCEBEB' },
+              { label: 'Expired', count: accounts.filter(a => a.connectionStatus === 'expired').length, color: '#EF9F27', bg: '#FAEEDA' },
+              { label: 'Belum dicek', count: accounts.filter(a => !a.connectionStatus || a.connectionStatus === 'unknown').length, color: '#888', bg: '#f0f0f0' },
+            ].map(s => (
+              <div key={s.label} style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '4px 10px', borderRadius: 8,
+                background: s.bg, color: s.color,
+                fontSize: 11, fontWeight: 600
+              }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: s.color
+                }} />
+                {s.count} {s.label}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Collapse controls */}
         {hasAnyAccount && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -276,10 +406,24 @@ export default function UsersPage() {
                         <div style={{ fontSize: 13, fontWeight: 500 }}>{acc.label}</div>
                         <div style={{ fontSize: 11, color: '#aaa' }}>@{acc.platformUsername}</div>
                       </div>
+                      {/* Status Badge */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: acc.isActive ? '#1D9E75' : '#E24B4A' }} />
-                        <span style={{ fontSize: 11, color: '#888' }}>{acc.isActive ? 'Aktif' : 'Nonaktif'}</span>
+                        {getStatusBadge(acc)}
                       </div>
+                      {/* Verify button */}
+                      <button
+                        onClick={() => verifyAccount(acc._id)}
+                        disabled={verifyingId === acc._id}
+                        title="Cek status koneksi"
+                        style={{
+                          fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                          border: '0.5px solid rgba(0,0,0,0.1)', background: 'none',
+                          cursor: verifyingId === acc._id ? 'not-allowed' : 'pointer',
+                          color: '#7F77DD'
+                        }}
+                      >
+                        {verifyingId === acc._id ? '⟳' : '🔍'}
+                      </button>
                       <button
                         onClick={() => disconnect.mutate(acc._id)}
                         style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, border: '0.5px solid rgba(0,0,0,0.1)', background: 'none', cursor: 'pointer', color: '#E24B4A' }}

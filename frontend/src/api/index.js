@@ -38,6 +38,8 @@ export const accountsAPI = {
   create: (data) => api.post('/accounts', data),
   updateWarmup: (id, data) => api.patch(`/accounts/${id}/warmup`, data),
   disconnect: (id) => api.delete(`/accounts/${id}`),
+  verify: (id) => api.post(`/accounts/${id}/verify`),
+  verifyAll: () => api.post('/accounts/verify-all'),
 };
 
 // ─── Posts ───────────────────────────────────────────────────────────────────
