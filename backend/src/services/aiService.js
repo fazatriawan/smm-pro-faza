@@ -115,7 +115,7 @@ VARIASI 5:
 
 // Generate komentar natural untuk amplifikasi
 async function generateComments(config) {
-  const { topic, platform, count, style, stance, tone } = config;
+  const { topic, platform, count, style, stance, tone, contentType } = config;
 
   const styleGuide = {
     appreciative: 'mengagumi dan memuji konten',
@@ -140,23 +140,60 @@ async function generateComments(config) {
     neutral: 'netral, memberikan pendapat seimbang'
   };
 
+  const contentTypeGuide = {
+    standup_comedy: 'stand up comedy — fokus pada humor, punchline, delivery, komika, materi lucu, penonton tertawa',
+    tutorial: 'tutorial/edukasi — fokus pada cara penjelasan, langkah-langkah, manfaat, hasil akhir, tips & trik',
+    review: 'review produk — fokus pada fitur, kelebihan/kekurangan, harga, rekomendasi, perbandingan',
+    vlog: 'vlog/lifestyle — fokus pada aktivitas sehari-hari, pengalaman, tempat, momen seru',
+    music: 'musik/entertainment — fokus pada lagu, suara, lirik, aransemen, performance, artis',
+    gaming: 'gaming — fokus pada gameplay, strategi, grafik, karakter, skill, konten seru',
+    news: 'berita/informasi — fokus pada fakta, opini, isu terkini, analisis, dampak',
+    motivasi: 'motivasi/inspirasi — fokus pada quotes, kisah sukses, semangat hidup, mindset',
+    cooking: 'masak/kuliner — fokus pada resep, rasa, tampilan makanan, teknik memasak',
+    sports: 'olahraga — fokus pada teknik, hasil pertandingan, atlet, strategi, latihan',
+    other: 'konten umum'
+  };
+
   const effectiveStance = stance || tone || 'netral';
   const effectiveStyle = style || 'mixed';
+  const effectiveContentType = contentType || 'other';
+
+  const systemPrompt = `Kamu adalah generator komentar social media AI. TUGAS UTAMAMU adalah membuat komentar yang SANGAT SPESIFIK dan RELEVAN dengan konten yang diberikan.
+
+ATURAN PENTING:
+1. SELALU analisis judul/topik konten TERLEBIH DAHULU sebelum membuat komentar.
+2. JANGAN PERNAH membuat komentar tentang hal yang tidak disebutkan di judul/konteks.
+3. JANGAN membuat komentar generic seperti "konten edukatif", "info penting", "berbobot", "tutorialnya bagus" kecuali memang spesifik.
+4. Komentar harus terlihat seperti reaksi PENONTON ASLI yang baru saja menonton video tersebut.
+5. Gunakan referensi spesifik dari judul/konteks dalam komentar.
+
+Contoh BAIK untuk "Suci 12 show 3" (stand up comedy):
+- "Stand up Raditya Dika di show 3 ini ngakak parah sih 😂"
+- "Suci 12 makin seru, komika-komikanya pada jago delivery"
+- "Show 3 paling ditunggu, materinya fresh semua 🔥"
+
+Contoh BURUK (JANGAN lakukan):
+- "Konten edukatif, sangat bermanfaat" ← terlalu generic
+- "Tutorialnya jelas banget" ← tidak sesuai konteks
+- "Spek kameranya daging semua" ← tidak relevan`;
+
+  const contentTypeHint = contentTypeGuide[effectiveContentType]
+    ? `JENIS KONTEN: ${contentTypeGuide[effectiveContentType]}. Buat komentar yang sesuai dengan jenis konten ini.`
+    : '';
 
   const contextHint = topic
-    ? `Konten spesifik yang dibahas: "${topic}". Setiap komentar HARUS merujuk atau berkaitan dengan konten ini. Jangan buat komentar generic seperti "konten edukatif" atau "info penting" kecuali memang sesuai.`
+    ? `JUDUL/KONTEKS SPESIFIK: "${topic}". Setiap komentar HARUS merujuk langsung ke konten ini. Misal: jika judul tentang stand up comedy, komentar tentang humor/materi/komika. Jika tentang tutorial, komentar tentang cara/langkah/hasil.`
     : '';
 
   const platformHint = platform === 'youtube'
-    ? 'Ini adalah konten video YouTube. Komentar harus sesuai dengan jenis video tersebut (misal: stand up comedy → komentar tentang humor, punchline, delivery; tutorial → komentar tentang cara penjelasan, manfaat; music → komentar tentang suara, lirik, aransemen).'
-    : '';
+    ? 'Platform: YouTube. Komentar seperti penonton YouTube Indonesia yang baru selesai nonton video.'
+    : `Platform: ${platform || 'social media'}`;
 
-  const prompt = `Kamu adalah ${count || 10} pengguna social media Indonesia yang berbeda-beda, sedang menonton/membaca sebuah konten.
+  const userPrompt = `Buat ${count || 10} komentar BERBEDA-BEDA dan NATURAL.
 
+${contentTypeHint}
 ${contextHint}
 ${platformHint}
-
-Buat ${count || 10} komentar BERBEDA-BEDA dan NATURAL untuk konten tersebut.
 
 STANCE/NARASI: ${stanceGuide[effectiveStance] || stanceGuide.netral}
 GAYA PENULISAN: ${styleGuide[effectiveStyle] || styleGuide.mixed}
@@ -170,14 +207,14 @@ Persyaratan PENTING:
 - Terlihat natural, bukan seperti bot
 - Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
 - Sesuaikan dengan stance dan gaya yang diminta
-- Komentar HARUS relevan dengan konten spesifik yang disebutkan di atas, jangan generic
+- Komentar HARUS spesifik ke konten yang disebutkan, jangan generic
 
 Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
 [komentar 1]
 [komentar 2]
 ...dst`;
 
-  const raw = await generateWithGemini(prompt);
+  const raw = await generateWithGemini(userPrompt, systemPrompt, 2500);
   
   // Parse komentar
   const comments = raw.split('\n')
