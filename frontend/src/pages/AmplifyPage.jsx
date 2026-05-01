@@ -166,8 +166,7 @@ export default function AmplifyPage() {
         fetchYouTubeInfo(firstUrl);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urls[0], activePlatform, youtubeApiKey]);
+  }, [urls, activePlatform, youtubeApiKey]);
 
   const { data: accounts = [] } = useQuery({
     queryKey: ['accounts'],
