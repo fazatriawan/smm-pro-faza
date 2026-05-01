@@ -1548,6 +1548,22 @@ function pageAmplify() {
                   </select>
                 </div>
               </div>
+              <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
+                <label style="font-size:11px;color:#666">🎬 Jenis Konten</label>
+                <select id="amp-ai-type" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd">
+                  <option value="other">🎯 Lainnya / Umum</option>
+                  <option value="standup_comedy">🎤 Stand Up Comedy</option>
+                  <option value="tutorial">📚 Tutorial / Edukasi</option>
+                  <option value="review">⭐ Review Produk</option>
+                  <option value="vlog">📹 Vlog / Lifestyle</option>
+                  <option value="music">🎵 Musik / Entertainment</option>
+                  <option value="gaming">🎮 Gaming</option>
+                  <option value="news">📰 Berita / Informasi</option>
+                  <option value="motivasi">💪 Motivasi / Inspirasi</option>
+                  <option value="cooking">🍳 Masak / Kuliner</option>
+                  <option value="sports">⚽ Olahraga</option>
+                </select>
+              </div>
               <div style="font-size:11px;color:#7a72dc">
                 💡 AI akan generate <b id="amp-ai-count">0</b> komentar unik (sesuai jumlah akun yang dipilih)
               </div>
@@ -1703,8 +1719,9 @@ async function runAmplify() {
   if (useAI && actions.includes('comment')) {
     const tone = document.getElementById('amp-ai-tone')?.value || 'netral';
     const style = document.getElementById('amp-ai-style')?.value || 'santai';
+    const contentType = document.getElementById('amp-ai-type')?.value || 'other';
     const contentContext = document.getElementById('amp-context')?.value || '';
-    aiConfig = { useAI: true, tone, style, contentContext };
+    aiConfig = { useAI: true, tone, style, contentType, contentContext };
   }
 
   document.getElementById('amp-btn').disabled = true;

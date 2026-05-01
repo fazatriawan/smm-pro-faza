@@ -347,16 +347,43 @@ async function generateAICommentsForAmplify(config, settings) {
   const tone = toneMap[aiConfig.tone] || toneMap.netral;
   const style = styleMap[aiConfig.style] || styleMap.santai;
   const context = aiConfig.contentContext || '';
+  const contentType = aiConfig.contentType || 'other';
 
-  const contextHint = context
-    ? `Konten spesifik yang dibahas: "${context}". Setiap komentar HARUS merujuk atau berkaitan dengan konten ini. Jangan buat komentar generic.`
+  const contentTypeGuide = {
+    standup_comedy: 'stand up comedy — fokus pada humor, punchline, delivery, komika, materi lucu',
+    tutorial: 'tutorial/edukasi — fokus pada cara penjelasan, langkah-langkah, manfaat, tips',
+    review: 'review produk — fokus pada fitur, kelebihan/kekurangan, harga, rekomendasi',
+    vlog: 'vlog/lifestyle — fokus pada aktivitas, pengalaman, tempat, momen seru',
+    music: 'musik/entertainment — fokus pada lagu, suara, lirik, performance, artis',
+    gaming: 'gaming — fokus pada gameplay, strategi, grafik, karakter, skill',
+    news: 'berita/informasi — fokus pada fakta, opini, isu terkini, analisis',
+    motivasi: 'motivasi/inspirasi — fokus pada quotes, kisah sukses, semangat hidup',
+    cooking: 'masak/kuliner — fokus pada resep, rasa, tampilan makanan, teknik',
+    sports: 'olahraga — fokus pada teknik, hasil pertandingan, atlet, strategi',
+    other: 'konten umum'
+  };
+
+  const systemPrompt = `Kamu adalah generator komentar social media AI. TUGAS UTAMAMU adalah membuat komentar yang SANGAT SPESIFIK dan RELEVAN dengan konten yang diberikan.
+
+ATURAN PENTING:
+1. SELALU analisis judul/topik konten TERLEBIH DAHULU sebelum membuat komentar.
+2. JANGAN PERNAH membuat komentar tentang hal yang tidak disebutkan di judul/konteks.
+3. JANGAN membuat komentar generic seperti "konten edukatif", "info penting", "berbobot", "tutorialnya bagus" kecuali memang spesifik.
+4. Komentar harus terlihat seperti reaksi PENONTON ASLI yang baru saja menonton video tersebut.
+5. Gunakan referensi spesifik dari judul/konteks dalam komentar.`;
+
+  const contentTypeHint = contentTypeGuide[contentType]
+    ? `JENIS KONTEN: ${contentTypeGuide[contentType]}. Buat komentar yang sesuai.`
     : '';
 
-  const prompt = `Kamu adalah ${accountCount} pengguna social media Indonesia yang berbeda-beda, sedang menonton sebuah video.
+  const contextHint = context
+    ? `JUDUL/KONTEKS SPESIFIK: "${context}". Setiap komentar HARUS merujuk langsung ke konten ini.`
+    : '';
 
+  const userPrompt = `Buat ${accountCount} komentar BERBEDA-BEDA dan NATURAL.
+
+${contentTypeHint}
 ${contextHint}
-
-Buat ${accountCount} komentar BERBEDA-BEDA dan NATURAL.
 
 TONE/NARASI: ${tone}
 GAYA PENULISAN: ${style}
@@ -370,7 +397,7 @@ Persyaratan PENTING:
 - Terlihat natural, bukan seperti bot
 - Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
 - Sesuaikan dengan tone dan gaya yang diminta
-- Komentar HARUS relevan dengan konten spesifik, jangan generic
+- Komentar HARUS spesifik ke konten yang disebutkan, jangan generic
 
 Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
 [komentar 1]
@@ -381,8 +408,9 @@ Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.9, maxOutputTokens: 2000 }
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 2500 }
     })
   });
 
