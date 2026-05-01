@@ -115,7 +115,7 @@ VARIASI 5:
 
 // Generate komentar natural untuk amplifikasi
 async function generateComments(config) {
-  const { topic, platform, count, style } = config;
+  const { topic, platform, count, style, stance, tone } = config;
 
   const styleGuide = {
     appreciative: 'mengagumi dan memuji konten',
@@ -123,14 +123,33 @@ async function generateComments(config) {
     sharing: 'berbagi pengalaman pribadi yang relevan',
     supportive: 'mendukung dan menyemangati',
     funny: 'lucu dan menghibur tapi tetap relevan',
-    mixed: 'campuran berbagai gaya'
+    mixed: 'campuran berbagai gaya',
+    santai: 'santai dan friendly, seperti ngobrol sama teman di social media',
+    formal: 'formal dan profesional, seperti review resmi',
+    kritis: 'kritis dan analitis, menyoroti detail',
+    lucu: 'lucu dan menghibur dengan humor ringan Indonesia',
+    pendek: 'singkat dan padat, maksimal 5-10 kata saja'
   };
 
-  const prompt = `Kamu adalah pengguna social media Indonesia yang aktif dan natural.
+  const stanceGuide = {
+    pro: 'mendukung penuh, memuji, dan merekomendasikan konten ini',
+    kontra: 'kritis, menyanggah, atau menunjukkan kekurangan dengan sopan',
+    netral: 'netral, memberikan pendapat seimbang',
+    positive: 'mendukung penuh, memuji, dan merekomendasikan konten ini',
+    negative: 'kritis, menyanggah, atau menunjukkan kekurangan dengan sopan',
+    neutral: 'netral, memberikan pendapat seimbang'
+  };
 
-Buat ${count || 10} komentar BERBEDA-BEDA yang natural untuk konten tentang: ${topic}
-Platform: ${platform}
-Gaya komentar: ${styleGuide[style] || styleGuide.mixed}
+  const effectiveStance = stance || tone || 'netral';
+  const effectiveStyle = style || 'mixed';
+
+  const prompt = `Kamu adalah ${count || 10} pengguna social media Indonesia yang berbeda-beda.
+
+Buat ${count || 10} komentar BERBEDA-BEDA dan NATURAL untuk sebuah konten ${platform || 'social media'}.
+
+${topic ? `Topik/Konten: ${topic}` : ''}
+STANCE/NARASI: ${stanceGuide[effectiveStance] || stanceGuide.netral}
+GAYA PENULISAN: ${styleGuide[effectiveStyle] || styleGuide.mixed}
 
 Persyaratan PENTING:
 - Setiap komentar HARUS terlihat ditulis oleh orang berbeda
@@ -140,6 +159,7 @@ Persyaratan PENTING:
 - Jangan ada komentar yang mirip satu sama lain
 - Terlihat natural, bukan seperti bot
 - Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
+- Sesuaikan dengan stance dan gaya yang diminta
 
 Contoh variasi yang diinginkan:
 - "Mantap! 👏"
