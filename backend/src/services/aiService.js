@@ -143,11 +143,21 @@ async function generateComments(config) {
   const effectiveStance = stance || tone || 'netral';
   const effectiveStyle = style || 'mixed';
 
-  const prompt = `Kamu adalah ${count || 10} pengguna social media Indonesia yang berbeda-beda.
+  const contextHint = topic
+    ? `Konten spesifik yang dibahas: "${topic}". Setiap komentar HARUS merujuk atau berkaitan dengan konten ini. Jangan buat komentar generic seperti "konten edukatif" atau "info penting" kecuali memang sesuai.`
+    : '';
 
-Buat ${count || 10} komentar BERBEDA-BEDA dan NATURAL untuk sebuah konten ${platform || 'social media'}.
+  const platformHint = platform === 'youtube'
+    ? 'Ini adalah konten video YouTube. Komentar harus sesuai dengan jenis video tersebut (misal: stand up comedy → komentar tentang humor, punchline, delivery; tutorial → komentar tentang cara penjelasan, manfaat; music → komentar tentang suara, lirik, aransemen).'
+    : '';
 
-${topic ? `Topik/Konten: ${topic}` : ''}
+  const prompt = `Kamu adalah ${count || 10} pengguna social media Indonesia yang berbeda-beda, sedang menonton/membaca sebuah konten.
+
+${contextHint}
+${platformHint}
+
+Buat ${count || 10} komentar BERBEDA-BEDA dan NATURAL untuk konten tersebut.
+
 STANCE/NARASI: ${stanceGuide[effectiveStance] || stanceGuide.netral}
 GAYA PENULISAN: ${styleGuide[effectiveStyle] || styleGuide.mixed}
 
@@ -160,13 +170,7 @@ Persyaratan PENTING:
 - Terlihat natural, bukan seperti bot
 - Campur bahasa Indonesia dan sedikit bahasa Inggris (natural)
 - Sesuaikan dengan stance dan gaya yang diminta
-
-Contoh variasi yang diinginkan:
-- "Mantap! 👏"
-- "Wah ini bermanfaat banget, makasih kak udah share"
-- "Udah coba dan emang beda banget hasilnya 🔥"
-- "Boleh tau lebih detail ga?"
-- "Langsung save deh, berguna banget"
+- Komentar HARUS relevan dengan konten spesifik yang disebutkan di atas, jangan generic
 
 Format output (HANYA komentar, tanpa nomor, tanpa penjelasan):
 [komentar 1]
