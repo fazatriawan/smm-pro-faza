@@ -54,10 +54,10 @@ router.get('/threads/callback', async (req, res) => {
     const expiresIn = longTokenRes.data.expires_in || 5184000;
     const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
 
-    // Ambil info profil
-    const profileRes = await axios.get(`https://graph.threads.net/v1.0/${threadsUserId}`, {
+    // Ambil info profil — pakai /me bukan /{userId} (lebih reliable)
+    const profileRes = await axios.get('https://graph.threads.net/v1.0/me', {
       params: {
-        fields: 'id,username,name,threads_profile_picture_url,threads_biography',
+        fields: 'id,username,name',
         access_token: longToken
       }
     });
