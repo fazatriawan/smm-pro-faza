@@ -22,9 +22,10 @@ router.post('/', protect, async (req, res) => {
       return res.status(400).json({ message: 'Tidak ada akun yang dipilih', code: 'NO_ACCOUNTS' });
     }
 
-    // Cari akun yang valid
+    // Cari akun yang valid — admin bisa pakai semua akun
+    const ownerFilter = req.user.role === 'admin' ? {} : { owner: req.user._id };
     const accounts = await SocialAccount.find({
-      _id: { $in: accountIds }, owner: req.user._id, isActive: true
+      _id: { $in: accountIds }, ...ownerFilter, isActive: true
     });
 
     console.log(`[Amplify] POST user=${req.user._id} accountIds=${accountIds?.length} found=${accounts.length} platform=${platform} useAI=${aiConfig?.useAI || false}`);
