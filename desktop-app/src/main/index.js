@@ -180,9 +180,23 @@ ipcMain.handle('get-accounts', async () => {
         loginType: 'oauth'
       }));
 
-    // Merge: local automation accounts + backend OAuth accounts
-    const merged = [...localAccounts.filter(a => !oauthAccounts.find(o => o.username === a.username && o.platform === a.platform))];
-    return [...merged, ...oauthAccounts];
+    // Fetch automation accounts from backend (including decrypted password)
+    const automationAccounts = backendAccounts
+      .filter(a => a.loginType === 'automation')
+      .map(a => ({
+        id: a._id,
+        platform: a.platform,
+        username: a.platformUsername || a.platformUserId,
+        label: a.label,
+        password: a.automationData?.password,
+        cookies: a.automationData?.cookies,
+        userAgent: a.automationData?.userAgent,
+        loginType: 'automation'
+      }));
+
+    // Merge priority: backend automation > local automation > backend oauth
+    const merged = [...localAccounts.filter(a => !automationAccounts.find(o => o.username === a.username && o.platform === a.platform) && !oauthAccounts.find(o => o.username === a.username && o.platform === a.platform))];
+    return [...merged, ...automationAccounts, ...oauthAccounts];
   } catch (err) {
     return localAccounts;
   }

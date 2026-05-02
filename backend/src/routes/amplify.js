@@ -15,7 +15,7 @@ router.get('/', protect, async (req, res) => {
 
 router.post('/', protect, async (req, res) => {
   try {
-    const { targetUrl, targetUrls, platform, actions, accountIds } = req.body;
+    const { targetUrl, targetUrls, platform, actions, accountIds, aiConfig } = req.body;
 
     // Validasi input
     if (!accountIds || accountIds.length === 0) {
@@ -27,11 +27,10 @@ router.post('/', protect, async (req, res) => {
       _id: { $in: accountIds }, owner: req.user._id, isActive: true
     });
 
-    console.log(`[Amplify] POST user=${req.user._id} accountIds=${accountIds?.length} found=${accounts.length} platform=${platform}`);
+    console.log(`[Amplify] POST user=${req.user._id} accountIds=${accountIds?.length} found=${accounts.length} platform=${platform} useAI=${aiConfig?.useAI || false}`);
 
     // Warning jika found=0
     if (accounts.length === 0) {
-      // Cek kenapa 0 — apakah akun tidak aktif, bukan milik user, atau platform beda
       const allSelected = await SocialAccount.find({ _id: { $in: accountIds } });
       const reasons = [];
 
@@ -56,7 +55,6 @@ router.post('/', protect, async (req, res) => {
       });
     }
 
-    // Warning jika found < selected
     if (accounts.length < accountIds.length) {
       console.log(`[Amplify] WARNING: Only ${accounts.length}/${accountIds.length} accounts are valid`);
     }
@@ -69,6 +67,7 @@ router.post('/', protect, async (req, res) => {
       actions,
       accounts: accounts.map(a => a._id),
       status: 'pending',
+      aiConfig: aiConfig || { useAI: false },
       meta: {
         totalSelected: accountIds.length,
         validAccounts: accounts.length,

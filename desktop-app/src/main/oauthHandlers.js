@@ -209,20 +209,19 @@ async function handleTwitterCallback(code, clientId, clientSecret) {
 
 // ── TikTok OAuth 2.0 (PKCE S256) ─────────────────────────────────────────────
 function buildTikTokUrl(clientKey) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = crypto.randomBytes(64);
-  const codeVerifier = Array.from(bytes, b => chars[b % 62]).join('');
-  // Kirim challenge sebagai standard base64 (bukan base64url) — TikTok mungkin pakai ini
-  const challenge = crypto.createHash('sha256').update(codeVerifier).digest('base64');
-  const redirectUri = REDIRECT('tiktok');
+  const rawBytes     = crypto.randomBytes(32);
+  const codeVerifier = rawBytes.toString('base64url');
+  // Hash raw bytes (not string) — TikTok may use non-standard PKCE
+  const challenge    = crypto.createHash('sha256').update(rawBytes).digest('base64url');
+  const redirectUri  = REDIRECT('tiktok');
 
   console.log('[TikTok PKCE] verifier:', codeVerifier);
-  console.log('[TikTok PKCE] challenge (base64):', challenge);
+  console.log('[TikTok PKCE] challenge:', challenge);
 
   const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
   url.searchParams.set('client_key',            clientKey);
   url.searchParams.set('response_type',         'code');
-  url.searchParams.set('scope',                 'user.info.basic');
+  url.searchParams.set('scope',                 'user.info.basic,video.upload,video.publish');
   url.searchParams.set('redirect_uri',          redirectUri);
   url.searchParams.set('state',                 crypto.randomBytes(8).toString('hex'));
   url.searchParams.set('code_challenge',        challenge);
@@ -233,28 +232,23 @@ function buildTikTokUrl(clientKey) {
 async function handleTikTokCallback(code, clientKey, clientSecret, codeVerifier) {
   const redirectUri = REDIRECT('tiktok');
   console.log('[TikTok Token] redirect_uri:', redirectUri);
-  console.log('[TikTok Token] code (raw):', code);
   console.log('[TikTok Token] code_verifier:', codeVerifier);
 
-  // formEncode: encodeURIComponent + encode ! ' ( ) * yang tidak diencode oleh encodeURIComponent
-  const formEncode = (str) => encodeURIComponent(str).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
-
-  let bodyStr = `client_key=${formEncode(clientKey)}`
-    + `&client_secret=${formEncode(clientSecret)}`
-    + `&code=${formEncode(code)}`
-    + `&grant_type=authorization_code`
-    + `&redirect_uri=${formEncode(redirectUri)}`;
-  if (codeVerifier) bodyStr += `&code_verifier=${formEncode(codeVerifier)}`;
-  console.log('[TikTok Token] body:', bodyStr);
+  const bodyParams = new URLSearchParams({
+    client_key:    clientKey,
+    client_secret: clientSecret,
+    code,
+    grant_type:    'authorization_code',
+    redirect_uri:  redirectUri,
+  });
+  if (codeVerifier) bodyParams.set('code_verifier', codeVerifier);
+  console.log('[TikTok Token] body:', bodyParams.toString());
 
   // Tukar code → token
   const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method:  'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cache-Control': 'no-cache',
-    },
-    body: bodyStr,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    bodyParams.toString(),
   });
   const tokenData = await tokenRes.json();
   console.log('[TikTok Token] full response:', JSON.stringify(tokenData));

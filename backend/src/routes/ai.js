@@ -211,68 +211,180 @@ const YT_CATEGORY_QUERIES = {
   '28': 'teknologi sains indonesia',
 };
 
+// Fallback: scrape YouTube trending page jika API key tidak tersedia
+async function scrapeYoutubeTrends(regionCode = 'ID') {
+  const url = `https://www.youtube.com/feed/trending?gl=${regionCode}`;
+  const { data: html } = await axios.get(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+    },
+    timeout: 15000,
+  });
+
+  // Extract ytInitialData dari script tag
+  const match = html.match(/var ytInitialData = ({.+?});<\/script>/);
+  if (!match) throw new Error('Gagal mengekstrak data trending dari YouTube');
+
+  const ytData = JSON.parse(match[1]);
+  const tabs = ytData.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+  const tabContent = tabs[0]?.tabRenderer?.content;
+  const sections = tabContent?.sectionListRenderer?.contents || [];
+
+  const videos = [];
+  for (const section of sections) {
+    const items = section?.shelfRenderer?.content?.expandedShelfContentsRenderer?.items ||
+                  section?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const vr = item?.videoRenderer || item?.gridVideoRenderer || item?.shelfRenderer?.content?.gridRenderer?.items?.[0]?.videoRenderer;
+      if (!vr) continue;
+
+      const videoId = vr.videoId;
+      const title = vr.title?.runs?.[0]?.text || vr.title?.simpleText || '';
+      const channel = vr.longBylineText?.runs?.[0]?.text || vr.shortBylineText?.runs?.[0]?.text || '';
+      const thumbnails = vr.thumbnail?.thumbnails || [];
+      const thumbnail = thumbnails[thumbnails.length - 1]?.url || thumbnails[0]?.url || '';
+
+      // Parse view count dari text
+      let viewCount = 0;
+      const viewText = vr.viewCountText?.simpleText || vr.viewCountText?.runs?.map(r => r.text).join('') || '';
+      const viewMatch = viewText.replace(/\./g, '').replace(/,/g, '').match(/([\d\s]+)/);
+      if (viewMatch) viewCount = parseInt(viewMatch[1].replace(/\s/g, ''), 10) || 0;
+
+      if (videoId && title) {
+        videos.push({ id: videoId, title, channel, thumbnail, viewCount, likeCount: 0, publishedAt: new Date().toISOString() });
+      }
+    }
+  }
+
+  // Deduplicate dan batasi 20
+  const seen = new Set();
+  return videos.filter(v => {
+    if (seen.has(v.id)) return false;
+    seen.add(v.id);
+    return true;
+  }).slice(0, 20);
+}
+
+// Fallback: scrape YouTube search untuk kategori spesifik
+async function scrapeYoutubeSearch(query) {
+  const encodedQuery = encodeURIComponent(query);
+  const url = `https://www.youtube.com/results?search_query=${encodedQuery}&sp=CAMSAhAB`; // CAMSAhAB = sort by view count, video only
+  const { data: html } = await axios.get(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+    },
+    timeout: 15000,
+  });
+
+  const match = html.match(/var ytInitialData = ({.+?});<\/script>/);
+  if (!match) throw new Error('Gagal mengekstrak data search dari YouTube');
+
+  const ytData = JSON.parse(match[1]);
+  const contents = ytData.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+
+  const videos = [];
+  for (const section of contents) {
+    const items = section?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const vr = item?.videoRenderer;
+      if (!vr || !vr.videoId) continue;
+
+      const videoId = vr.videoId;
+      const title = vr.title?.runs?.[0]?.text || vr.title?.simpleText || '';
+      const channel = vr.longBylineText?.runs?.[0]?.text || '';
+      const thumbnails = vr.thumbnail?.thumbnails || [];
+      const thumbnail = thumbnails[thumbnails.length - 1]?.url || thumbnails[0]?.url || '';
+
+      let viewCount = 0;
+      const viewText = vr.viewCountText?.simpleText || '';
+      const viewMatch = viewText.replace(/\./g, '').replace(/,/g, '').match(/([\d\s]+)/);
+      if (viewMatch) viewCount = parseInt(viewMatch[1].replace(/\s/g, ''), 10) || 0;
+
+      videos.push({ id: videoId, title, channel, thumbnail, viewCount, likeCount: 0, publishedAt: new Date().toISOString() });
+    }
+  }
+
+  const seen = new Set();
+  return videos.filter(v => {
+    if (seen.has(v.id)) return false;
+    seen.add(v.id);
+    return true;
+  }).slice(0, 20);
+}
+
 router.get('/youtube/trends', protect, async (req, res) => {
   const { categoryId = '0', regionCode = 'ID' } = req.query;
-  if (!process.env.YOUTUBE_API_KEY) {
-    return res.status(500).json({ message: 'YOUTUBE_API_KEY belum diset di environment' });
-  }
+  const hasApiKey = !!process.env.YOUTUBE_API_KEY;
 
   try {
     let items = [];
 
-    if (categoryId === '0' || !categoryId) {
-      // Semua kategori: trending chart Indonesia
-      const r = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-        params: {
-          part:       'snippet,statistics',
-          chart:      'mostPopular',
-          regionCode,
-          maxResults: 20,
-          key:        process.env.YOUTUBE_API_KEY,
-        },
-      });
-      items = r.data.items || [];
-    } else {
-      // Kategori spesifik: search dengan keyword relevan + viewCount
-      const query = YT_CATEGORY_QUERIES[categoryId] || 'indonesia';
-      const searchRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-        params: {
-          part:       'snippet',
-          type:       'video',
-          q:          query,
-          regionCode,
-          order:      'viewCount',
-          maxResults: 20,
-          key:        process.env.YOUTUBE_API_KEY,
-        },
-      });
-      const videoIds = (searchRes.data.items || []).map(v => v.id.videoId).filter(Boolean);
-      if (videoIds.length === 0) {
-        return res.json({ success: true, items: [] });
+    if (hasApiKey) {
+      // Gunakan YouTube Data API v3 (lebih reliable)
+      if (categoryId === '0' || !categoryId) {
+        const r = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+          params: {
+            part:       'snippet,statistics',
+            chart:      'mostPopular',
+            regionCode,
+            maxResults: 20,
+            key:        process.env.YOUTUBE_API_KEY,
+          },
+        });
+        items = r.data.items || [];
+      } else {
+        const query = YT_CATEGORY_QUERIES[categoryId] || 'indonesia';
+        const searchRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+          params: {
+            part:       'snippet',
+            type:       'video',
+            q:          query,
+            regionCode,
+            order:      'viewCount',
+            maxResults: 20,
+            key:        process.env.YOUTUBE_API_KEY,
+          },
+        });
+        const videoIds = (searchRes.data.items || []).map(v => v.id.videoId).filter(Boolean);
+        if (videoIds.length === 0) {
+          return res.json({ success: true, items: [], source: 'api' });
+        }
+        const videosRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+          params: {
+            part: 'snippet,statistics',
+            id:   videoIds.join(','),
+            key:  process.env.YOUTUBE_API_KEY,
+          },
+        });
+        items = videosRes.data.items || [];
       }
-      // Ambil statistics
-      const videosRes = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-        params: {
-          part: 'snippet,statistics',
-          id:   videoIds.join(','),
-          key:  process.env.YOUTUBE_API_KEY,
-        },
-      });
-      items = videosRes.data.items || [];
+
+      const result = items.map(v => ({
+        id:          v.id,
+        title:       v.snippet?.title,
+        channel:     v.snippet?.channelTitle,
+        thumbnail:   v.snippet?.thumbnails?.medium?.url,
+        viewCount:   Number(v.statistics?.viewCount || 0),
+        likeCount:   Number(v.statistics?.likeCount || 0),
+        publishedAt: v.snippet?.publishedAt,
+      }));
+
+      return res.json({ success: true, items: result, source: 'api' });
     }
 
-    const result = items.map(v => ({
-      id:          v.id,
-      title:       v.snippet?.title,
-      channel:     v.snippet?.channelTitle,
-      thumbnail:   v.snippet?.thumbnails?.medium?.url,
-      viewCount:   Number(v.statistics?.viewCount || 0),
-      likeCount:   Number(v.statistics?.likeCount || 0),
-      publishedAt: v.snippet?.publishedAt,
-    }));
+    // Fallback: scraping jika API key tidak tersedia
+    if (categoryId === '0' || !categoryId) {
+      items = await scrapeYoutubeTrends(regionCode);
+    } else {
+      const query = YT_CATEGORY_QUERIES[categoryId] || 'indonesia';
+      items = await scrapeYoutubeSearch(query);
+    }
 
-    res.json({ success: true, items: result });
+    res.json({ success: true, items, source: 'scrape', notice: 'Menggunakan scraping sebagai fallback. Untuk hasil lebih akurat, tambahkan YOUTUBE_API_KEY di environment.' });
   } catch (err) {
+    console.error('[YouTube Trends] Error:', err.message);
     res.status(500).json({ message: err.response?.data?.error?.message || err.message });
   }
 });

@@ -6,7 +6,8 @@ import { useAuthStore } from '../store';
 import { Button, AccountStatusBadge, EmptyState } from '../components/ui';
 import {
   RefreshCw, Search, Trash2, ChevronDown, ChevronRight,
-  Link2, Check, Globe, Video, MessageCircle, Hash, AlertTriangle
+  Link2, Check, Globe, Video, MessageCircle, Hash, AlertTriangle,
+  MonitorSmartphone, X, Eye, EyeOff, Camera
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -23,6 +24,7 @@ const PLATFORMS_EXTENDED = {
 const CONNECT_BUTTONS = [
   { key: 'facebook',          label: 'Facebook & IG',  bg: '#1877F2', color: '#fff' },
   { key: 'facebook_personal', label: 'FB Personal',    bg: '#E6F1FB', color: '#1877F2' },
+  { key: 'instagram',         label: 'Instagram',      bg: '#D4537E', color: '#fff' },
   { key: 'youtube',           label: 'YouTube',        bg: '#FF0000', color: '#fff' },
   { key: 'twitter',           label: 'Twitter/X',      bg: '#111',    color: '#fff' },
   { key: 'threads',           label: 'Threads',        bg: '#111',    color: '#fff' },
@@ -42,6 +44,17 @@ export default function UsersPage() {
   const [verifyingId, setVerifyingId] = useState(null);
   const [isVerifyingAll, setIsVerifyingAll] = useState(false);
   const [lastVerified, setLastVerified] = useState(null);
+
+  // Automation account modal
+  const [showAutomationModal, setShowAutomationModal] = useState(false);
+  const [automationForm, setAutomationForm] = useState({
+    platform: 'instagram',
+    label: '',
+    platformUsername: '',
+    password: '',
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [addingAutomation, setAddingAutomation] = useState(false);
 
   const { data: accounts = [], refetch: refetchAccounts } = useQuery({
     queryKey: ['accounts'],
@@ -96,16 +109,23 @@ export default function UsersPage() {
       twitter: 'Twitter/X berhasil terhubung!',
       youtube: 'YouTube berhasil terhubung!',
       facebook: 'Facebook & Instagram berhasil terhubung!',
+      instagram: 'Instagram berhasil terhubung!',
       tiktok: 'TikTok berhasil terhubung!',
       personal: 'Facebook Personal berhasil terhubung!',
+    };
+    const errorMessages = {
+      instagram_no_pages: 'Tidak ada Facebook Pages. Buat Page dan hubungkan ke Instagram Business Account.',
+      instagram_no_business_account: 'Instagram Business Account tidak ditemukan. Pastikan akun Instagram sudah Business/Creator dan di-link ke Facebook Page.',
+      instagram_oauth_failed: 'Koneksi Instagram gagal. Coba lagi atau gunakan Desktop App Automation.',
     };
     if (connected && labels[connected]) {
       toast.success(labels[connected]);
       qc.invalidateQueries({ queryKey: ['accounts'] });
       window.history.replaceState({}, '', '/users');
     }
-    if (params.get('error')) {
-      toast.error('Koneksi gagal, coba lagi');
+    const errorParam = params.get('error');
+    if (errorParam) {
+      toast.error(errorMessages[errorParam] || 'Koneksi gagal, coba lagi');
       window.history.replaceState({}, '', '/users');
     }
   }, [qc]);
@@ -113,6 +133,7 @@ export default function UsersPage() {
   const OAUTH_ENDPOINTS = {
     facebook: '/auth/facebook',
     facebook_personal: '/auth/facebook/personal',
+    instagram: '/auth/instagram',
     youtube: '/auth/youtube',
     twitter: '/auth/twitter',
     threads: '/auth/threads',
@@ -132,6 +153,31 @@ export default function UsersPage() {
     try { setConnecting(true); window.location.href = await fetchOAuthUrl(platform); }
     catch { toast.error('Gagal memulai koneksi'); }
     finally { setConnecting(false); }
+  };
+
+  const addAutomationAccount = async () => {
+    const { platform, label, platformUsername, password } = automationForm;
+    if (!label.trim() || !platformUsername.trim() || !password.trim()) {
+      toast.error('Semua field wajib diisi');
+      return;
+    }
+    setAddingAutomation(true);
+    try {
+      await accountsAPI.createAutomation({
+        label: label.trim(),
+        platform,
+        platformUsername: platformUsername.trim(),
+        password,
+      });
+      toast.success(`Akun ${platform} automation berhasil ditambahkan!`);
+      setShowAutomationModal(false);
+      setAutomationForm({ platform: 'instagram', label: '', platformUsername: '', password: '' });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Gagal menambahkan akun automation');
+    } finally {
+      setAddingAutomation(false);
+    }
   };
 
   const copyToClipboard = async (text) => {
@@ -282,8 +328,166 @@ export default function UsersPage() {
                 </button>
               </div>
             ))}
+            {/* Instagram Direct / Automation Button */}
+            <button
+              onClick={() => setShowAutomationModal(true)}
+              style={{
+                padding: '7px 12px', cursor: 'pointer', fontSize: 'var(--font-caption)',
+                fontWeight: 500, background: '#FBEAF0', color: '#A02060',
+                border: '1.5px solid #D4537E', borderRadius: 'var(--radius-sm)',
+                whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Camera size={14} />
+              Instagram (Direct)
+            </button>
           </div>
         </div>
+
+        {/* Automation Account Modal */}
+        {showAutomationModal && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }} onClick={() => setShowAutomationModal(false)}>
+            <div style={{
+              background: 'var(--color-surface)', borderRadius: 16, maxWidth: 480, width: '100%',
+              padding: 24, boxShadow: 'var(--shadow-xl)',
+            }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Camera size={18} style={{ color: '#D4537E' }} />
+                  Connect Instagram (Direct)
+                </div>
+                <button onClick={() => setShowAutomationModal(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
+                <strong>Cara ini sama seperti SocialPilot &quot;Via Instagram&quot;.</strong>
+                Hubungkan akun Instagram Business/Creator secara langsung dengan username dan password.
+                <strong>Tidak memerlukan Facebook Page.</strong> Posting dilakukan via Desktop App automation.
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: 4, display: 'block' }}>Platform</label>
+                  <select
+                    value={automationForm.platform}
+                    onChange={e => setAutomationForm(prev => ({ ...prev, platform: e.target.value }))}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 8,
+                      border: '1.5px solid var(--color-border)', background: 'var(--color-surface)',
+                      color: 'var(--color-text-primary)', fontSize: 13,
+                    }}
+                  >
+                    <option value="instagram">Instagram</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="twitter">X/Twitter</option>
+                    <option value="youtube">YouTube</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="threads">Threads</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: 4, display: 'block' }}>Label Akun *</label>
+                  <input
+                    type="text"
+                    placeholder="contoh: @brand_official"
+                    value={automationForm.label}
+                    onChange={e => setAutomationForm(prev => ({ ...prev, label: e.target.value }))}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 8,
+                      border: '1.5px solid var(--color-border)', background: 'var(--color-surface)',
+                      color: 'var(--color-text-primary)', fontSize: 13,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: 4, display: 'block' }}>Username *</label>
+                  <input
+                    type="text"
+                    placeholder="username Instagram tanpa @"
+                    value={automationForm.platformUsername}
+                    onChange={e => setAutomationForm(prev => ({ ...prev, platformUsername: e.target.value }))}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 8,
+                      border: '1.5px solid var(--color-border)', background: 'var(--color-surface)',
+                      color: 'var(--color-text-primary)', fontSize: 13,
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', marginBottom: 4, display: 'block' }}>Password *</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Password akun Instagram"
+                      value={automationForm.password}
+                      onChange={e => setAutomationForm(prev => ({ ...prev, password: e.target.value }))}
+                      style={{
+                        width: '100%', padding: '8px 10px', paddingRight: 36, borderRadius: 8,
+                        border: '1.5px solid var(--color-border)', background: 'var(--color-surface)',
+                        color: 'var(--color-text-primary)', fontSize: 13,
+                      }}
+                    />
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{
+                        position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center',
+                      }}
+                    >
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{
+                  background: 'var(--color-warning-light)',
+                  border: '1px solid var(--color-warning)',
+                  borderRadius: 8, padding: '10px 12px',
+                  fontSize: 12, color: 'var(--color-warning-dark)',
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                }}>
+                  <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div>
+                    <strong>Perhatian:</strong> Password akan dienkripsi sebelum disimpan.
+                    Posting ke akun ini memerlukan Desktop App yang sedang berjalan.
+                    <a href="/bulk-post-guide" target="_blank" style={{ color: 'var(--color-warning-dark)', textDecoration: 'underline' }}>Baca panduan</a>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    style={{ flex: 1 }}
+                    onClick={() => setShowAutomationModal(false)}
+                  >
+                    Batal
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    style={{ flex: 1 }}
+                    loading={addingAutomation}
+                    onClick={addAutomationAccount}
+                  >
+                    Simpan Akun
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Status summary */}
         {accounts.length > 0 && (

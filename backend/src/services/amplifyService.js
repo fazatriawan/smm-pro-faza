@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { AmplifyJob } = require('../models');
 const { refreshTokenIfNeeded } = require('./tokenRefreshService');
+const { generateComments } = require('./aiService');
 
 async function runAmplifyJob(jobId) {
   const job = await AmplifyJob.findById(jobId).populate('accounts');
@@ -8,6 +9,53 @@ async function runAmplifyJob(jobId) {
 
   job.status = 'running';
   await job.save();
+
+  // Generate AI comments if enabled
+  let generatedComments = [];
+  if (job.aiConfig?.useAI && job.actions.some(a => a.type === 'comment' && a.enabled)) {
+    try {
+      const accountCount = job.accounts.length;
+      const aiConfig = job.aiConfig;
+
+      console.log(`[Amplify] Generating ${accountCount} AI comments with tone: ${aiConfig.tone}, style: ${aiConfig.style}`);
+
+      const toneMap = {
+        pro: 'mendukung penuh, memuji, dan merekomendasikan',
+        kontra: 'kritis, menyanggah, atau menunjukkan kekurangan dengan sopan',
+        netral: 'netral, memberikan pendapat seimbang'
+      };
+
+      const styleMap = {
+        santai: 'santai dan friendly, seperti ngobrol sama teman',
+        formal: 'formal dan profesional',
+        kritis: 'kritis dan analitis',
+        lucu: 'lucu dan menghibur dengan humor ringan',
+        pendek: 'singkat dan padat, maksimal 5-10 kata'
+      };
+
+      const topic = aiConfig.targetDescription || extractVideoTitle(job.targetUrl) || 'konten ini';
+
+      const comments = await generateComments({
+        topic: `${topic} — berikan komentar yang ${toneMap[aiConfig.tone] || toneMap.netral}`,
+        platform: job.platform,
+        count: accountCount,
+        style: styleMap[aiConfig.style] || styleMap.santai
+      });
+
+      // Ensure we have enough comments (fallback if Gemini returns fewer)
+      generatedComments = comments.slice(0, accountCount);
+      while (generatedComments.length < accountCount) {
+        generatedComments.push(generatedComments[generatedComments.length % comments.length] || 'Mantap! 👍');
+      }
+
+      job.aiConfig.generatedComments = generatedComments;
+      await job.save();
+
+      console.log(`[Amplify] Generated ${generatedComments.length} unique comments`);
+    } catch (err) {
+      console.error('[Amplify] AI comment generation failed:', err.message);
+    }
+  }
 
   const results = [];
 
@@ -18,7 +66,13 @@ async function runAmplifyJob(jobId) {
       if (!action.enabled) continue;
 
       try {
-        await executeAction(account, job.targetUrl, action, i);
+        // If AI comment and this is comment action, use generated comment
+        let currentAction = action;
+        if (action.type === 'comment' && generatedComments.length > i) {
+          currentAction = { ...action, commentTemplates: [generatedComments[i]] };
+        }
+
+        await executeAction(account, job.targetUrl, currentAction, i);
         results.push({ account: account._id, action: action.type, success: true, executedAt: new Date() });
         console.log('[Amplify] SUCCESS:', action.type, 'by', account.label);
       } catch (err) {
@@ -562,6 +616,20 @@ async function repostThreads(url, token, userId) {
   } catch (err) {
     throw new Error('Threads repost gagal: ' + (err.response?.data?.error?.message || err.message));
   }
+}
+
+function extractVideoTitle(url) {
+  // Try to extract something meaningful from URL
+  const patterns = [
+    /youtube\.com\/watch\?v=([^&]+)/,
+    /youtu\.be\/([^?]+)/,
+    /youtube\.com\/shorts\/([^?]+)/
+  ];
+  for (const p of patterns) {
+    const match = url.match(p);
+    if (match) return `video YouTube ${match[1].substring(0, 8)}...`;
+  }
+  return 'konten ini';
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

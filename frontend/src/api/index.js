@@ -29,6 +29,7 @@ export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   register: (data) => api.post('/auth/register', data),
   me: () => api.get('/auth/me'),
+  instagramOAuth: () => api.get('/auth/instagram'),
 };
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export const accountsAPI = {
   getAll: () => api.get('/accounts'),
   getByUser: (userId) => api.get(`/accounts/user/${userId}`),
   create: (data) => api.post('/accounts', data),
+  createAutomation: (data) => api.post('/accounts/automation', data),
   updateWarmup: (id, data) => api.patch(`/accounts/${id}/warmup`, data),
   disconnect: (id) => api.delete(`/accounts/${id}`),
   verify: (id) => api.post(`/accounts/${id}/verify`),

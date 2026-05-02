@@ -15,6 +15,19 @@ import {
   Video,
   Check,
   FileText,
+  Search,
+  Filter,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
+  MoreHorizontal,
+  Play,
+  Link as LinkIcon,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
+  Clock4,
 } from 'lucide-react';
 import { postsAPI, accountsAPI } from '../api';
 import { PLATFORMS, PlatformPill, deduplicateAccounts } from '../utils';
@@ -60,6 +73,17 @@ export default function BulkPostPage() {
   const [expandedPost, setExpandedPost] = useState(null);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
 
+  // History state
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyView, setHistoryView] = useState('list');
+  const [selectedPostIds, setSelectedPostIds] = useState(new Set());
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyLimit] = useState(20);
+  const [showDateDropdown, setShowDateDropdown] = useState(false);
+  const [dateFilter, setDateFilter] = useState('all');
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+
   const { data: rawAccounts = [], isLoading: accountsLoading } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsAPI.getAll().then(r => r.data)
@@ -67,9 +91,10 @@ export default function BulkPostPage() {
   const accounts = deduplicateAccounts(rawAccounts);
 
   const { data: postsData, isLoading: postsLoading, refetch } = useQuery({
-    queryKey: ['posts-all'],
-    queryFn: () => postsAPI.getAll({ limit: 30 }).then(r => r.data),
-    refetchInterval: 5000
+    queryKey: ['posts-all', historyPage, historyLimit, historyFilter],
+    queryFn: () => postsAPI.getAll({ page: historyPage, limit: historyLimit, status: getStatusFilter(historyFilter) }).then(r => r.data),
+    refetchInterval: 5000,
+    enabled: activeTab === 'history',
   });
 
   const createPost = useMutation({
@@ -197,6 +222,17 @@ export default function BulkPostPage() {
     }
   };
 
+  const getStatusFilter = (filter) => {
+    switch (filter) {
+      case 'queued': return 'scheduled';
+      case 'delivered': return 'completed';
+      case 'error': return undefined; // handled client-side
+      case 'pending_review': return undefined; // handled client-side
+      case 'unscheduled': return 'draft';
+      default: return undefined;
+    }
+  };
+
   const getPostLink = (platformPostId, platform) => {
     if (!platformPostId) return null;
     const id = String(platformPostId);
@@ -212,7 +248,104 @@ export default function BulkPostPage() {
     }
   };
 
-  const posts = postsData?.posts || [];
+  const getMediaThumbnail = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http')) return url;
+    const base = process.env.REACT_APP_API_URL || '';
+    return `${base}/${url.replace(/^\.\//, '')}`;
+  };
+
+  const extractHashtags = (caption) => {
+    if (!caption) return [];
+    const matches = caption.match(/#[\w\u00C0-\u017F]+/g);
+    return matches || [];
+  };
+
+  const formatPostDate = (date) => {
+    if (!date) return '';
+    const d = dayjs(date);
+    return d.format('MMM DD, YYYY h:mm A');
+  };
+
+  const formatShortDate = (date) => {
+    if (!date) return '';
+    const d = dayjs(date);
+    return d.format('MMM DD, YYYY');
+  };
+
+  const togglePostSelection = (id) => {
+    setSelectedPostIds(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+  };
+
+  const toggleSelectAllPosts = () => {
+    if (selectedPostIds.size === posts.length && posts.length > 0) {
+      setSelectedPostIds(new Set());
+    } else {
+      setSelectedPostIds(new Set(posts.map(p => p._id)));
+    }
+  };
+
+  const getStatusCounts = () => {
+    const all = postsData?.posts || [];
+    // For accurate counts we might need all posts, but let's compute from available data
+    return {
+      all: postsData?.total || 0,
+      queued: all.filter(p => p.status === 'scheduled').length,
+      unscheduled: all.filter(p => p.status === 'draft').length,
+      error: all.filter(p => p.status === 'failed' || p.status === 'partial').length,
+      delivered: all.filter(p => p.status === 'completed').length,
+      pending_review: all.filter(p => p.status === 'sending' || p.status === 'processing').length,
+    };
+  };
+
+  const statusCounts = getStatusCounts();
+
+  const getPrimaryPlatform = (post) => {
+    const platforms = [...new Set(post.targetAccounts?.map(ta => ta.account?.platform).filter(Boolean))];
+    return platforms[0] || 'facebook';
+  };
+
+  const getPrimaryAccount = (post) => {
+    const ta = post.targetAccounts?.[0];
+    return ta?.account?.label || ta?.account?.platformUsername || 'Akun';
+  };
+
+  // Client-side filtering for search, date, and unsupported API filters
+  const filteredPosts = (postsData?.posts || []).filter(p => {
+    // Search filter
+    if (historySearch) {
+      const q = historySearch.toLowerCase();
+      const matchCaption = p.caption?.toLowerCase().includes(q);
+      const matchHashtags = p.hashtags?.some(h => h.toLowerCase().includes(q));
+      if (!matchCaption && !matchHashtags) return false;
+    }
+    // Date filter
+    if (dateFilter !== 'all') {
+      const postDate = dayjs(p.scheduledAt || p.createdAt);
+      const now = dayjs();
+      if (dateFilter === 'today' && !postDate.isSame(now, 'day')) return false;
+      if (dateFilter === 'week' && !postDate.isSame(now, 'week')) return false;
+      if (dateFilter === 'month' && !postDate.isSame(now, 'month')) return false;
+    }
+    // Status filter (for tabs not supported by API)
+    if (historyFilter === 'error') {
+      return p.status === 'failed' || p.status === 'partial';
+    }
+    if (historyFilter === 'pending_review') {
+      return p.status === 'sending' || p.status === 'processing';
+    }
+    return true;
+  });
+
+  const posts = filteredPosts;
+  const totalPages = postsData?.pages || 1;
+  const totalItems = historyFilter === 'all' && !historySearch && dateFilter === 'all'
+    ? (postsData?.total || 0)
+    : filteredPosts.length;
 
   return (
     <div>
@@ -474,126 +607,386 @@ export default function BulkPostPage() {
             </div>
           </div>
         ) : (
-          <Card
-            header="Riwayat Post Bulk"
-            headerAction={
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => refetch()} iconLeft={<RefreshCw size={14} />}>
-                  Refresh
-                </Button>
-                <Button variant="ghost" size="sm" onClick={exportAllToExcel} iconLeft={<FileSpreadsheet size={14} />}>
-                  Export Semua
-                </Button>
-              </div>
-            }
-          >
-            {postsLoading ? (
-              <div className="flex flex-col gap-3">
-                <Skeleton height={60} />
-                <Skeleton height={60} />
-                <Skeleton height={60} />
-              </div>
-            ) : posts.length === 0 ? (
-              <EmptyState
-                icon={<FileText size={40} />}
-                title="Belum ada post"
-                description="Buat post pertama kamu di tab Buat Post"
-              />
-            ) : (
-              posts.map(p => (
-                <div key={p._id} className="post-history-item">
-                  <div
-                    className="post-history-summary"
-                    onClick={() => setExpandedPost(expandedPost === p._id ? null : p._id)}
-                  >
-                    <div className="post-history-meta">
-                      {dayjs(p.createdAt).format('DD/MM HH:mm')}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="text-small mb-1">
-                        {p.caption?.slice(0, 60)}{p.caption?.length > 60 ? '...' : ''}
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {[...new Set(p.targetAccounts?.map(ta => ta.account?.platform).filter(Boolean))].map(pl => (
-                          <PlatformPill key={pl} platform={pl} size="sm" />
-                        ))}
-                        <span className="text-xs text-tertiary">{p.targetAccounts?.length} akun</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={STATUS_VARIANTS[p.status]?.variant || 'default'}
-                          size="sm"
-                        >
-                          {STATUS_VARIANTS[p.status]?.label || p.status}
-                        </Badge>
-                        {(p.status === 'sending' || p.status === 'processing') && (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={(e) => { e.stopPropagation(); stopPost.mutate(p._id); }}
-                            iconLeft={<Square size={10} />}
-                          >
-                            Stop
-                          </Button>
-                        )}
-                      </div>
-                      <span className="text-tertiary">
-                        {expandedPost === p._id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                      </span>
-                    </div>
-                  </div>
-
-                  {expandedPost === p._id && (
-                    <div className="post-history-detail">
-                      <div className="text-caption text-secondary mb-2" style={{ fontWeight: 500 }}>
-                        Detail per akun:
-                      </div>
-                      <div className="flex gap-2 mb-2 justify-end">
-                        {(p.status === 'sending' || p.status === 'processing') && (
-                          <Button variant="danger" size="sm" onClick={() => stopPost.mutate(p._id)} iconLeft={<Square size={12} />}>
-                            Stop
-                          </Button>
-                        )}
-                        {(p.status === 'failed' || p.status === 'partial') && (
-                          <Button variant="secondary" size="sm" onClick={() => retryPost.mutate(p._id)} iconLeft={<RotateCcw size={12} />}>
-                            Ulangi yang Gagal
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="sm" onClick={() => exportToExcel(p._id)} iconLeft={<FileSpreadsheet size={12} />}>
-                          Export Excel
-                        </Button>
-                      </div>
-                      {p.targetAccounts?.map((ta, i) => {
-                        const link = getPostLink(ta.platformPostId, ta.account?.platform);
-                        const statusCfg = TARGET_STATUS_VARIANTS[ta.status] || TARGET_STATUS_VARIANTS.pending;
-                        return (
-                          <div key={i} className="target-account-row">
-                            <PlatformPill platform={ta.account?.platform} size="sm" />
-                            <span className="text-caption" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {ta.account?.label || ta.account?.platformUsername || '—'}
-                            </span>
-                            <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
-                            {link && ta.status === 'sent' && (
-                              <a href={link} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ fontSize: 'var(--font-xs)', padding: '3px 10px', textDecoration: 'none' }}>
-                                Lihat Post
-                              </a>
-                            )}
-                            {ta.error && (
-                              <span className="text-xs text-error" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ta.error}>
-                                {ta.error.slice(0, 50)}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+          <div>
+            {/* Status Tabs */}
+            <div style={{
+              display: 'flex',
+              gap: 4,
+              borderBottom: '1px solid var(--color-border)',
+              marginBottom: 16,
+              overflowX: 'auto',
+            }}>
+              {[
+                { key: 'all', label: 'Semua Post' },
+                { key: 'queued', label: 'Terjadwal' },
+                { key: 'unscheduled', label: 'Draft' },
+                { key: 'pending_review', label: 'Sedang Proses' },
+                { key: 'error', label: 'Error' },
+                { key: 'delivered', label: 'Terkirim' },
+              ].map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => { setHistoryFilter(tab.key); setHistoryPage(1); setSelectedPostIds(new Set()); }}
+                  style={{
+                    padding: '10px 16px',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    border: 'none',
+                    background: 'transparent',
+                    color: historyFilter === tab.key ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                    borderBottom: historyFilter === tab.key ? '2px solid var(--color-primary)' : '2px solid transparent',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {tab.label}
+                  {statusCounts[tab.key] > 0 && (
+                    <span style={{
+                      marginLeft: 6,
+                      background: historyFilter === tab.key ? 'var(--color-primary)' : 'var(--color-surface-alt)',
+                      color: historyFilter === tab.key ? '#fff' : 'var(--color-text-secondary)',
+                      padding: '1px 6px',
+                      borderRadius: 10,
+                      fontSize: 11,
+                    }}>
+                      {statusCounts[tab.key]}
+                    </span>
                   )}
-                </div>
-              ))
-            )}
-          </Card>
+                </button>
+              ))}
+            </div>
+
+            {/* Toolbar */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 16,
+              flexWrap: 'wrap',
+            }}>
+              {/* Select All */}
+              <div
+                onClick={toggleSelectAllPosts}
+                style={{
+                  width: 18, height: 18,
+                  border: '1.5px solid var(--color-border)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: selectedPostIds.size === posts.length && posts.length > 0 ? 'var(--color-primary)' : 'var(--color-surface)',
+                }}
+              >
+                {selectedPostIds.size === posts.length && posts.length > 0 && <Check size={12} color="#fff" />}
+              </div>
+
+              {/* Search */}
+              <div style={{ position: 'relative', flex: 1, minWidth: 200, maxWidth: 320 }}>
+                <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)' }} />
+                <input
+                  type="text"
+                  placeholder="Cari post..."
+                  value={historySearch}
+                  onChange={e => setHistorySearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px 8px 32px',
+                    borderRadius: 8,
+                    border: '1.5px solid var(--color-border)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+
+              {/* Date Filter */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowDateDropdown(!showDateDropdown)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1.5px solid var(--color-border)',
+                    background: 'var(--color-surface)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <CalendarDays size={14} />
+                  {dateFilter === 'all' ? 'Semua Tanggal' : dateFilter === 'today' ? 'Hari Ini' : dateFilter === 'week' ? 'Minggu Ini' : 'Bulan Ini'}
+                  <ChevronDown size={12} />
+                </button>
+                {showDateDropdown && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, zIndex: 10,
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 8,
+                    marginTop: 4,
+                    boxShadow: 'var(--shadow-lg)',
+                    minWidth: 160,
+                  }}>
+                    {[
+                      { key: 'all', label: 'Semua Tanggal' },
+                      { key: 'today', label: 'Hari Ini' },
+                      { key: 'week', label: 'Minggu Ini' },
+                      { key: 'month', label: 'Bulan Ini' },
+                    ].map(d => (
+                      <div
+                        key={d.key}
+                        onClick={() => { setDateFilter(d.key); setShowDateDropdown(false); }}
+                        style={{
+                          padding: '8px 12px', fontSize: 13, cursor: 'pointer',
+                          background: dateFilter === d.key ? 'var(--color-primary-light)' : 'transparent',
+                          color: dateFilter === d.key ? 'var(--color-primary)' : 'var(--color-text-primary)',
+                        }}
+                      >
+                        {d.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* View Toggle */}
+              <div style={{
+                display: 'flex',
+                border: '1.5px solid var(--color-border)',
+                borderRadius: 8,
+                overflow: 'hidden',
+              }}>
+                {['list', 'day', 'week', 'month'].map(v => (
+                  <button
+                    key={v}
+                    onClick={() => setHistoryView(v)}
+                    style={{
+                      padding: '7px 12px',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      border: 'none',
+                      background: historyView === v ? 'var(--color-primary)' : 'var(--color-surface)',
+                      color: historyView === v ? '#fff' : 'var(--color-text-secondary)',
+                      cursor: 'pointer',
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ flex: 1 }} />
+
+              {/* Pagination Info */}
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                {(historyPage - 1) * historyLimit + 1} — {Math.min(historyPage * historyLimit, totalItems)} dari {totalItems}
+              </span>
+
+              {/* Prev/Next */}
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                  onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                  disabled={historyPage <= 1}
+                  style={{
+                    padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--color-border)',
+                    background: 'var(--color-surface)', cursor: historyPage <= 1 ? 'not-allowed' : 'pointer',
+                    opacity: historyPage <= 1 ? 0.5 : 1,
+                  }}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  onClick={() => setHistoryPage(p => Math.min(totalPages, p + 1))}
+                  disabled={historyPage >= totalPages}
+                  style={{
+                    padding: '6px 10px', borderRadius: 6, border: '1.5px solid var(--color-border)',
+                    background: 'var(--color-surface)', cursor: historyPage >= totalPages ? 'not-allowed' : 'pointer',
+                    opacity: historyPage >= totalPages ? 0.5 : 1,
+                  }}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Post List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {postsLoading ? (
+                <>
+                  <Skeleton height={100} />
+                  <Skeleton height={100} />
+                  <Skeleton height={100} />
+                </>
+              ) : posts.length === 0 ? (
+                <EmptyState
+                  icon={<FileText size={40} />}
+                  title="Belum ada post"
+                  description="Buat post pertama kamu di tab Buat Post"
+                />
+              ) : (
+                posts.map(p => {
+                  const hashtags = p.hashtags?.length ? p.hashtags : extractHashtags(p.caption);
+                  const primaryPlatform = getPrimaryPlatform(p);
+                  const primaryAccount = getPrimaryAccount(p);
+                  const platformColor = PLATFORMS[primaryPlatform]?.color || '#666';
+                  const thumbnail = getMediaThumbnail(p.mediaUrls?.[0]);
+                  const isExpanded = expandedPost === p._id;
+
+                  return (
+                    <div key={p._id} style={{
+                      background: 'var(--color-surface)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        gap: 12,
+                        padding: '14px 16px',
+                        cursor: 'pointer',
+                      }}
+                        onClick={() => setExpandedPost(isExpanded ? null : p._id)}
+                      >
+                        {/* Checkbox */}
+                        <div
+                          onClick={e => { e.stopPropagation(); togglePostSelection(p._id); }}
+                          style={{
+                            width: 18, height: 18, minWidth: 18,
+                            border: '1.5px solid var(--color-border)',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: selectedPostIds.has(p._id) ? 'var(--color-primary)' : 'var(--color-surface)',
+                            marginTop: 2,
+                          }}
+                        >
+                          {selectedPostIds.has(p._id) && <Check size={12} color="#fff" />}
+                        </div>
+
+                        {/* Thumbnail */}
+                        <div style={{ width: 80, height: 80, minWidth: 80, borderRadius: 8, overflow: 'hidden', background: 'var(--color-surface-alt)', position: 'relative' }}>
+                          {thumbnail ? (
+                            <img src={thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}>
+                              <FileText size={24} />
+                            </div>
+                          )}
+                          {p.mediaType === 'video' && (
+                            <div style={{ position: 'absolute', top: 4, left: 4, background: 'rgba(0,0,0,0.6)', borderRadius: 4, padding: '2px 4px' }}>
+                              <Play size={10} color="#fff" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Content */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.5, color: 'var(--color-text-primary)', marginBottom: 6 }}>
+                            {p.caption?.slice(0, 120)}{p.caption?.length > 120 ? '...' : ''}
+                          </div>
+                          {hashtags.length > 0 && (
+                            <div style={{ fontSize: 12, color: '#3b82f6', marginBottom: 8, lineHeight: 1.5 }}>
+                              {hashtags.slice(0, 6).join(' ')}
+                              {hashtags.length > 6 && ' ...'}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                            <Calendar size={12} />
+                            {formatPostDate(p.scheduledAt || p.createdAt)}
+                          </div>
+                        </div>
+
+                        {/* Right Side: Platform & Account */}
+                        <div style={{ minWidth: 160, textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
+                            <div style={{
+                              width: 22, height: 22, borderRadius: '50%',
+                              background: platformColor,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: '#fff', fontSize: 10, fontWeight: 700,
+                            }}>
+                              {PLATFORMS[primaryPlatform]?.short || '?'}
+                            </div>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                              {primaryAccount}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                            {p.scheduledAt ? `Web On ${formatShortDate(p.scheduledAt)}` : 'Segera'}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+                            by {primaryAccount}
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <Badge
+                              variant={STATUS_VARIANTS[p.status]?.variant || 'default'}
+                              size="sm"
+                            >
+                              {STATUS_VARIANTS[p.status]?.label || p.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expanded Detail */}
+                      {isExpanded && (
+                        <div style={{
+                          borderTop: '1px solid var(--color-border)',
+                          padding: '12px 16px',
+                          background: 'var(--color-background-subtle)',
+                        }}>
+                          <div className="text-caption text-secondary mb-2" style={{ fontWeight: 500 }}>
+                            Detail per akun:
+                          </div>
+                          <div className="flex gap-2 mb-2 justify-end">
+                            {(p.status === 'sending' || p.status === 'processing') && (
+                              <Button variant="danger" size="sm" onClick={() => stopPost.mutate(p._id)} iconLeft={<Square size={12} />}>
+                                Stop
+                              </Button>
+                            )}
+                            {(p.status === 'failed' || p.status === 'partial') && (
+                              <Button variant="secondary" size="sm" onClick={() => retryPost.mutate(p._id)} iconLeft={<RotateCcw size={12} />}>
+                                Ulangi yang Gagal
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => exportToExcel(p._id)} iconLeft={<FileSpreadsheet size={12} />}>
+                              Export Excel
+                            </Button>
+                          </div>
+                          {p.targetAccounts?.map((ta, i) => {
+                            const link = getPostLink(ta.platformPostId, ta.account?.platform);
+                            const statusCfg = TARGET_STATUS_VARIANTS[ta.status] || TARGET_STATUS_VARIANTS.pending;
+                            return (
+                              <div key={i} className="target-account-row">
+                                <PlatformPill platform={ta.account?.platform} size="sm" />
+                                <span className="text-caption" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {ta.account?.label || ta.account?.platformUsername || '—'}
+                                </span>
+                                <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
+                                {link && ta.status === 'sent' && (
+                                  <a href={link} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ fontSize: 'var(--font-xs)', padding: '3px 10px', textDecoration: 'none' }}>
+                                    Lihat Post
+                                  </a>
+                                )}
+                                {ta.error && (
+                                  <span className="text-xs text-error" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ta.error}>
+                                    {ta.error.slice(0, 50)}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>

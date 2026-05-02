@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { protect } = require('../middleware/auth');
 const { SocialAccount } = require('../models');
 const { verifyAccountStatus, verifyAllAccounts } = require('../services/accountStatusService');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 // GET all accounts (admin sees all active, operator sees own active)
 router.get('/', protect, async (req, res) => {
@@ -61,6 +62,52 @@ router.post('/', protect, async (req, res) => {
       accessToken, refreshToken, tokenExpiresAt, pageId
     });
     res.status(201).json(account);
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// POST create automation account directly from web app (username + password)
+router.post('/automation', protect, async (req, res) => {
+  try {
+    const { label, platform, platformUsername, password } = req.body;
+    if (!label || !platform || !platformUsername || !password) {
+      return res.status(400).json({ message: 'label, platform, platformUsername, dan password wajib diisi' });
+    }
+    if (!['instagram', 'facebook', 'twitter', 'youtube', 'tiktok', 'threads'].includes(platform)) {
+      return res.status(400).json({ message: 'Platform tidak didukung' });
+    }
+
+    const encryptedPassword = encrypt(password);
+
+    const account = await SocialAccount.findOneAndUpdate(
+      { owner: req.user._id, platform, platformUserId: platformUsername },
+      {
+        $set: {
+          owner: req.user._id,
+          label,
+          platform,
+          platformUserId: platformUsername,
+          platformUsername,
+          loginType: 'automation',
+          isActive: true,
+          connectionStatus: 'unknown',
+          automationData: {
+            password: encryptedPassword,
+            cookies: null,
+            userAgent: null,
+            lastLoginAt: null,
+          }
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    // Don't return password in response
+    const response = account.toObject();
+    if (response.automationData?.password) {
+      response.automationData.password = '***ENCRYPTED***';
+    }
+
+    res.status(201).json({ message: 'Akun automation berhasil ditambahkan', account: response });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -167,7 +214,16 @@ router.get('/sync-desktop/:userId', async (req, res) => {
       isActive: true
     }).sort('-connectedAt');
 
-    res.json(accounts);
+    // Decrypt automation passwords for desktop app
+    const decryptedAccounts = accounts.map(acc => {
+      const obj = acc.toObject();
+      if (obj.automationData?.password) {
+        obj.automationData.password = decrypt(obj.automationData.password);
+      }
+      return obj;
+    });
+
+    res.json(decryptedAccounts);
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
