@@ -59,6 +59,47 @@ async function runAmplifyJob(jobId) {
 
   const results = [];
 
+  // Pre-resolve Threads media IDs by searching each account's own posts.
+  // The Threads Graph API does not support arbitrary post lookup by URL —
+  // the only way to get a numeric media ID is from the post owner's token.
+  const threadsMediaIds = {};
+  if (job.platform === 'threads') {
+    const urls = (job.targetUrls?.length ? job.targetUrls : [job.targetUrl]).filter(Boolean);
+    for (const url of urls) {
+      const m = url.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
+      if (!m) continue;
+      const shortcode = m[1];
+      if (threadsMediaIds[shortcode]) continue;
+
+      for (const acc of job.accounts) {
+        if (!acc.accessToken) continue;
+        try {
+          let cursor = null;
+          let found = false;
+          do {
+            const params = { fields: 'id,permalink', limit: 100, access_token: acc.accessToken };
+            if (cursor) params.after = cursor;
+            const res = await axios.get('https://graph.threads.net/v1.0/me/threads', { params });
+            for (const post of (res.data?.data || [])) {
+              if (post.permalink?.includes(shortcode)) {
+                threadsMediaIds[shortcode] = post.id;
+                console.log(`[Amplify] Resolved Threads post ${shortcode} → ${post.id} via @${acc.label}`);
+                found = true;
+                break;
+              }
+            }
+            cursor = res.data?.paging?.cursors?.after;
+          } while (cursor && !found);
+          if (found) break;
+        } catch (e) { /* account can't access this post, try next */ }
+      }
+
+      if (!threadsMediaIds[shortcode]) {
+        console.log(`[Amplify] WARN: Could not resolve Threads post ID for ${shortcode} — pastikan akun pemilik post terhubung`);
+      }
+    }
+  }
+
   for (let i = 0; i < job.accounts.length; i++) {
     const account = job.accounts[i];
 
@@ -72,7 +113,7 @@ async function runAmplifyJob(jobId) {
           currentAction = { ...action, commentTemplates: [generatedComments[i]] };
         }
 
-        await executeAction(account, job.targetUrl, currentAction, i);
+        await executeAction(account, job.targetUrl, currentAction, i, threadsMediaIds);
         results.push({ account: account._id, action: action.type, success: true, executedAt: new Date() });
         console.log('[Amplify] SUCCESS:', action.type, 'by', account.label);
       } catch (err) {
@@ -105,7 +146,7 @@ async function runAmplifyJob(jobId) {
   return job;
 }
 
-async function executeAction(account, targetUrl, action, accountIndex) {
+async function executeAction(account, targetUrl, action, accountIndex, resolvedIds = {}) {
   let token = account.accessToken;
   const actorId = account.platformUserId;
   const isPersonal = account.platform === 'facebook_personal';
@@ -179,11 +220,13 @@ async function executeAction(account, targetUrl, action, accountIndex) {
 
   // ─── THREADS ───────────────────────────────────────────────
   if (account.platform === 'threads') {
+    const shortcodeMatch = targetUrl?.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
+    const preResolvedId = shortcodeMatch ? resolvedIds[shortcodeMatch[1]] : null;
     switch (action.type) {
-      case 'like': return await likeThreads(targetUrl, token, actorId);
+      case 'like': return await likeThreads(targetUrl, token, actorId, preResolvedId);
       case 'comment':
-        return await replyThreads(targetUrl, token, actorId, getRandomComment(action.commentTemplates, accountIndex));
-      case 'repost': return await repostThreads(targetUrl, token, actorId);
+        return await replyThreads(targetUrl, token, actorId, getRandomComment(action.commentTemplates, accountIndex), preResolvedId);
+      case 'repost': return await repostThreads(targetUrl, token, actorId, preResolvedId);
       case 'follow': throw new Error('Follow Threads via API belum tersedia');
       default: throw new Error('Aksi ' + action.type + ' tidak tersedia untuk Threads');
     }
@@ -576,12 +619,10 @@ async function resolveThreadsMediaId(shortcode, token) {
   throw new Error('Threads post ID tidak ditemukan dari API');
 }
 
-async function likeThreads(url, token, userId) {
+async function likeThreads(url, token, userId, preResolvedId = null) {
   try {
-    const shortcode = extractThreadsShortcode(url);
-    if (!shortcode) throw new Error('Format URL Threads tidak valid');
-    const mediaId = await resolveThreadsMediaId(shortcode, token);
-    // Correct endpoint: POST /{user-id}/likes?media_id={post-id}
+    const mediaId = preResolvedId || await resolveThreadsMediaId(extractThreadsShortcode(url), token);
+    if (!mediaId) throw new Error('Media ID Threads tidak ditemukan');
     const res = await axios.post(
       `https://graph.threads.net/v1.0/${userId}/likes`,
       null,
@@ -593,25 +634,17 @@ async function likeThreads(url, token, userId) {
   }
 }
 
-async function replyThreads(url, token, userId, message) {
+async function replyThreads(url, token, userId, message, preResolvedId = null) {
   try {
-    const shortcode = extractThreadsShortcode(url);
-    if (!shortcode) throw new Error('Format URL Threads tidak valid');
-    const mediaId = await resolveThreadsMediaId(shortcode, token);
+    const mediaId = preResolvedId || await resolveThreadsMediaId(extractThreadsShortcode(url), token);
+    if (!mediaId) throw new Error('Media ID Threads tidak ditemukan');
 
-    // Buat reply container
     const containerRes = await axios.post(
       `https://graph.threads.net/v1.0/${userId}/threads`,
       null,
-      { params: {
-        media_type: 'TEXT',
-        text: message,
-        reply_to_id: mediaId,
-        access_token: token
-      }}
+      { params: { media_type: 'TEXT', text: message, reply_to_id: mediaId, access_token: token } }
     );
 
-    // Publish reply
     const publishRes = await axios.post(
       `https://graph.threads.net/v1.0/${userId}/threads_publish`,
       null,
@@ -623,11 +656,10 @@ async function replyThreads(url, token, userId, message) {
   }
 }
 
-async function repostThreads(url, token, userId) {
+async function repostThreads(url, token, userId, preResolvedId = null) {
   try {
-    const shortcode = extractThreadsShortcode(url);
-    if (!shortcode) throw new Error('Format URL Threads tidak valid');
-    const mediaId = await resolveThreadsMediaId(shortcode, token);
+    const mediaId = preResolvedId || await resolveThreadsMediaId(extractThreadsShortcode(url), token);
+    if (!mediaId) throw new Error('Media ID Threads tidak ditemukan');
     const res = await axios.post(
       `https://graph.threads.net/v1.0/${mediaId}/repost`,
       null,
