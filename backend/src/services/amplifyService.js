@@ -553,9 +553,21 @@ async function sharePost(pageId, postId, token, isPersonal) {
 }
 
 // ─── THREADS FUNCTIONS ────────────────────────────────────────────────────
+function shortcodeToNumericId(shortcode) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let id = BigInt(0);
+  for (const char of shortcode) {
+    const pos = alphabet.indexOf(char);
+    if (pos === -1) continue;
+    id = id * BigInt(64) + BigInt(pos);
+  }
+  return id.toString();
+}
+
 function extractThreadsPostId(url) {
   const match = url.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
-  return match ? match[1] : null;
+  if (!match) return null;
+  return shortcodeToNumericId(match[1]);
 }
 
 async function likeThreads(url, token, userId) {

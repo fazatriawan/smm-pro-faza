@@ -680,7 +680,7 @@ function getPlatformHome(platform) {
     case 'tiktok': return 'https://www.tiktok.com/';
     case 'twitter': return 'https://twitter.com/';
     case 'youtube': return 'https://www.youtube.com/';
-    case 'threads': return 'https://www.threads.net/';
+    case 'threads': return 'https://www.threads.com/';
     default: return 'about:blank';
   }
 }
@@ -1095,7 +1095,7 @@ async function loginYouTube(page, account, onLog, tag = '') {
 
 async function loginThreads(page, account, onLog, tag = '') {
   
-  await page.goto('https://www.threads.net/login', { waitUntil: 'networkidle2' });
+  await page.goto('https://www.threads.com/login', { waitUntil: 'networkidle2' });
 
   await page.waitForSelector('input[autocomplete="username"], input[name="username"]', { timeout: 12000 });
   await page.waitForSelector('input[type="password"], input[name="password"]', { timeout: 12000 });
