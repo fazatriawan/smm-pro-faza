@@ -225,7 +225,7 @@ export default function BulkPostPage() {
   const getStatusFilter = (filter) => {
     switch (filter) {
       case 'queued': return 'scheduled';
-      case 'delivered': return 'completed';
+      case 'delivered': return undefined; // handled client-side (includes partial)
       case 'error': return undefined; // handled client-side
       case 'pending_review': return undefined; // handled client-side
       case 'unscheduled': return 'draft';
@@ -297,7 +297,7 @@ export default function BulkPostPage() {
       queued: all.filter(p => p.status === 'scheduled').length,
       unscheduled: all.filter(p => p.status === 'draft').length,
       error: all.filter(p => p.status === 'failed' || p.status === 'partial').length,
-      delivered: all.filter(p => p.status === 'completed').length,
+      delivered: all.filter(p => p.status === 'completed' || p.status === 'partial').length,
       pending_review: all.filter(p => p.status === 'sending' || p.status === 'processing').length,
     };
   };
@@ -337,6 +337,9 @@ export default function BulkPostPage() {
     }
     if (historyFilter === 'pending_review') {
       return p.status === 'sending' || p.status === 'processing';
+    }
+    if (historyFilter === 'delivered') {
+      return p.status === 'completed' || p.status === 'partial';
     }
     return true;
   });
