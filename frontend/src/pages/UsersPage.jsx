@@ -181,9 +181,8 @@ export default function UsersPage() {
   };
 
   const copyToClipboard = async (text) => {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-    } else {
+    // Always use execCommand — navigator.clipboard loses user-gesture context after async fetchOAuthUrl
+    try {
       const el = document.createElement('textarea');
       el.value = text;
       el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
@@ -191,6 +190,9 @@ export default function UsersPage() {
       el.focus(); el.select();
       document.execCommand('copy');
       document.body.removeChild(el);
+    } catch {
+      if (navigator.clipboard) await navigator.clipboard.writeText(text);
+      else throw new Error('Clipboard tidak tersedia');
     }
   };
 
