@@ -3,9 +3,9 @@ const axios = require('axios');
 const { SocialAccount } = require('../models');
 const { protect } = require('../middleware/auth');
 
-const APP_ID = process.env.META_APP_ID;
-const APP_SECRET = process.env.META_APP_SECRET;
-// Gunakan INSTAGRAM_REDIRECT_URI khusus (berbeda dari META_REDIRECT_URI)
+// Instagram Login API pakai App ID tersendiri (bukan META_APP_ID)
+const APP_ID = process.env.INSTAGRAM_APP_ID;
+const APP_SECRET = process.env.INSTAGRAM_APP_SECRET;
 const REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 
 // Step 1 — Generate Instagram OAuth URL (tanpa Facebook Page)
