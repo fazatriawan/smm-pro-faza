@@ -79,6 +79,7 @@ export const analyticsAPI = {
 export const amplifyAPI = {
   getAll: () => api.get('/amplify'),
   create: (data) => api.post('/amplify', data),
+  stop: (id) => api.patch(`/amplify/${id}/stop`),
 };
 
 // ─── Warmup ──────────────────────────────────────────────────────────────────
