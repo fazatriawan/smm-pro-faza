@@ -16,7 +16,7 @@ const ACTION_ICON_MAP = {
 };
 
 const PLATFORM_ICON_MAP = {
-  facebook: Globe, instagram: Hash, youtube: Video, twitter: MessageCircle, tiktok: Hash,
+  facebook: Globe, instagram: Hash, youtube: Video, twitter: MessageCircle, tiktok: Hash, threads: Hash,
 };
 
 const PLATFORM_ACTIONS = {
@@ -60,6 +60,11 @@ const PLATFORM_ACTIONS = {
     { key: 'save', label: 'Favorit', color: '#7F77DD', desc: 'Tambah ke favorit' },
     { key: 'follow', label: 'Follow', color: '#1D9E75', desc: 'Ikuti akun' },
   ],
+  threads: [
+    { key: 'like', label: 'Like', color: '#000000', desc: 'Suka postingan' },
+    { key: 'comment', label: 'Reply', color: '#378ADD', desc: 'Balas postingan' },
+    { key: 'repost', label: 'Repost', color: '#1D9E75', desc: 'Repost postingan' },
+  ],
 };
 
 const PLATFORM_TABS = [
@@ -68,6 +73,7 @@ const PLATFORM_TABS = [
   { key: 'youtube', label: 'YouTube', color: '#FF0000', bg: '#FAECE7', badgeBg: '#FF000020' },
   { key: 'twitter', label: 'X/Twitter', color: '#888780', bg: '#F1EFE8', badgeBg: '#88878020' },
   { key: 'tiktok', label: 'TikTok', color: '#639922', bg: '#EAF3DE', badgeBg: '#63992220' },
+  { key: 'threads', label: 'Threads', color: '#000000', bg: '#F0EFEC', badgeBg: '#00000020' },
 ];
 
 const URL_PLACEHOLDERS = {
@@ -76,6 +82,7 @@ const URL_PLACEHOLDERS = {
   youtube: 'https://www.youtube.com/watch?v=xxxxxxxxxxx',
   twitter: 'https://twitter.com/user/status/1234567890',
   tiktok: 'https://www.tiktok.com/@user/video/1234567890',
+  threads: 'https://www.threads.net/@username/post/ABC123xyz',
 };
 
 export default function AmplifyPage() {
