@@ -553,31 +553,39 @@ async function sharePost(pageId, postId, token, isPersonal) {
 }
 
 // ─── THREADS FUNCTIONS ────────────────────────────────────────────────────
-function shortcodeToNumericId(shortcode) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  let id = BigInt(0);
-  for (const char of shortcode) {
-    const pos = alphabet.indexOf(char);
-    if (pos === -1) continue;
-    id = id * BigInt(64) + BigInt(pos);
-  }
-  return id.toString();
+function extractThreadsShortcode(url) {
+  const match = url.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
 }
 
-function extractThreadsPostId(url) {
-  const match = url.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
-  if (!match) return null;
-  return shortcodeToNumericId(match[1]);
+// Resolve shortcode to numeric media ID via the Threads Graph API.
+// The URL shortcode (e.g. DXyS405gYVo) is not a usable API ID —
+// we query the API with the shortcode as path param to get the real ID.
+async function resolveThreadsMediaId(shortcode, token) {
+  try {
+    const res = await axios.get(
+      `https://graph.threads.net/v1.0/${shortcode}`,
+      { params: { fields: 'id', access_token: token } }
+    );
+    if (res.data?.id) return res.data.id;
+  } catch (e) {
+    // If API lookup fails (shortcode not recognized), rethrow with context
+    const msg = e.response?.data?.error?.message || e.message;
+    throw new Error(`Tidak bisa resolve Threads post ID: ${msg}`);
+  }
+  throw new Error('Threads post ID tidak ditemukan dari API');
 }
 
 async function likeThreads(url, token, userId) {
   try {
-    const postId = extractThreadsPostId(url);
-    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+    const shortcode = extractThreadsShortcode(url);
+    if (!shortcode) throw new Error('Format URL Threads tidak valid');
+    const mediaId = await resolveThreadsMediaId(shortcode, token);
+    // Correct endpoint: POST /{user-id}/likes?media_id={post-id}
     const res = await axios.post(
-      `https://graph.threads.net/v1.0/${postId}/likes`,
+      `https://graph.threads.net/v1.0/${userId}/likes`,
       null,
-      { params: { access_token: token } }
+      { params: { media_id: mediaId, access_token: token } }
     );
     return res.data;
   } catch (err) {
@@ -587,8 +595,9 @@ async function likeThreads(url, token, userId) {
 
 async function replyThreads(url, token, userId, message) {
   try {
-    const postId = extractThreadsPostId(url);
-    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+    const shortcode = extractThreadsShortcode(url);
+    if (!shortcode) throw new Error('Format URL Threads tidak valid');
+    const mediaId = await resolveThreadsMediaId(shortcode, token);
 
     // Buat reply container
     const containerRes = await axios.post(
@@ -597,7 +606,7 @@ async function replyThreads(url, token, userId, message) {
       { params: {
         media_type: 'TEXT',
         text: message,
-        reply_to_id: postId,
+        reply_to_id: mediaId,
         access_token: token
       }}
     );
@@ -616,10 +625,11 @@ async function replyThreads(url, token, userId, message) {
 
 async function repostThreads(url, token, userId) {
   try {
-    const postId = extractThreadsPostId(url);
-    if (!postId) throw new Error('Post ID Threads tidak ditemukan');
+    const shortcode = extractThreadsShortcode(url);
+    if (!shortcode) throw new Error('Format URL Threads tidak valid');
+    const mediaId = await resolveThreadsMediaId(shortcode, token);
     const res = await axios.post(
-      `https://graph.threads.net/v1.0/${postId}/repost`,
+      `https://graph.threads.net/v1.0/${mediaId}/repost`,
       null,
       { params: { access_token: token } }
     );
