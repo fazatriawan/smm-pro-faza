@@ -357,6 +357,7 @@ export default function AmplifyPage() {
       case 'completed': return '#1D9E75';
       case 'running': return '#378ADD';
       case 'failed': return '#E24B4A';
+      case 'stopped': return '#888780';
       default: return '#EF9F27';
     }
   };
@@ -366,6 +367,7 @@ export default function AmplifyPage() {
       case 'completed': return '✓ Selesai';
       case 'running': return '⟳ Berjalan';
       case 'failed': return '✗ Gagal';
+      case 'stopped': return '⏹ Dihentikan';
       default: return '◷ Menunggu';
     }
   };
