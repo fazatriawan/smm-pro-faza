@@ -555,7 +555,7 @@ async function sharePost(pageId, postId, token, isPersonal) {
 
 // ─── THREADS FUNCTIONS ────────────────────────────────────────────────────
 function extractThreadsPostId(url) {
-  const match = url.match(/threads\.net\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
+  const match = url.match(/threads\.(?:net|com)\/@[^/]+\/post\/([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
 }
 
