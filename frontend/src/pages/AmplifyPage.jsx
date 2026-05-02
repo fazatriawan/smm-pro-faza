@@ -5,7 +5,7 @@ import { PLATFORMS, deduplicateAccounts } from '../utils';
 import {
   ThumbsUp, MessageCircle, Share2, Bookmark, ThumbsDown, Bell, UserPlus, RotateCw,
   Globe, Video, Hash, Target, Link2, Plus, Sparkles, Wand2, Zap, ChevronDown, X,
-  CheckCircle2, AlertTriangle, Loader2, Trash2
+  CheckCircle2, XCircle, AlertTriangle, Loader2, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
