@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { parseError } = require('../utils/errorHandler');
+const { refreshTokenIfNeeded } = require('./tokenRefreshService');
 const cloudinary = require('cloudinary').v2;
 const { Post, SocialAccount } = require('../models');
 
@@ -115,6 +116,13 @@ async function publishToAccount(post, target) {
   if (!account) throw new Error('Account not found');
 
   try {
+    // Refresh token sebelum posting jika sudah expired atau hampir expired
+    try {
+      await refreshTokenIfNeeded(account);
+    } catch (refreshErr) {
+      console.warn(`[TokenRefresh] Gagal refresh ${account.platform}/${account.label}: ${refreshErr.message}`);
+    }
+
     let platformPostId;
     const caption = post.caption || '';
     const overrides = post.platformOverrides || {};
