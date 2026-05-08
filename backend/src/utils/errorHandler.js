@@ -1,20 +1,33 @@
 function parseError(platform, error) {
   const response = error.response?.data;
+  const fallback = error.message || 'Terjadi kesalahan tidak diketahui';
 
+  if (!response) {
+    return { friendlyMessage: fallback, actionNeeded: 'Coba lagi atau hubungi support' };
+  }
+
+  let result;
   switch (platform) {
     case 'facebook':
     case 'instagram':
-      return parseFacebookError(response);
+      result = parseFacebookError(response);
+      break;
     case 'youtube':
-      return parseYouTubeError(response);
+      result = parseYouTubeError(response);
+      break;
     case 'twitter':
-      return parseTwitterError(response);
+      result = parseTwitterError(response);
+      break;
     default:
-      return {
-        friendlyMessage: error.message || 'Terjadi kesalahan tidak diketahui',
-        actionNeeded: 'Coba lagi atau hubungi support'
-      };
+      return { friendlyMessage: fallback, actionNeeded: 'Coba lagi atau hubungi support' };
   }
+
+  // If platform parser produced empty/incomplete message, fall back to error.message
+  if (!result.friendlyMessage || result.friendlyMessage.endsWith(': ')) {
+    result.friendlyMessage = fallback;
+  }
+
+  return result;
 }
 
 function parseFacebookError(response) {

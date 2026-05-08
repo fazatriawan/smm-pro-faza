@@ -402,8 +402,16 @@ async function postToYouTube(account, caption, mediaUrls) {
     console.log('[YouTube] Video uploaded:', videoId);
     return videoId;
   } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    throw new Error('YouTube upload gagal: ' + msg);
+    const ytMsg = err.response?.data?.error?.message;
+    const ytCode = err.response?.data?.error?.code;
+    const ytReason = err.response?.data?.error?.errors?.[0]?.reason;
+    const fallbackMsg = err.message || 'Unknown error';
+    const detail = ytMsg || fallbackMsg;
+    const newErr = new Error('YouTube upload gagal: ' + detail);
+    // Preserve response so parseError can do platform-specific parsing
+    if (err.response) newErr.response = err.response;
+    console.error(`[YouTube] Upload error — code: ${ytCode}, reason: ${ytReason}, msg: ${detail}`);
+    throw newErr;
   }
 }
 
