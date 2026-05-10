@@ -75,6 +75,11 @@ export const analyticsAPI = {
   getAccount: (id, days) => api.get(`/analytics/account/${id}`, { params: { days } }),
 };
 
+// ─── Post Browser ────────────────────────────────────────────────────────────
+export const postBrowserAPI = {
+  getPosts: (accountId, limit = 20) => api.get(`/accounts/${accountId}/posts`, { params: { limit } }),
+};
+
 // ─── Amplify ─────────────────────────────────────────────────────────────────
 export const amplifyAPI = {
   getAll: () => api.get('/amplify'),

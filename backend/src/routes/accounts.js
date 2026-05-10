@@ -1,8 +1,79 @@
 const router = require('express').Router();
+const axios = require('axios');
 const { protect } = require('../middleware/auth');
 const { SocialAccount } = require('../models');
 const { verifyAccountStatus, verifyAllAccounts } = require('../services/accountStatusService');
+const { refreshTokenIfNeeded } = require('../services/tokenRefreshService');
 const { encrypt, decrypt } = require('../utils/crypto');
+
+// ─── Helper: fetch posts per platform ────────────────────────────────────────
+async function fetchInstagramPosts(account, limit) {
+  const res = await axios.get(`https://graph.instagram.com/${account.platformUserId}/media`, {
+    params: { fields: 'id,caption,media_type,permalink,timestamp,thumbnail_url,media_url', access_token: account.accessToken, limit }
+  });
+  return (res.data.data || []).map(p => ({
+    id: p.id,
+    url: p.permalink,
+    caption: p.caption || '',
+    thumbnail: p.thumbnail_url || p.media_url || null,
+    type: p.media_type?.toLowerCase() || 'image',
+    date: p.timestamp,
+  }));
+}
+
+async function fetchFacebookPosts(account, limit) {
+  const pageId = account.pageId || account.platformUserId;
+  const res = await axios.get(`https://graph.facebook.com/v18.0/${pageId}/posts`, {
+    params: { fields: 'id,message,permalink_url,created_time,full_picture', access_token: account.accessToken, limit }
+  });
+  return (res.data.data || []).map(p => ({
+    id: p.id,
+    url: p.permalink_url,
+    caption: p.message || '',
+    thumbnail: p.full_picture || null,
+    type: 'post',
+    date: p.created_time,
+  }));
+}
+
+async function fetchYoutubePosts(account, limit) {
+  const channelRes = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
+    params: { part: 'contentDetails', mine: true },
+    headers: { Authorization: `Bearer ${account.accessToken}` }
+  });
+  const uploadsId = channelRes.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+  if (!uploadsId) throw new Error('Tidak bisa menemukan playlist uploads YouTube');
+
+  const listRes = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', {
+    params: { part: 'snippet', playlistId: uploadsId, maxResults: limit },
+    headers: { Authorization: `Bearer ${account.accessToken}` }
+  });
+  return (listRes.data.items || []).map(item => {
+    const videoId = item.snippet?.resourceId?.videoId;
+    return {
+      id: videoId,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      caption: item.snippet?.title || '',
+      thumbnail: item.snippet?.thumbnails?.medium?.url || null,
+      type: 'video',
+      date: item.snippet?.publishedAt,
+    };
+  });
+}
+
+async function fetchThreadsPosts(account, limit) {
+  const res = await axios.get(`https://graph.threads.net/v1.0/${account.platformUserId}/threads`, {
+    params: { fields: 'id,text,timestamp,permalink', access_token: account.accessToken, limit }
+  });
+  return (res.data.data || []).map(p => ({
+    id: p.id,
+    url: p.permalink,
+    caption: p.text || '',
+    thumbnail: null,
+    type: 'thread',
+    date: p.timestamp,
+  }));
+}
 
 // GET all accounts (admin sees all active, operator sees own active)
 router.get('/', protect, async (req, res) => {
@@ -50,6 +121,38 @@ router.get('/user/:userId', protect, async (req, res) => {
     const accounts = await SocialAccount.find({ owner: req.params.userId, isActive: true });
     res.json(accounts);
   } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /:id/posts — scrape recent posts from a connected account
+router.get('/:id/posts', protect, async (req, res) => {
+  try {
+    const account = await SocialAccount.findOne({ _id: req.params.id, isActive: true });
+    if (!account) return res.status(404).json({ message: 'Akun tidak ditemukan' });
+    if (req.user.role !== 'admin' && String(account.owner) !== String(req.user._id))
+      return res.status(403).json({ message: 'Forbidden' });
+
+    const SUPPORTED = ['instagram', 'facebook', 'facebook_personal', 'youtube', 'threads'];
+    if (!SUPPORTED.includes(account.platform))
+      return res.status(400).json({ message: `Platform ${account.platform} belum didukung untuk fitur ini` });
+
+    await refreshTokenIfNeeded(account).catch(e =>
+      console.warn(`[PostBrowser] Refresh token gagal: ${e.message}`)
+    );
+
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    let posts = [];
+
+    if (account.platform === 'instagram') posts = await fetchInstagramPosts(account, limit);
+    else if (account.platform === 'facebook' || account.platform === 'facebook_personal') posts = await fetchFacebookPosts(account, limit);
+    else if (account.platform === 'youtube') posts = await fetchYoutubePosts(account, limit);
+    else if (account.platform === 'threads') posts = await fetchThreadsPosts(account, limit);
+
+    res.json({ posts, account: { label: account.label, platform: account.platform, username: account.platformUsername } });
+  } catch (err) {
+    const msg = err.response?.data?.error?.message || err.message;
+    console.error(`[PostBrowser] Error:`, msg);
+    res.status(500).json({ message: msg });
+  }
 });
 
 // POST manually add account (after OAuth, token is stored here)

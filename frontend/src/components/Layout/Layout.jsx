@@ -5,7 +5,7 @@ import { useSocket } from '../../hooks/useSocket';
 import { notifAPI } from '../../api';
 import { useQuery } from '@tanstack/react-query';
 import {
-  LayoutDashboard, Users, FileText, Calendar, TrendingUp, Flame, Bell, BarChart3, Sparkles, LogOut, Moon, Sun, ChevronLeft, ChevronRight
+  LayoutDashboard, Users, FileText, Calendar, TrendingUp, Flame, Bell, BarChart3, Sparkles, LogOut, Moon, Sun, ChevronLeft, ChevronRight, Link2
 } from 'lucide-react';
 import './Layout.css';
 
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/scheduler',     icon: Calendar, label: 'Scheduler' },
   { to: '/amplify',       icon: TrendingUp, label: 'Amplifikasi' },
   { to: '/warmup',        icon: Flame, label: 'Warm Up' },
+  { to: '/post-browser',  icon: Link2, label: 'Browser Post' },
   { to: '/notifications', icon: Bell, label: 'Notifikasi' },
   { to: '/analytics',     icon: BarChart3, label: 'Analytics' },
   { to: '/ai',            icon: Sparkles, label: 'AI Tools' },
