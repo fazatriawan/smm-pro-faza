@@ -99,9 +99,9 @@ function go(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`nav-${page}`)?.classList.add('active');
-  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator' };
+  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator', igscraper:'IG Post Scraper' };
   document.getElementById('page-title').textContent = titles[page] || page;
-  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent };
+  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent, igscraper: pageIGScraper };
   try {
     document.getElementById('content').innerHTML = (pages[page] || (() => ''))();
     if (page === 'aicontent') {
@@ -3157,8 +3157,223 @@ function hideForm(id) {
   if (el) el.style.display = 'none'; 
 }
 
-function toggleForm(id) { 
-  const el = document.getElementById(id); 
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; 
+function toggleForm(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ─── IG POST SCRAPER ──────────────────────────────────────────────────────────
+let scraperResults = [];
+
+function pageIGScraper() {
+  scraperResults = [];
+  const igAccounts = accounts.filter(a => a.platform === 'instagram');
+
+  return `
+    <div class="grid-2" style="align-items:start;gap:16px">
+      <!-- Kiri: Konfigurasi -->
+      <div>
+        <div class="card">
+          <div class="card-title">🔗 Instagram Post Scraper</div>
+
+          <div class="form-group">
+            <label>Pilih Akun Instagram (untuk sesi login)</label>
+            <select id="scraper-account">
+              <option value="">— Pilih akun —</option>
+              ${igAccounts.map(a => `<option value="${a.id}">${a.username}</option>`).join('')}
+            </select>
+            ${igAccounts.length === 0 ? `<div style="margin-top:6px;font-size:11px;color:var(--c-warn)">⚠️ Belum ada akun Instagram. Tambahkan dulu di Akun & User.</div>` : ''}
+          </div>
+
+          <div class="form-group">
+            <label>Daftar Username Target <span style="font-weight:400;text-transform:none;color:var(--c-text-3)">(satu per baris, @ opsional)</span></label>
+            <textarea id="scraper-usernames" rows="10" placeholder="username1&#10;username2&#10;@username3&#10;username4"></textarea>
+            <div style="margin-top:5px;display:flex;justify-content:space-between;align-items:center">
+              <span id="scraper-count" style="font-size:11px;color:var(--c-text-3)">0 username</span>
+              <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" onclick="loadScraperFile()">📂 Dari File TXT</button>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-success" style="flex:1" onclick="runIGScraper()" id="scraper-run-btn">
+              🚀 Mulai Scraping
+            </button>
+            <button class="btn btn-secondary" onclick="clearScraperLog()" title="Bersihkan log">🗑</button>
+          </div>
+        </div>
+
+        <!-- Panduan -->
+        <div class="card" style="margin-top:0">
+          <div class="card-title" style="font-size:12px">📖 Cara Penggunaan</div>
+          <div style="font-size:12px;color:var(--c-text-2);line-height:1.8">
+            <div>1️⃣ Pastikan akun Instagram sudah login (Automasi Robot → Login)</div>
+            <div>2️⃣ Masukkan username target (tanpa @ juga bisa)</div>
+            <div>3️⃣ Klik <b>Mulai Scraping</b></div>
+            <div>4️⃣ Hasil muncul di tabel, klik <b>Export CSV</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kanan: Log + Hasil -->
+      <div>
+        <div class="card">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📋 Live Log</span>
+            <span id="scraper-status" style="font-size:11px;color:var(--c-text-3);font-weight:400"></span>
+          </div>
+          <div class="log-box" id="scraper-log" style="height:220px">
+            <div style="color:var(--c-text-3)">Menunggu...</div>
+          </div>
+        </div>
+
+        <div class="card" id="scraper-result-card" style="display:none">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📊 Hasil Scraping</span>
+            <button class="btn btn-primary" style="font-size:11px;padding:5px 12px" onclick="exportScraperCsv()">
+              💾 Export CSV
+            </button>
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px" id="scraper-table">
+              <thead>
+                <tr style="border-bottom:2px solid var(--c-border)">
+                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">#</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Username</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Link Postingan Terbaru</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Status</th>
+                </tr>
+              </thead>
+              <tbody id="scraper-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Update hitungan username saat ketik
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'scraper-usernames') {
+    const count = e.target.value.split('\n').filter(l => l.trim()).length;
+    const el = document.getElementById('scraper-count');
+    if (el) el.textContent = `${count} username`;
+  }
+});
+
+async function loadScraperFile() {
+  const result = await window.api.pickFile();
+  if (!result) return;
+  try {
+    const text = await fetch(result).then(r => r.text()).catch(() => null);
+    if (text) {
+      document.getElementById('scraper-usernames').value = text;
+      const count = text.split('\n').filter(l => l.trim()).length;
+      document.getElementById('scraper-count').textContent = `${count} username`;
+    }
+  } catch(e) {
+    // pickFile returns path, read via IPC not available — fallback: show path
+    const ta = document.getElementById('scraper-usernames');
+    if (ta) ta.placeholder = `File dipilih: ${result}\n(Salin isi file secara manual)`;
+  }
+}
+
+function appendScraperLog(log) {
+  const box = document.getElementById('scraper-log');
+  if (!box) return;
+  const clsMap = { success: 'log-success', error: 'log-error', warn: 'log-warn', info: 'log-info' };
+  const div = document.createElement('div');
+  div.className = `log-entry ${clsMap[log.type] || 'log-info'}`;
+  div.textContent = `[${new Date().toLocaleTimeString('id-ID')}]  ${log.message}`;
+  if (box.querySelector('div')?.textContent === 'Menunggu...') box.innerHTML = '';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearScraperLog() {
+  const box = document.getElementById('scraper-log');
+  if (box) box.innerHTML = '<div style="color:var(--c-text-3)">Menunggu...</div>';
+}
+
+function renderScraperTable(results) {
+  const tbody = document.getElementById('scraper-tbody');
+  if (!tbody) return;
+  const statusBadge = {
+    success:   '<span class="badge badge-success">✅ Berhasil</span>',
+    private:   '<span class="badge badge-warn">🔒 Private</span>',
+    not_found: '<span class="badge badge-error">❌ Tidak ditemukan</span>',
+    empty:     '<span class="badge badge-neutral">📭 Kosong</span>',
+    error:     '<span class="badge badge-error">❌ Error</span>',
+  };
+  tbody.innerHTML = results.map((r, i) => `
+    <tr style="border-bottom:1px solid var(--c-border);${i % 2 === 0 ? '' : 'background:var(--c-hover)'}">
+      <td style="padding:7px 10px;color:var(--c-text-3)">${i + 1}</td>
+      <td style="padding:7px 10px;font-weight:600">@${escapeHtml(r.username)}</td>
+      <td style="padding:7px 10px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${r.status === 'success'
+          ? `<a href="${escapeHtml(r.latest_post)}" onclick="window.api.openExternal('${escapeHtml(r.latest_post)}');return false;"
+               style="color:var(--accent);text-decoration:none;font-size:11.5px">${escapeHtml(r.latest_post)}</a>`
+          : `<span style="color:var(--c-text-3);font-size:11.5px">${escapeHtml(r.latest_post)}</span>`
+        }
+      </td>
+      <td style="padding:7px 10px">${statusBadge[r.status] || r.status}</td>
+    </tr>
+  `).join('');
+}
+
+async function runIGScraper() {
+  const accountId = document.getElementById('scraper-account').value;
+  const rawText = document.getElementById('scraper-usernames').value;
+  const usernames = rawText.split('\n').map(l => l.trim()).filter(l => l);
+
+  if (!accountId) { alert('Pilih akun Instagram terlebih dahulu!'); return; }
+  if (usernames.length === 0) { alert('Masukkan minimal 1 username target!'); return; }
+
+  const account = accounts.find(a => a.id === accountId);
+  if (!account) { alert('Akun tidak ditemukan'); return; }
+
+  const btn = document.getElementById('scraper-run-btn');
+  btn.disabled = true;
+  setRunning(true);
+  clearScraperLog();
+  document.getElementById('scraper-result-card').style.display = 'none';
+  document.getElementById('scraper-status').textContent = '⏳ Sedang berjalan...';
+
+  // Dengarkan log real-time
+  const logHandler = (log) => {
+    appendScraperLog(log);
+    addToLiveLog(log);
+  };
+  window.api.onLog(logHandler);
+
+  try {
+    const result = await window.api.instagramScraper({ account, usernames });
+    if (result.success) {
+      scraperResults = result.results;
+      const { success, failed, total } = result.summary;
+      document.getElementById('scraper-status').textContent =
+        `✅ Selesai — ${success}/${total} berhasil, ${failed} gagal`;
+      document.getElementById('scraper-result-card').style.display = 'block';
+      renderScraperTable(scraperResults);
+    } else {
+      appendScraperLog({ type: 'error', message: result.error });
+      document.getElementById('scraper-status').textContent = '❌ Error';
+    }
+  } catch (err) {
+    appendScraperLog({ type: 'error', message: err.message });
+  }
+
+  btn.disabled = false;
+  setRunning(false);
+}
+
+async function exportScraperCsv() {
+  if (!scraperResults.length) { alert('Tidak ada hasil untuk diekspor'); return; }
+  const result = await window.api.instagramScraperExport(scraperResults);
+  if (result.success) {
+    alert(`✅ File tersimpan:\n${result.filePath}`);
+  } else if (result.error !== 'Dibatalkan') {
+    alert(`❌ Gagal: ${result.error}`);
+  }
 }
 

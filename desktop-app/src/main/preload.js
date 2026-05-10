@@ -54,4 +54,8 @@ contextBridge.exposeInMainWorld('api', {
   getYoutubeTrends:    (data)    => ipcRenderer.invoke('get-youtube-trends', data),
   generateCaptionVariations: (data) => ipcRenderer.invoke('generate-caption-variations', data),
   fetchYoutubeInfo:    (url)     => ipcRenderer.invoke('fetch-youtube-info', url),
+
+  // Instagram Scraper
+  instagramScraper:       (cfg)    => ipcRenderer.invoke('instagram-scraper', cfg),
+  instagramScraperExport: (results) => ipcRenderer.invoke('instagram-scraper-export', results),
 });

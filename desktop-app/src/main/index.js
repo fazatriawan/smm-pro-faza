@@ -5,6 +5,7 @@ const fs = require('fs');
 const Store = require('electron-store');
 const { startAutomation, stopAutomation } = require('../automation/manager');
 const { bulkPost, stopBulkPost } = require('../services/bulkPostService');
+const { instagramScraper, exportToCsv } = require('../services/instagramScraperService');
 const { startOAuthServer, setPending } = require('./oauthServer');
 const oauthHandlers = require('./oauthHandlers');
 const { pushJob, initQueue } = require('./queuePublisher');
@@ -354,6 +355,36 @@ ipcMain.handle('bulk-post', async (_, config) => {
     return { success: true, results };
   } catch (err) {
     isRunning = false;
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── INSTAGRAM SCRAPER ────────────────────────────────────────────────────
+ipcMain.handle('instagram-scraper', async (_, config) => {
+  if (isRunning) return { success: false, error: 'Sedang ada proses yang berjalan' };
+  isRunning = true;
+  try {
+    const settings = store.get('settings', {});
+    const result = await instagramScraper(config, settings, addLog);
+    isRunning = false;
+    return result;
+  } catch (err) {
+    isRunning = false;
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('instagram-scraper-export', async (_, results) => {
+  try {
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Simpan Hasil Scraping',
+      defaultPath: `hasil_instagram_${new Date().toISOString().slice(0,10)}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (!filePath) return { success: false, error: 'Dibatalkan' };
+    exportToCsv(results, filePath);
+    return { success: true, filePath };
+  } catch (err) {
     return { success: false, error: err.message };
   }
 });
