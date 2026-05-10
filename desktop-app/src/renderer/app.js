@@ -3177,12 +3177,14 @@ function pageIGScraper() {
           <div class="card-title">🔗 Instagram Post Scraper</div>
 
           <div class="form-group">
-            <label>Pilih Akun Instagram (untuk sesi login)</label>
+            <label>Pilih Akun Instagram <span style="font-weight:400;text-transform:none;color:var(--c-text-3)">(opsional — untuk ambil link postingan terbaru)</span></label>
             <select id="scraper-account">
-              <option value="">— Pilih akun —</option>
+              <option value="">— Tanpa login (hanya link profil) —</option>
               ${igAccounts.map(a => `<option value="${a.id}">${a.username}</option>`).join('')}
             </select>
-            ${igAccounts.length === 0 ? `<div style="margin-top:6px;font-size:11px;color:var(--c-warn)">⚠️ Belum ada akun Instagram. Tambahkan dulu di Akun & User.</div>` : ''}
+            <div style="margin-top:5px;font-size:11px;color:var(--c-text-3)">
+              💡 Tanpa akun → output link profil. Dengan akun login → output link postingan terbaru.
+            </div>
           </div>
 
           <div class="form-group">
@@ -3206,9 +3208,9 @@ function pageIGScraper() {
         <div class="card" style="margin-top:0">
           <div class="card-title" style="font-size:12px">📖 Cara Penggunaan</div>
           <div style="font-size:12px;color:var(--c-text-2);line-height:1.8">
-            <div>1️⃣ Pastikan akun Instagram sudah login (Automasi Robot → Login)</div>
-            <div>2️⃣ Masukkan username target (tanpa @ juga bisa)</div>
-            <div>3️⃣ Klik <b>Mulai Scraping</b></div>
+            <div>1️⃣ Masukkan daftar username target (tanpa @ juga bisa)</div>
+            <div>2️⃣ <b>Tanpa akun</b> → langsung generate link profil Instagram</div>
+            <div>3️⃣ <b>Dengan akun login</b> → scrape link postingan terbaru tiap profil</div>
             <div>4️⃣ Hasil muncul di tabel, klik <b>Export CSV</b></div>
           </div>
         </div>
@@ -3239,7 +3241,7 @@ function pageIGScraper() {
                 <tr style="border-bottom:2px solid var(--c-border)">
                   <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">#</th>
                   <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Username</th>
-                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Link Postingan Terbaru</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Link Profil / Postingan</th>
                   <th style="padding:8px 10px;text-align:left;color:var(--c-text-2);font-weight:600">Status</th>
                 </tr>
               </thead>
@@ -3299,18 +3301,20 @@ function renderScraperTable(results) {
   const tbody = document.getElementById('scraper-tbody');
   if (!tbody) return;
   const statusBadge = {
-    success:   '<span class="badge badge-success">✅ Berhasil</span>',
-    private:   '<span class="badge badge-warn">🔒 Private</span>',
-    not_found: '<span class="badge badge-error">❌ Tidak ditemukan</span>',
-    empty:     '<span class="badge badge-neutral">📭 Kosong</span>',
-    error:     '<span class="badge badge-error">❌ Error</span>',
+    success:      '<span class="badge badge-success">✅ Postingan</span>',
+    profile_only: '<span class="badge badge-neutral">👤 Link Profil</span>',
+    private:      '<span class="badge badge-warn">🔒 Private</span>',
+    not_found:    '<span class="badge badge-error">❌ Tidak ditemukan</span>',
+    empty:        '<span class="badge badge-neutral">📭 Kosong</span>',
+    error:        '<span class="badge badge-error">❌ Error</span>',
   };
+  const isClickable = (r) => r.status === 'success' || r.status === 'profile_only' || r.status === 'empty';
   tbody.innerHTML = results.map((r, i) => `
     <tr style="border-bottom:1px solid var(--c-border);${i % 2 === 0 ? '' : 'background:var(--c-hover)'}">
       <td style="padding:7px 10px;color:var(--c-text-3)">${i + 1}</td>
       <td style="padding:7px 10px;font-weight:600">@${escapeHtml(r.username)}</td>
       <td style="padding:7px 10px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        ${r.status === 'success'
+        ${isClickable(r)
           ? `<a href="${escapeHtml(r.latest_post)}" onclick="window.api.openExternal('${escapeHtml(r.latest_post)}');return false;"
                style="color:var(--accent);text-decoration:none;font-size:11.5px">${escapeHtml(r.latest_post)}</a>`
           : `<span style="color:var(--c-text-3);font-size:11.5px">${escapeHtml(r.latest_post)}</span>`
@@ -3326,11 +3330,9 @@ async function runIGScraper() {
   const rawText = document.getElementById('scraper-usernames').value;
   const usernames = rawText.split('\n').map(l => l.trim()).filter(l => l);
 
-  if (!accountId) { alert('Pilih akun Instagram terlebih dahulu!'); return; }
   if (usernames.length === 0) { alert('Masukkan minimal 1 username target!'); return; }
 
-  const account = accounts.find(a => a.id === accountId);
-  if (!account) { alert('Akun tidak ditemukan'); return; }
+  const account = accountId ? accounts.find(a => a.id === accountId) || null : null;
 
   const btn = document.getElementById('scraper-run-btn');
   btn.disabled = true;
