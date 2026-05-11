@@ -8,6 +8,8 @@ const { bulkPost, stopBulkPost } = require('../services/bulkPostService');
 const { instagramScraper, exportToCsv } = require('../services/instagramScraperService');
 const { huntUsername } = require('../services/usernameHunterService');
 const { searchOpenverse, searchGiphy, searchUnsplash, searchPexels, downloadPhoto, searchGoogleNews, fetchReddit } = require('../services/stockPhotoService');
+const { scrapeAnalytics } = require('../services/platformAnalyticsService');
+const { browserPost } = require('../services/browserPostService');
 const { startOAuthServer, setPending } = require('./oauthServer');
 const oauthHandlers = require('./oauthHandlers');
 const { pushJob, initQueue } = require('./queuePublisher');
@@ -437,6 +439,32 @@ ipcMain.handle('search-stock-photos', async (_, { query, source, page = 1, perPa
     }
     return { success: true, ...result };
   } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── PLATFORM ANALYTICS (tanpa API) ──────────────────────────────────────
+ipcMain.handle('scrape-platform-analytics', async (_, { account }) => {
+  try {
+    const settings = store.get('settings', {});
+    const result = await scrapeAnalytics(account, settings, addLog);
+    return { success: true, data: result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── BROWSER POST (tanpa OAuth) ────────────────────────────────────────────
+ipcMain.handle('browser-post', async (_, config) => {
+  if (isRunning) return { success: false, error: 'Sedang ada proses yang berjalan' };
+  isRunning = true;
+  try {
+    const settings = store.get('settings', {});
+    const result = await browserPost(config, settings, addLog);
+    isRunning = false;
+    return result;
+  } catch (err) {
+    isRunning = false;
     return { success: false, error: err.message };
   }
 });

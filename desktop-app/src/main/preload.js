@@ -70,4 +70,10 @@ contextBridge.exposeInMainWorld('api', {
   // Content Intelligence (tanpa API key)
   fetchNewsRss:  (data) => ipcRenderer.invoke('fetch-news-rss', data),
   fetchReddit:   (data) => ipcRenderer.invoke('fetch-reddit', data),
+
+  // Platform Analytics (scrape tanpa API)
+  scrapePlatformAnalytics: (data) => ipcRenderer.invoke('scrape-platform-analytics', data),
+
+  // Browser Post (posting via sesi browser, tanpa OAuth)
+  browserPost: (config) => ipcRenderer.invoke('browser-post', config),
 });

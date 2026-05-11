@@ -99,9 +99,9 @@ function go(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`nav-${page}`)?.classList.add('active');
-  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator', igscraper:'IG Post Scraper', userhunter:'Username Hunter', stockphoto:'Stock Photos', contentideas:'Content Ideas', calendar:'Content Calendar' };
+  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator', igscraper:'IG Post Scraper', userhunter:'Username Hunter', stockphoto:'Stock Photos', contentideas:'Content Ideas', calendar:'Content Calendar', analytics:'Social Analytics', browserpost:'Browser Post' };
   document.getElementById('page-title').textContent = titles[page] || page;
-  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent, igscraper: pageIGScraper, userhunter: pageUsernameHunter, stockphoto: pageStockPhoto, contentideas: pageContentIdeas, calendar: pageContentCalendar };
+  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent, igscraper: pageIGScraper, userhunter: pageUsernameHunter, stockphoto: pageStockPhoto, contentideas: pageContentIdeas, calendar: pageContentCalendar, analytics: pageSocialAnalytics, browserpost: pageBrowserPost };
   try {
     document.getElementById('content').innerHTML = (pages[page] || (() => ''))();
     if (page === 'aicontent') {
@@ -4158,11 +4158,311 @@ async function fetchRedditTrend() {
 function copyNewsAsCaption(title, url) {
   const caption = `${title}\n\n${url}`;
   navigator.clipboard.writeText(caption);
-  // Flash confirmation
   const el = event.target;
   const orig = el.textContent;
   el.textContent = '✅ Disalin!';
   el.style.color = 'var(--c-success)';
   setTimeout(() => { el.textContent = orig; el.style.color = ''; }, 1500);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOCIAL ANALYTICS — scrape follower/likes/views tanpa API
+// ═══════════════════════════════════════════════════════════════════════════
+
+let analyticsData = {}; // { accountId: { followers, following, posts, ... } }
+
+function pageSocialAnalytics() {
+  const supported = accounts.filter(a => ['instagram','twitter','tiktok','youtube','facebook'].includes(a.platform));
+
+  return `
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:13px;font-weight:700">📊 Social Analytics</div>
+            <div style="font-size:11.5px;color:var(--c-text-3);margin-top:2px">
+              Scrape follower, following &amp; stats langsung dari browser. <b>Tanpa API key.</b>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" style="font-size:12px" onclick="exportAnalyticsCsv()">💾 Export CSV</button>
+            <button class="btn btn-success" onclick="scrapeAllAnalytics()" id="analytics-run-btn">🔄 Refresh Semua</button>
+          </div>
+        </div>
+      </div>
+
+      ${supported.length === 0 ? `
+        <div class="card" style="text-align:center;padding:32px;color:var(--c-text-3)">
+          Belum ada akun yang didukung. Tambahkan akun Instagram, Twitter, TikTok, atau YouTube di <b>Akun &amp; User</b>.
+        </div>` : `
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px" id="analytics-grid">
+          ${supported.map(a => analyticsCard(a)).join('')}
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📋 Scrape Log</span>
+            <span id="analytics-status" style="font-size:11px;color:var(--c-text-3);font-weight:400"></span>
+          </div>
+          <div class="log-box" id="analytics-log" style="height:150px">
+            <div style="color:var(--c-text-3)">Klik Refresh untuk mulai scraping...</div>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+const PLATFORM_COLORS = {
+  instagram: '#D4537E', twitter: '#1DA1F2', tiktok: '#010101',
+  youtube: '#FF0000', facebook: '#1877F2',
+};
+const PLATFORM_ICONS = {
+  instagram: '📸', twitter: '🐦', tiktok: '🎵', youtube: '▶️', facebook: '📘',
+};
+
+function analyticsCard(account) {
+  const d = analyticsData[account.id] || {};
+  const fmtN = (n) => n !== null && n !== undefined ? Number(n).toLocaleString('id-ID') : '—';
+  const color = PLATFORM_COLORS[account.platform] || '#888';
+  const icon  = PLATFORM_ICONS[account.platform] || '🌐';
+
+  return `
+    <div class="card" id="card-${account.id}" style="padding:16px;border-top:3px solid ${color}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+        <div>
+          <div style="font-size:13px;font-weight:700">${icon} @${escapeHtml(account.username)}</div>
+          <div style="font-size:11px;color:var(--c-text-3);text-transform:capitalize">${account.platform}</div>
+        </div>
+        <button onclick="scrapeSingleAnalytics('${account.id}')"
+                class="btn btn-secondary" style="font-size:11px;padding:4px 8px">🔄</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="text-align:center;background:var(--c-subtle);border-radius:var(--r-sm);padding:10px">
+          <div style="font-size:18px;font-weight:800;color:${color}" id="stat-followers-${account.id}">${fmtN(d.followers)}</div>
+          <div style="font-size:10px;color:var(--c-text-3)">Followers</div>
+        </div>
+        <div style="text-align:center;background:var(--c-subtle);border-radius:var(--r-sm);padding:10px">
+          <div style="font-size:18px;font-weight:800;color:var(--c-text)" id="stat-following-${account.id}">${fmtN(d.following)}</div>
+          <div style="font-size:10px;color:var(--c-text-3)">Following</div>
+        </div>
+        <div style="text-align:center;background:var(--c-subtle);border-radius:var(--r-sm);padding:10px;grid-column:1/-1">
+          <div style="font-size:18px;font-weight:800;color:var(--c-text)" id="stat-posts-${account.id}">${fmtN(d.posts)}</div>
+          <div style="font-size:10px;color:var(--c-text-3)">Posts${account.platform === 'tiktok' ? ' / Likes' : ''}</div>
+        </div>
+      </div>
+      ${d.scrapedAt ? `<div style="font-size:10px;color:var(--c-text-3);text-align:right;margin-top:8px">Update: ${new Date(d.scrapedAt).toLocaleString('id-ID')}</div>` : ''}
+    </div>
+  `;
+}
+
+function appendAnalyticsLog(log) {
+  const box = document.getElementById('analytics-log');
+  if (!box) return;
+  const clsMap = { success: 'log-success', error: 'log-error', warn: 'log-warn', info: 'log-info' };
+  const div = document.createElement('div');
+  div.className = `log-entry ${clsMap[log.type] || 'log-info'}`;
+  div.textContent = `[${new Date().toLocaleTimeString('id-ID')}]  ${log.message}`;
+  if (box.firstChild?.textContent?.includes('Klik Refresh')) box.innerHTML = '';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function scrapeSingleAnalytics(accountId) {
+  const account = accounts.find(a => a.id === accountId);
+  if (!account) return;
+
+  window.api.onLog(log => appendAnalyticsLog(log));
+
+  const result = await window.api.scrapePlatformAnalytics({ account });
+  if (result.success) {
+    analyticsData[accountId] = result.data;
+    updateAnalyticsCard(account, result.data);
+  } else {
+    appendAnalyticsLog({ type: 'error', message: `❌ ${result.error}` });
+  }
+}
+
+function updateAnalyticsCard(account, data) {
+  const fmtN = (n) => n !== null && n !== undefined ? Number(n).toLocaleString('id-ID') : '—';
+  const fEl = document.getElementById(`stat-followers-${account.id}`);
+  const foEl = document.getElementById(`stat-following-${account.id}`);
+  const pEl = document.getElementById(`stat-posts-${account.id}`);
+  if (fEl)  fEl.textContent = fmtN(data.followers);
+  if (foEl) foEl.textContent = fmtN(data.following);
+  if (pEl)  pEl.textContent = fmtN(data.posts);
+}
+
+async function scrapeAllAnalytics() {
+  const supported = accounts.filter(a => ['instagram','twitter','tiktok','youtube','facebook'].includes(a.platform));
+  if (!supported.length) { alert('Belum ada akun yang didukung.'); return; }
+
+  const btn = document.getElementById('analytics-run-btn');
+  if (btn) btn.disabled = true;
+  document.getElementById('analytics-status').textContent = '⏳ Sedang scraping...';
+
+  window.api.onLog(log => appendAnalyticsLog(log));
+
+  for (const account of supported) {
+    const result = await window.api.scrapePlatformAnalytics({ account });
+    if (result.success) {
+      analyticsData[account.id] = result.data;
+      updateAnalyticsCard(account, result.data);
+    }
+  }
+
+  document.getElementById('analytics-status').textContent = `✅ Selesai — ${new Date().toLocaleString('id-ID')}`;
+  if (btn) btn.disabled = false;
+}
+
+function exportAnalyticsCsv() {
+  const rows = Object.entries(analyticsData).map(([id, d]) => {
+    const acc = accounts.find(a => a.id === id);
+    return `"${acc?.platform || ''}","${acc?.username || ''}","${d.followers ?? ''}","${d.following ?? ''}","${d.posts ?? ''}","${d.scrapedAt || ''}"`;
+  });
+  if (!rows.length) { alert('Belum ada data analytics. Klik Refresh dulu.'); return; }
+  const csv = 'platform,username,followers,following,posts,scraped_at\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `social_analytics_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BROWSER POST — posting via browser session, tanpa OAuth/API registration
+// ═══════════════════════════════════════════════════════════════════════════
+
+function pageBrowserPost() {
+  const supported = accounts.filter(a => ['instagram','twitter','tiktok','facebook'].includes(a.platform));
+
+  return `
+    <div class="grid-2" style="align-items:start;gap:16px">
+
+      <!-- Kiri: Form -->
+      <div>
+        <div class="card">
+          <div class="card-title">🌐 Browser Post</div>
+          <div style="font-size:11.5px;color:var(--c-text-3);margin-bottom:12px">
+            Posting langsung ke platform via <b>sesi browser</b> yang sudah login. <b>Tanpa OAuth. Tanpa API key.</b>
+            <br>Syarat: akun sudah login di Automasi Robot → Login sesi.
+          </div>
+
+          <div class="form-group">
+            <label>Akun Tujuan</label>
+            <select id="bp-account">
+              <option value="">— Pilih akun —</option>
+              ${supported.map(a => `<option value="${a.id}">${PLATFORM_ICONS[a.platform]||''} ${a.platform} — @${escapeHtml(a.username)}</option>`).join('')}
+            </select>
+            ${supported.length === 0 ? `<div style="margin-top:5px;font-size:11px;color:var(--c-warn)">⚠️ Belum ada akun yang didukung (Instagram/Twitter/TikTok/Facebook)</div>` : ''}
+          </div>
+
+          <div class="form-group">
+            <label>Caption / Teks Post</label>
+            <textarea id="bp-caption" rows="5" placeholder="Tulis caption atau teks postingan di sini..."></textarea>
+            <div style="text-align:right;font-size:11px;color:var(--c-text-3)" id="bp-char-count">0 karakter</div>
+          </div>
+
+          <div class="form-group">
+            <label>Media (Foto/Video) <span style="font-weight:400;color:var(--c-text-3)">— opsional, wajib untuk Instagram &amp; TikTok</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="bp-media-path" placeholder="Path file media..." style="flex:1" readonly>
+              <button class="btn btn-secondary" onclick="pickBrowserPostMedia()">📁 Pilih File</button>
+            </div>
+          </div>
+
+          <div style="background:var(--c-info-bg);border-radius:var(--r-sm);padding:10px;font-size:11.5px;color:var(--c-info);margin-bottom:12px">
+            💡 <b>Instagram</b>: butuh media · <b>Twitter</b>: caption saja cukup · <b>TikTok</b>: butuh video · <b>Facebook</b>: caption/media
+          </div>
+
+          <button class="btn btn-success" style="width:100%;padding:10px" onclick="runBrowserPost()" id="bp-run-btn">
+            🚀 Post via Browser
+          </button>
+        </div>
+      </div>
+
+      <!-- Kanan: Log -->
+      <div>
+        <div class="card">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📋 Live Log</span>
+            <span id="bp-status" style="font-size:11px;color:var(--c-text-3);font-weight:400"></span>
+          </div>
+          <div class="log-box" id="bp-log" style="height:300px">
+            <div style="color:var(--c-text-3)">Menunggu...</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:0">
+          <div class="card-title" style="font-size:12px">⚠️ Catatan Penting</div>
+          <div style="font-size:12px;color:var(--c-text-2);line-height:1.9">
+            <div>🔐 Akun harus sudah login (gunakan <b>Automasi Robot → Login</b>)</div>
+            <div>🌐 Browser akan terbuka saat proses berlangsung</div>
+            <div>⏳ Proses lebih lambat dari API, tapi <b>tidak butuh registrasi apapun</b></div>
+            <div>🤖 UI platform dapat berubah sewaktu-waktu</div>
+            <div>📂 File media harus ada di komputer lokal</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'bp-caption') {
+    const el = document.getElementById('bp-char-count');
+    if (el) el.textContent = `${e.target.value.length} karakter`;
+  }
+});
+
+async function pickBrowserPostMedia() {
+  const result = await window.api.pickFile();
+  if (result) {
+    const el = document.getElementById('bp-media-path');
+    if (el) el.value = result;
+  }
+}
+
+function appendBpLog(log) {
+  const box = document.getElementById('bp-log');
+  if (!box) return;
+  const clsMap = { success: 'log-success', error: 'log-error', warn: 'log-warn', info: 'log-info' };
+  const div = document.createElement('div');
+  div.className = `log-entry ${clsMap[log.type] || 'log-info'}`;
+  div.textContent = `[${new Date().toLocaleTimeString('id-ID')}]  ${log.message}`;
+  if (box.firstChild?.textContent?.includes('Menunggu')) box.innerHTML = '';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function runBrowserPost() {
+  const accountId = document.getElementById('bp-account').value;
+  const caption   = document.getElementById('bp-caption').value.trim();
+  const mediaPath = document.getElementById('bp-media-path').value.trim() || null;
+
+  if (!accountId) { alert('Pilih akun tujuan!'); return; }
+  if (!caption && !mediaPath) { alert('Isi caption atau pilih file media!'); return; }
+
+  const account = accounts.find(a => a.id === accountId);
+  if (!account) { alert('Akun tidak ditemukan'); return; }
+
+  const btn = document.getElementById('bp-run-btn');
+  btn.disabled = true;
+  document.getElementById('bp-status').textContent = '⏳ Sedang posting...';
+  document.getElementById('bp-log').innerHTML = '';
+
+  window.api.onLog(log => appendBpLog(log));
+
+  const result = await window.api.browserPost({ account, caption, mediaPath });
+
+  if (result.success) {
+    appendBpLog({ type: 'success', message: '🎉 Berhasil diposting!' });
+    document.getElementById('bp-status').textContent = '✅ Berhasil';
+  } else {
+    appendBpLog({ type: 'error', message: `❌ ${result.error}` });
+    document.getElementById('bp-status').textContent = '❌ Gagal';
+  }
+  btn.disabled = false;
 }
 
