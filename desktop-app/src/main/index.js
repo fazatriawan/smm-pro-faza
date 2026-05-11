@@ -6,6 +6,8 @@ const Store = require('electron-store');
 const { startAutomation, stopAutomation } = require('../automation/manager');
 const { bulkPost, stopBulkPost } = require('../services/bulkPostService');
 const { instagramScraper, exportToCsv } = require('../services/instagramScraperService');
+const { huntUsername } = require('../services/usernameHunterService');
+const { searchOpenverse, searchGiphy, searchUnsplash, searchPexels, downloadPhoto, searchGoogleNews, fetchReddit } = require('../services/stockPhotoService');
 const { startOAuthServer, setPending } = require('./oauthServer');
 const oauthHandlers = require('./oauthHandlers');
 const { pushJob, initQueue } = require('./queuePublisher');
@@ -383,6 +385,83 @@ ipcMain.handle('instagram-scraper-export', async (_, results) => {
     });
     if (!filePath) return { success: false, error: 'Dibatalkan' };
     exportToCsv(results, filePath);
+    return { success: true, filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── USERNAME HUNTER ───────────────────────────────────────────────────────
+ipcMain.handle('username-hunt', async (_, config) => {
+  try {
+    const result = await huntUsername(config, addLog);
+    return result;
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('username-hunt-export', async (_, { username, results }) => {
+  try {
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Simpan Hasil Username Hunt',
+      defaultPath: `username_hunt_${username}_${new Date().toISOString().slice(0,10)}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (!filePath) return { success: false, error: 'Dibatalkan' };
+    const header = 'platform,kategori,url,status,http_code';
+    const rows = results.map(r =>
+      `"${r.platform}","${r.cat || ''}","${r.url}","${r.status}","${r.httpCode || ''}"`
+    );
+    fs.writeFileSync(filePath, [header, ...rows].join('\n'), 'utf-8');
+    return { success: true, filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── STOCK PHOTOS ──────────────────────────────────────────────────────────
+ipcMain.handle('search-stock-photos', async (_, { query, source, page = 1, perPage = 20 }) => {
+  try {
+    const settings = store.get('settings', {});
+    let result;
+    if (source === 'pexels') {
+      result = await searchPexels(query, page, perPage, settings.pexelsApiKey);
+    } else if (source === 'unsplash') {
+      result = await searchUnsplash(query, page, perPage, settings.unsplashApiKey);
+    } else if (source === 'giphy') {
+      result = await searchGiphy(query, page - 1, perPage, settings.giphyApiKey);
+    } else {
+      // Default: Openverse — gratis, tanpa API key
+      result = await searchOpenverse(query, page, perPage);
+    }
+    return { success: true, ...result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fetch-news-rss', async (_, { query, lang = 'id', country = 'ID' }) => {
+  try {
+    const items = await searchGoogleNews(query, lang, country);
+    return { success: true, items };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fetch-reddit', async (_, { query, subreddit = '', sort = 'hot', limit = 15 }) => {
+  try {
+    const posts = await fetchReddit(query, subreddit, sort, limit);
+    return { success: true, posts };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('download-stock-photo', async (_, { url, filename }) => {
+  try {
+    const filePath = await downloadPhoto(url, filename);
     return { success: true, filePath };
   } catch (err) {
     return { success: false, error: err.message };

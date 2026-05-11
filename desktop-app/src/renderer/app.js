@@ -99,9 +99,9 @@ function go(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`nav-${page}`)?.classList.add('active');
-  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator', igscraper:'IG Post Scraper' };
+  const titles = { dashboard:'Dashboard', accounts:'Akun & User', bulkpost:'Bulk Post', amplify:'Amplifikasi', warmup:'Warm Up', automation:'Automasi', logs:'Log Aktivitas', settings:'Pengaturan', aicontent:'AI Content Generator', igscraper:'IG Post Scraper', userhunter:'Username Hunter', stockphoto:'Stock Photos', contentideas:'Content Ideas', calendar:'Content Calendar' };
   document.getElementById('page-title').textContent = titles[page] || page;
-  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent, igscraper: pageIGScraper };
+  const pages = { dashboard: pageDashboard, accounts: pageAccounts, bulkpost: pageBulkPost, amplify: pageAmplify, warmup: pageWarmup, automation: pageAutomation, logs: pageLogs, settings: pageSettings, aicontent: pageAIContent, igscraper: pageIGScraper, userhunter: pageUsernameHunter, stockphoto: pageStockPhoto, contentideas: pageContentIdeas, calendar: pageContentCalendar };
   try {
     document.getElementById('content').innerHTML = (pages[page] || (() => ''))();
     if (page === 'aicontent') {
@@ -109,6 +109,9 @@ function go(page) {
     }
     if (page === 'amplify') {
       setTimeout(() => { updateAICount(); toggleAICommentOptions(); }, 0);
+    }
+    if (page === 'calendar') {
+      setTimeout(() => renderCalendar(), 0);
     }
   } catch (e) {
     console.error(`Error rendering page "${page}":`, e);
@@ -3041,6 +3044,28 @@ function pageSettings() {
       </div>
     </div>
 
+    <!-- API Keys: Stock Photos -->
+    <div class="card">
+      <div class="card-title">🖼️ API Keys — Stock Photos</div>
+      <div style="font-size:11.5px;color:var(--c-text-3);margin-bottom:12px">
+        Diperlukan untuk fitur <b>Stock Photos</b>. Daftar gratis di unsplash.com/developers dan pexels.com/api.
+      </div>
+      <div class="form-group">
+        <label>Unsplash Access Key <span style="font-weight:400;color:var(--c-text-3)">(free 50 req/jam)</span></label>
+        <div style="display:flex;gap:8px">
+          <input type="password" id="s-unsplash-key" value="${settings.unsplashApiKey||''}" placeholder="Masukkan Unsplash Access Key..." style="flex:1">
+          <button class="btn btn-secondary" onclick="toggleVisible('s-unsplash-key')">👁</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label>Pexels API Key <span style="font-weight:400;color:var(--c-text-3)">(free unlimited)</span></label>
+        <div style="display:flex;gap:8px">
+          <input type="password" id="s-pexels-key" value="${settings.pexelsApiKey||''}" placeholder="Masukkan Pexels API Key..." style="flex:1">
+          <button class="btn btn-secondary" onclick="toggleVisible('s-pexels-key')">👁</button>
+        </div>
+      </div>
+    </div>
+
     <button class="btn btn-primary" onclick="saveSettings()"
       style="width:100%;padding:11px;font-size:13px;border-radius:var(--r-sm)">
       💾 Simpan Pengaturan
@@ -3090,6 +3115,8 @@ async function saveSettings() {
     ytClientSecret:   document.getElementById('s-yt-secret').value.trim(),
     threadsAppId:     document.getElementById('s-th-id').value.trim(),
     threadsAppSecret: document.getElementById('s-th-secret').value.trim(),
+    unsplashApiKey:   document.getElementById('s-unsplash-key')?.value.trim() || '',
+    pexelsApiKey:     document.getElementById('s-pexels-key')?.value.trim() || '',
   };
   await window.api.saveSettings(settings);
 
@@ -3377,5 +3404,765 @@ async function exportScraperCsv() {
   } else if (result.error !== 'Dibatalkan') {
     alert(`❌ Gagal: ${result.error}`);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USERNAME HUNTER (Sherlock + GhostTrack inspired)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let hunterResults = [];
+
+function pageUsernameHunter() {
+  hunterResults = [];
+  return `
+    <div class="grid-2" style="align-items:start;gap:16px">
+      <!-- Kiri: Input -->
+      <div>
+        <div class="card">
+          <div class="card-title">🕵️ Username Hunter</div>
+          <div style="font-size:11.5px;color:var(--c-text-3);margin-bottom:12px">
+            Cek apakah username tersedia / digunakan di 25+ platform sekaligus.<br>
+            Terinspirasi dari Sherlock &amp; GhostTrack.
+          </div>
+
+          <div class="form-group">
+            <label>Username yang dicari</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="hunter-username" placeholder="contoh: johndoe (tanpa @)"
+                     style="flex:1" onkeydown="if(event.key==='Enter')runUsernameHunt()">
+              <button class="btn btn-success" onclick="runUsernameHunt()" id="hunter-run-btn">🔍 Cari</button>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+            <span style="font-size:11px;color:var(--c-text-3)">Platform:</span>
+            <span class="badge badge-success" style="font-size:10px">✅ Ditemukan</span>
+            <span class="badge badge-error" style="font-size:10px">❌ Tidak ada</span>
+            <span class="badge badge-warn" style="font-size:10px">🔒 Diproteksi</span>
+            <span class="badge badge-neutral" style="font-size:10px">⚠️ Error/Timeout</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:0">
+          <div class="card-title" style="font-size:12px">📖 Kegunaan</div>
+          <div style="font-size:12px;color:var(--c-text-2);line-height:1.8">
+            <div>🔍 Cek konsistensi brand username di semua platform</div>
+            <div>🛡️ Monitor apakah username klien sudah diambil orang lain</div>
+            <div>📊 OSINT — temukan profil seseorang di berbagai platform</div>
+            <div>💡 Hasil bisa di-export ke CSV</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kanan: Log + Hasil -->
+      <div>
+        <div class="card">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📋 Live Log</span>
+            <span id="hunter-status" style="font-size:11px;color:var(--c-text-3);font-weight:400"></span>
+          </div>
+          <div class="log-box" id="hunter-log" style="height:180px">
+            <div style="color:var(--c-text-3)">Masukkan username dan klik Cari...</div>
+          </div>
+        </div>
+
+        <div class="card" id="hunter-result-card" style="display:none">
+          <div class="card-title" style="justify-content:space-between">
+            <span>📊 Hasil — <span id="hunter-result-title"></span></span>
+            <button class="btn btn-primary" style="font-size:11px;padding:5px 12px" onclick="exportHunterCsv()">
+              💾 Export CSV
+            </button>
+          </div>
+
+          <!-- Summary bar -->
+          <div id="hunter-summary" style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap"></div>
+
+          <!-- Filter tabs -->
+          <div style="display:flex;gap:6px;margin-bottom:10px" id="hunter-filter-tabs">
+            <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="filterHunter('all')">Semua</button>
+            <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" onclick="filterHunter('found')">✅ Ada</button>
+            <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" onclick="filterHunter('not_found')">❌ Tidak Ada</button>
+            <button class="btn btn-secondary" style="font-size:11px;padding:4px 10px" onclick="filterHunter('protected')">🔒 Diproteksi</button>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead>
+                <tr style="border-bottom:2px solid var(--c-border)">
+                  <th style="padding:7px 10px;text-align:left;color:var(--c-text-2)">#</th>
+                  <th style="padding:7px 10px;text-align:left;color:var(--c-text-2)">Platform</th>
+                  <th style="padding:7px 10px;text-align:left;color:var(--c-text-2)">Kategori</th>
+                  <th style="padding:7px 10px;text-align:left;color:var(--c-text-2)">URL</th>
+                  <th style="padding:7px 10px;text-align:left;color:var(--c-text-2)">Status</th>
+                </tr>
+              </thead>
+              <tbody id="hunter-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function appendHunterLog(log) {
+  const box = document.getElementById('hunter-log');
+  if (!box) return;
+  const clsMap = { success: 'log-success', error: 'log-error', warn: 'log-warn', info: 'log-info' };
+  const div = document.createElement('div');
+  div.className = `log-entry ${clsMap[log.type] || 'log-info'}`;
+  div.textContent = `[${new Date().toLocaleTimeString('id-ID')}]  ${log.message}`;
+  if (box.firstChild?.textContent?.includes('Masukkan username')) box.innerHTML = '';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderHunterTable(results) {
+  const badge = {
+    found:     '<span class="badge badge-success">✅ Ditemukan</span>',
+    not_found: '<span class="badge badge-error">❌ Tidak ada</span>',
+    protected: '<span class="badge badge-warn">🔒 Diproteksi</span>',
+    error:     '<span class="badge badge-neutral">⚠️ Error</span>',
+    unknown:   '<span class="badge badge-neutral">❓ Tidak pasti</span>',
+  };
+  const tbody = document.getElementById('hunter-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = results.map((r, i) => `
+    <tr style="border-bottom:1px solid var(--c-border);${i%2===0?'':'background:var(--c-hover)'}">
+      <td style="padding:6px 10px;color:var(--c-text-3)">${i+1}</td>
+      <td style="padding:6px 10px;font-weight:600">${r.icon || ''} ${escapeHtml(r.platform)}</td>
+      <td style="padding:6px 10px;color:var(--c-text-3);font-size:11px">${escapeHtml(r.cat || '')}</td>
+      <td style="padding:6px 10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${r.status === 'found'
+          ? `<a href="${escapeHtml(r.url)}" onclick="window.api.openExternal('${escapeHtml(r.url)}');return false;"
+               style="color:var(--accent);text-decoration:none;font-size:11px">${escapeHtml(r.url)}</a>`
+          : `<span style="color:var(--c-text-3);font-size:11px">${escapeHtml(r.url)}</span>`
+        }
+      </td>
+      <td style="padding:6px 10px">${badge[r.status] || r.status}</td>
+    </tr>
+  `).join('');
+}
+
+let hunterCurrentFilter = 'all';
+
+function filterHunter(filter) {
+  hunterCurrentFilter = filter;
+  // Update tab styles
+  document.querySelectorAll('#hunter-filter-tabs button').forEach(b => {
+    b.className = b.textContent.toLowerCase().includes(filter === 'all' ? 'semua' : filter === 'found' ? 'ada' : filter === 'not_found' ? 'tidak' : 'diproteksi')
+      ? 'btn btn-primary' : 'btn btn-secondary';
+    b.style.fontSize = '11px';
+    b.style.padding = '4px 10px';
+  });
+  const filtered = filter === 'all' ? hunterResults : hunterResults.filter(r => r.status === filter);
+  renderHunterTable(filtered);
+}
+
+async function runUsernameHunt() {
+  const username = document.getElementById('hunter-username').value.trim().replace(/^@/, '');
+  if (!username) { alert('Masukkan username terlebih dahulu!'); return; }
+
+  const btn = document.getElementById('hunter-run-btn');
+  btn.disabled = true;
+  document.getElementById('hunter-log').innerHTML = '';
+  document.getElementById('hunter-result-card').style.display = 'none';
+  document.getElementById('hunter-status').textContent = '⏳ Sedang mencari...';
+
+  window.api.onLog((log) => appendHunterLog(log));
+
+  try {
+    const result = await window.api.usernameHunt({ username });
+    if (result.success) {
+      hunterResults = result.results;
+      const { found, notFound, other, total } = result.summary;
+      document.getElementById('hunter-status').textContent = `✅ Selesai — ${found} ditemukan dari ${total} platform`;
+      document.getElementById('hunter-result-title').textContent = `"${result.username}"`;
+      document.getElementById('hunter-summary').innerHTML = `
+        <div style="background:var(--c-success-bg);color:var(--c-success);padding:6px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600">✅ ${found} Ditemukan</div>
+        <div style="background:var(--c-danger-bg);color:var(--c-danger);padding:6px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600">❌ ${notFound} Tidak Ada</div>
+        <div style="background:var(--c-warn-bg);color:var(--c-warn);padding:6px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600">⚠️ ${other} Tidak Pasti</div>
+      `;
+      document.getElementById('hunter-result-card').style.display = 'block';
+      hunterCurrentFilter = 'all';
+      renderHunterTable(hunterResults);
+    } else {
+      appendHunterLog({ type: 'error', message: result.error });
+      document.getElementById('hunter-status').textContent = '❌ Error';
+    }
+  } catch (err) {
+    appendHunterLog({ type: 'error', message: err.message });
+    document.getElementById('hunter-status').textContent = '❌ Error';
+  }
+  btn.disabled = false;
+}
+
+async function exportHunterCsv() {
+  if (!hunterResults.length) { alert('Tidak ada hasil untuk diekspor'); return; }
+  const usernameEl = document.getElementById('hunter-username');
+  const username = usernameEl ? usernameEl.value.trim() : 'unknown';
+  const result = await window.api.usernameHuntExport({ username, results: hunterResults });
+  if (result.success) {
+    alert(`✅ File tersimpan:\n${result.filePath}`);
+  } else if (result.error !== 'Dibatalkan') {
+    alert(`❌ Gagal: ${result.error}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STOCK PHOTOS (public-api-lists → Unsplash + Pexels)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let stockPhotos = [];
+let stockPage = 1;
+let stockSource = 'openverse'; // Default: gratis, tanpa API key
+let stockQuery = '';
+
+// Source metadata
+const STOCK_SOURCES = {
+  openverse: { label: '🆓 Openverse',  free: true,  note: 'CC-licensed • WordPress Foundation • Tanpa API key' },
+  giphy:     { label: '🎞️ GIF (Giphy)', free: true,  note: 'GIF animasi • Demo key built-in • Langsung pakai' },
+  unsplash:  { label: '🌅 Unsplash',    free: false, note: 'Perlu API key di Pengaturan' },
+  pexels:    { label: '📸 Pexels',      free: false, note: 'Perlu API key di Pengaturan' },
+};
+
+function pageStockPhoto() {
+  stockPhotos = [];
+  stockPage = 1;
+  stockQuery = '';
+  stockSource = 'openverse';
+
+  const srcBtns = Object.entries(STOCK_SOURCES).map(([id, s]) => `
+    <button id="src-${id}" onclick="setStockSource('${id}')"
+      class="btn ${id === 'openverse' ? 'btn-primary' : 'btn-secondary'}"
+      style="font-size:11.5px;white-space:nowrap">
+      ${s.label}${s.free ? '' : ' 🔑'}
+    </button>
+  `).join('');
+
+  return `
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${srcBtns}
+          <input type="text" id="stock-query" placeholder="Cari media... (nature, business, food, happy)"
+                 style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter')searchStockPhotos(true)">
+          <button class="btn btn-success" onclick="searchStockPhotos(true)">🔍 Cari</button>
+        </div>
+        <div id="stock-source-note" style="margin-top:7px;font-size:11px;color:var(--c-success);font-weight:500">
+          ✅ ${STOCK_SOURCES.openverse.note}
+        </div>
+      </div>
+
+      <div id="stock-status" style="font-size:12px;color:var(--c-text-3);margin-bottom:10px;text-align:center"></div>
+      <div id="stock-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
+      <div id="stock-loadmore" style="text-align:center;margin-top:16px;display:none">
+        <button class="btn btn-secondary" onclick="searchStockPhotos(false)">⬇️ Muat lebih banyak</button>
+      </div>
+    </div>
+
+    <!-- Preview modal -->
+    <div id="stock-modal" onclick="closeStockModal()"
+         style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center">
+      <div onclick="event.stopPropagation()"
+           style="background:var(--c-card);border-radius:var(--r-lg);padding:20px;max-width:680px;width:92%;max-height:88vh;overflow-y:auto">
+        <img id="modal-img" src="" style="width:100%;border-radius:var(--r-md);margin-bottom:12px;max-height:420px;object-fit:contain">
+        <div id="modal-license" style="font-size:10px;color:var(--c-text-3);margin-bottom:10px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-size:12px;color:var(--c-text-2)">
+            📷 <a id="modal-author" href="#" onclick="return false;" style="color:var(--accent)"></a>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" style="font-size:12px" onclick="copyStockUrl()">📋 Copy URL</button>
+            <button class="btn btn-success" style="font-size:12px" onclick="doDownloadStockPhoto()">⬇️ Download</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="closeStockModal()">✕ Tutup</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setStockSource(src) {
+  stockSource = src;
+  Object.keys(STOCK_SOURCES).forEach(id => {
+    const btn = document.getElementById(`src-${id}`);
+    if (btn) btn.className = `btn ${id === src ? 'btn-primary' : 'btn-secondary'}`;
+    if (btn) btn.style.fontSize = '11.5px';
+  });
+  const info = STOCK_SOURCES[src];
+  const noteEl = document.getElementById('stock-source-note');
+  if (noteEl) {
+    noteEl.style.color = info.free ? 'var(--c-success)' : 'var(--c-warn)';
+    noteEl.textContent = (info.free ? '✅ ' : '🔑 ') + info.note;
+  }
+  // Reset grid when changing source
+  stockPhotos = [];
+  stockPage = 1;
+  document.getElementById('stock-grid').innerHTML = '';
+  document.getElementById('stock-status').textContent = '';
+  document.getElementById('stock-loadmore').style.display = 'none';
+}
+
+async function searchStockPhotos(reset = true) {
+  const query = document.getElementById('stock-query').value.trim();
+  if (!query) { alert('Masukkan kata kunci pencarian!'); return; }
+
+  if (reset) {
+    stockPage = 1;
+    stockPhotos = [];
+    stockQuery = query;
+    document.getElementById('stock-grid').innerHTML = '';
+  }
+
+  const statusEl = document.getElementById('stock-status');
+  statusEl.textContent = '⏳ Mencari...';
+
+  try {
+    const result = await window.api.searchStockPhotos({ query: stockQuery, source: stockSource, page: stockPage, perPage: 20 });
+    if (!result.success) throw new Error(result.error);
+
+    stockPhotos.push(...result.items);
+    stockPage++;
+    renderStockGrid(result.items);
+    const sourceLabel = STOCK_SOURCES[stockSource]?.label || stockSource;
+    statusEl.textContent = `${stockPhotos.length} media${result.total > 0 ? ` dari ${result.total.toLocaleString('id-ID')}` : ''} — "${stockQuery}" via ${sourceLabel}`;
+    document.getElementById('stock-loadmore').style.display = result.items.length >= 20 ? 'block' : 'none';
+  } catch (err) {
+    statusEl.textContent = '';
+    let msg = err.message;
+    if (msg.includes('API Key') || msg.includes('API key')) {
+      msg = `🔑 ${msg} — atau pilih Openverse/GIF yang gratis tanpa API key.`;
+    }
+    document.getElementById('stock-grid').innerHTML = `
+      <div style="grid-column:1/-1;text-align:center;padding:32px">
+        <div style="color:var(--c-danger);font-size:13px;margin-bottom:8px">${escapeHtml(msg)}</div>
+        <button class="btn btn-secondary" style="font-size:12px" onclick="setStockSource('openverse');searchStockPhotos(true)">
+          Coba pakai Openverse (gratis)
+        </button>
+      </div>`;
+  }
+}
+
+function renderStockGrid(items) {
+  const grid = document.getElementById('stock-grid');
+  const isGif = stockSource === 'giphy';
+  items.forEach(photo => {
+    const div = document.createElement('div');
+    div.style.cssText = 'border-radius:var(--r-md);overflow:hidden;box-shadow:var(--s-sm);cursor:pointer;background:var(--c-subtle);transition:transform 0.15s';
+    div.onmouseenter = () => { div.style.transform = 'scale(1.02)'; };
+    div.onmouseleave = () => { div.style.transform = ''; };
+    const imgH = isGif ? '130px' : '145px';
+    div.innerHTML = `
+      <div style="position:relative;overflow:hidden;height:${imgH}">
+        <img src="${escapeHtml(photo.thumb || photo.regular)}" loading="lazy"
+             style="width:100%;height:100%;object-fit:cover;display:block">
+        ${photo.license ? `<span style="position:absolute;top:5px;right:5px;font-size:9px;background:rgba(0,0,0,0.6);color:#fff;padding:2px 5px;border-radius:3px">${escapeHtml(photo.license)}</span>` : ''}
+      </div>
+      <div style="padding:7px 8px;font-size:11px">
+        <div style="color:var(--c-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml((photo.description || photo.author || '').slice(0, 40))}</div>
+        <div style="color:var(--c-text-3);margin-top:1px;font-size:10px">by ${escapeHtml(photo.author || '')}</div>
+      </div>
+    `;
+    div.onclick = () => openStockModal(photo);
+    grid.appendChild(div);
+  });
+}
+
+let currentStockPhoto = null;
+
+function openStockModal(photo) {
+  currentStockPhoto = photo;
+  document.getElementById('modal-img').src = photo.regular || photo.thumb;
+  document.getElementById('modal-img').style.objectFit = stockSource === 'giphy' ? 'contain' : 'cover';
+  const authorEl = document.getElementById('modal-author');
+  authorEl.textContent = photo.author || 'Unknown';
+  if (photo.authorUrl) {
+    authorEl.onclick = () => { window.api.openExternal(photo.authorUrl); return false; };
+  }
+  const licenseEl = document.getElementById('modal-license');
+  if (photo.license) {
+    licenseEl.textContent = `Lisensi: ${photo.license}${photo.attribution ? ' • ' + photo.attribution : ''}`;
+    licenseEl.style.display = 'block';
+  } else {
+    licenseEl.style.display = 'none';
+  }
+  document.getElementById('stock-modal').style.display = 'flex';
+}
+
+function closeStockModal() {
+  document.getElementById('stock-modal').style.display = 'none';
+  currentStockPhoto = null;
+}
+
+function copyStockUrl() {
+  if (!currentStockPhoto) return;
+  navigator.clipboard.writeText(currentStockPhoto.regular || currentStockPhoto.full);
+  alert('✅ URL disalin ke clipboard!');
+}
+
+async function doDownloadStockPhoto() {
+  if (!currentStockPhoto) return;
+  const p = currentStockPhoto;
+  const isGif = p.source === 'giphy';
+  const filename = `${p.source}_${p.id}.${isGif ? 'gif' : 'jpg'}`;
+  const result = await window.api.downloadStockPhoto({ url: p.full || p.regular, filename });
+  if (result.success) {
+    alert(`✅ Tersimpan di Downloads:\n${result.filePath}`);
+  } else {
+    alert(`❌ Gagal download: ${result.error}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTENT CALENDAR (Postiz-inspired)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function pageContentCalendar() {
+  const now = new Date();
+  return `
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:12px">
+            <button class="btn btn-secondary" style="font-size:13px;padding:5px 10px" onclick="calNavMonth(-1)">‹</button>
+            <div id="cal-title" style="font-size:16px;font-weight:700;min-width:180px;text-align:center"></div>
+            <button class="btn btn-secondary" style="font-size:13px;padding:5px 10px" onclick="calNavMonth(1)">›</button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" style="font-size:12px" onclick="calGoToday()">📅 Hari ini</button>
+            <button class="btn btn-success" style="font-size:12px" onclick="calAddNote()">+ Tambah Catatan</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Calendar grid -->
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="cal-grid"></div>
+      </div>
+
+      <!-- Note modal -->
+      <div id="cal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center">
+        <div style="background:var(--c-card);border-radius:var(--r-lg);padding:20px;width:380px;box-shadow:var(--s-lg)">
+          <div style="font-size:14px;font-weight:700;margin-bottom:12px">📝 Catatan Konten</div>
+          <div class="form-group">
+            <label>Tanggal</label>
+            <input type="date" id="cal-note-date">
+          </div>
+          <div class="form-group">
+            <label>Platform</label>
+            <select id="cal-note-platform">
+              <option value="instagram">📸 Instagram</option>
+              <option value="facebook">📘 Facebook</option>
+              <option value="twitter">🐦 Twitter/X</option>
+              <option value="tiktok">🎵 TikTok</option>
+              <option value="youtube">▶️ YouTube</option>
+              <option value="threads">🧵 Threads</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Catatan / Ide Konten</label>
+            <textarea id="cal-note-text" rows="3" placeholder="Ide konten, caption, hashtag..."></textarea>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="closeCalModal()">Batal</button>
+            <button class="btn btn-success" onclick="saveCalNote()">💾 Simpan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();
+let calNotes = {};
+
+function calGoToday() {
+  const now = new Date();
+  calYear = now.getFullYear();
+  calMonth = now.getMonth();
+  renderCalendar();
+}
+
+function calNavMonth(dir) {
+  calMonth += dir;
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  if (calMonth < 0)  { calMonth = 11; calYear--; }
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  const HARI  = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+
+  document.getElementById('cal-title').textContent = `${BULAN[calMonth]} ${calYear}`;
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  const platformColor = {
+    instagram: '#D4537E', facebook: '#1877F2', twitter: '#888780',
+    tiktok: '#333', youtube: '#FF0000', threads: '#000'
+  };
+  const platformIcon = {
+    instagram: '📸', facebook: '📘', twitter: '🐦',
+    tiktok: '🎵', youtube: '▶️', threads: '🧵'
+  };
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--c-border)">`;
+  HARI.forEach(h => {
+    html += `<div style="padding:10px;text-align:center;font-size:11px;font-weight:700;color:var(--c-text-3);background:var(--c-subtle)">${h}</div>`;
+  });
+  html += '</div>';
+
+  html += `<div style="display:grid;grid-template-columns:repeat(7,1fr)">`;
+
+  // Empty cells before first day
+  for (let i = 0; i < firstDay; i++) {
+    html += `<div style="min-height:90px;border-right:1px solid var(--c-border);border-bottom:1px solid var(--c-border);background:var(--c-subtle);opacity:0.4"></div>`;
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateKey = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const notes = (calNotes[dateKey] || []);
+    const isToday = dateKey === todayKey;
+    const dayOfWeek = (firstDay + d - 1) % 7;
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+    html += `<div style="min-height:90px;border-right:1px solid var(--c-border);border-bottom:1px solid var(--c-border);padding:6px;
+                          ${isToday ? 'background:var(--accent-xxl);' : ''}cursor:pointer"
+                  onclick="calClickDay('${dateKey}')">
+      <div style="font-size:12px;font-weight:${isToday?'800':'600'};
+                  color:${isToday?'var(--accent)':isWeekend?'var(--c-danger)':'var(--c-text)'};
+                  margin-bottom:4px">${d}${isToday?' ●':''}</div>
+      ${notes.map(n => `
+        <div style="font-size:10px;background:${platformColor[n.platform]||'#666'};color:#fff;
+                    border-radius:3px;padding:2px 5px;margin-bottom:2px;white-space:nowrap;
+                    overflow:hidden;text-overflow:ellipsis;cursor:pointer"
+             onclick="event.stopPropagation();editCalNote('${dateKey}',${n.id})"
+             title="${escapeHtml(n.text)}">
+          ${platformIcon[n.platform]||''} ${escapeHtml(n.text.slice(0,20))}${n.text.length>20?'...':''}
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  // Fill remaining cells
+  const totalCells = firstDay + daysInMonth;
+  const remainder = totalCells % 7;
+  if (remainder > 0) {
+    for (let i = 0; i < 7 - remainder; i++) {
+      html += `<div style="min-height:90px;border-right:1px solid var(--c-border);border-bottom:1px solid var(--c-border);background:var(--c-subtle);opacity:0.4"></div>`;
+    }
+  }
+
+  html += '</div>';
+  document.getElementById('cal-grid').innerHTML = html;
+}
+
+function calClickDay(dateKey) {
+  document.getElementById('cal-note-date').value = dateKey;
+  document.getElementById('cal-note-text').value = '';
+  document.getElementById('cal-note-platform').value = 'instagram';
+  document.getElementById('cal-modal').style.display = 'flex';
+  document.getElementById('cal-modal')._editId = null;
+  document.getElementById('cal-modal')._editDate = null;
+}
+
+function calAddNote() {
+  const today = new Date();
+  const dateKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  calClickDay(dateKey);
+}
+
+function editCalNote(dateKey, id) {
+  const note = (calNotes[dateKey] || []).find(n => n.id === id);
+  if (!note) return;
+  document.getElementById('cal-note-date').value = dateKey;
+  document.getElementById('cal-note-text').value = note.text;
+  document.getElementById('cal-note-platform').value = note.platform;
+  const modal = document.getElementById('cal-modal');
+  modal._editId = id;
+  modal._editDate = dateKey;
+  modal.style.display = 'flex';
+}
+
+function saveCalNote() {
+  const dateKey = document.getElementById('cal-note-date').value;
+  const text = document.getElementById('cal-note-text').value.trim();
+  const platform = document.getElementById('cal-note-platform').value;
+  if (!dateKey || !text) { alert('Isi tanggal dan catatan!'); return; }
+
+  const modal = document.getElementById('cal-modal');
+  const editId = modal._editId;
+  const editDate = modal._editDate;
+
+  if (editId !== null && editId !== undefined) {
+    // Edit existing
+    if (editDate && calNotes[editDate]) {
+      calNotes[editDate] = calNotes[editDate].filter(n => n.id !== editId);
+      if (!calNotes[editDate].length) delete calNotes[editDate];
+    }
+  }
+
+  if (!calNotes[dateKey]) calNotes[dateKey] = [];
+  calNotes[dateKey].push({ id: Date.now(), text, platform });
+
+  try { localStorage.setItem('smm_cal_notes', JSON.stringify(calNotes)); } catch {}
+  closeCalModal();
+  renderCalendar();
+}
+
+function closeCalModal() {
+  document.getElementById('cal-modal').style.display = 'none';
+}
+
+// Load saved calendar notes from localStorage on startup
+try {
+  const saved = localStorage.getItem('smm_cal_notes');
+  if (saved) calNotes = JSON.parse(saved);
+} catch {}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTENT IDEAS — Google News RSS + Reddit (Tanpa API key)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function pageContentIdeas() {
+  return `
+    <div class="grid-2" style="align-items:start;gap:16px">
+
+      <!-- Kolom Kiri: Google News RSS -->
+      <div>
+        <div class="card">
+          <div class="card-title">📰 Google News <span class="badge badge-success" style="font-size:10px;margin-left:6px">Gratis • Tanpa API</span></div>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <input type="text" id="news-query" placeholder="Kata kunci (contoh: bisnis, teknologi, marketing)"
+                   style="flex:1" onkeydown="if(event.key==='Enter')fetchNews()">
+            <button class="btn btn-success" onclick="fetchNews()">🔍</button>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="news-suggestions">
+            ${['marketing', 'bisnis', 'teknologi', 'startup', 'sosial media', 'e-commerce', 'kesehatan', 'kuliner'].map(k =>
+              `<span onclick="document.getElementById('news-query').value='${k}';fetchNews()"
+                     style="font-size:11px;padding:3px 8px;border-radius:20px;background:var(--accent-xl);color:var(--accent);cursor:pointer">${k}</span>`
+            ).join('')}
+          </div>
+          <div id="news-list" style="display:flex;flex-direction:column;gap:8px">
+            <div style="color:var(--c-text-3);font-size:12px;padding:12px 0">Masukkan kata kunci untuk mencari berita terkini...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kolom Kanan: Reddit Trending -->
+      <div>
+        <div class="card">
+          <div class="card-title">🔴 Reddit Trending <span class="badge badge-success" style="font-size:10px;margin-left:6px">Gratis • Tanpa API</span></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input type="text" id="reddit-query" placeholder="Kata kunci atau subreddit"
+                   style="flex:1" onkeydown="if(event.key==='Enter')fetchRedditTrend()">
+            <select id="reddit-sort" style="width:80px;font-size:12px">
+              <option value="hot">Hot</option>
+              <option value="top">Top</option>
+              <option value="new">New</option>
+            </select>
+            <button class="btn btn-success" onclick="fetchRedditTrend()">🔍</button>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+            ${['marketing', 'socialmedia', 'entrepreneur', 'digitalmarketing', 'instagram', 'business'].map(k =>
+              `<span onclick="document.getElementById('reddit-query').value='${k}';fetchRedditTrend()"
+                     style="font-size:11px;padding:3px 8px;border-radius:20px;background:#ff450020;color:#ff4500;cursor:pointer">r/${k}</span>`
+            ).join('')}
+          </div>
+          <div id="reddit-list" style="display:flex;flex-direction:column;gap:8px">
+            <div style="color:var(--c-text-3);font-size:12px;padding:12px 0">Masukkan kata kunci untuk melihat tren Reddit...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function fetchNews() {
+  const query = document.getElementById('news-query').value.trim();
+  if (!query) return;
+
+  const listEl = document.getElementById('news-list');
+  listEl.innerHTML = '<div style="color:var(--c-text-3);font-size:12px;padding:8px 0">⏳ Memuat berita...</div>';
+
+  const result = await window.api.fetchNewsRss({ query, lang: 'id', country: 'ID' });
+
+  if (!result.success || !result.items?.length) {
+    listEl.innerHTML = `<div style="color:var(--c-danger);font-size:12px">${result.error || 'Tidak ada hasil ditemukan'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = result.items.map(item => `
+    <div style="border:1px solid var(--c-border);border-radius:var(--r-sm);padding:10px 12px;background:var(--c-card)">
+      <a href="${escapeHtml(item.link)}"
+         onclick="window.api.openExternal('${escapeHtml(item.link)}');return false;"
+         style="color:var(--c-text);text-decoration:none;font-size:12.5px;font-weight:600;line-height:1.4;display:block;margin-bottom:4px">
+        ${escapeHtml(item.title)}
+      </a>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">
+        <span style="font-size:11px;color:var(--c-text-3)">${escapeHtml(item.source || '')} • ${escapeHtml(item.pubDate ? new Date(item.pubDate).toLocaleDateString('id-ID') : '')}</span>
+        <div style="display:flex;gap:6px">
+          <button onclick="copyNewsAsCaption('${escapeHtml(item.title).replace(/'/g,"\\'")}','${escapeHtml(item.link)}')"
+                  class="btn btn-secondary" style="font-size:10px;padding:3px 8px">📋 Pakai sebagai caption</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function fetchRedditTrend() {
+  const query = document.getElementById('reddit-query').value.trim();
+  const sort = document.getElementById('reddit-sort').value;
+  if (!query) return;
+
+  const listEl = document.getElementById('reddit-list');
+  listEl.innerHTML = '<div style="color:var(--c-text-3);font-size:12px;padding:8px 0">⏳ Memuat Reddit...</div>';
+
+  // Detect if input is a subreddit name (no spaces, common subreddit names)
+  const isSubreddit = /^[a-zA-Z0-9_]+$/.test(query) && query.length < 25;
+  const result = await window.api.fetchReddit({
+    query: isSubreddit ? '' : query,
+    subreddit: isSubreddit ? query : '',
+    sort,
+    limit: 15,
+  });
+
+  if (!result.success || !result.posts?.length) {
+    listEl.innerHTML = `<div style="color:var(--c-danger);font-size:12px">${result.error || 'Tidak ada posting ditemukan'}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = result.posts.map(post => `
+    <div style="border:1px solid var(--c-border);border-radius:var(--r-sm);padding:10px 12px;background:var(--c-card)">
+      <a href="${escapeHtml(post.permalink)}"
+         onclick="window.api.openExternal('${escapeHtml(post.permalink)}');return false;"
+         style="color:var(--c-text);text-decoration:none;font-size:12px;font-weight:600;line-height:1.4;display:block;margin-bottom:5px">
+        ${escapeHtml(post.title)}
+      </a>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">
+        <span style="font-size:11px;color:#ff4500">r/${escapeHtml(post.subreddit)}</span>
+        <span style="font-size:11px;color:var(--c-text-3)">⬆️ ${(post.score||0).toLocaleString('id-ID')} • 💬 ${(post.comments||0).toLocaleString('id-ID')}</span>
+        <button onclick="copyNewsAsCaption('${escapeHtml(post.title).replace(/'/g,"\\'")}','${escapeHtml(post.permalink)}')"
+                class="btn btn-secondary" style="font-size:10px;padding:3px 8px">📋 Pakai caption</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function copyNewsAsCaption(title, url) {
+  const caption = `${title}\n\n${url}`;
+  navigator.clipboard.writeText(caption);
+  // Flash confirmation
+  const el = event.target;
+  const orig = el.textContent;
+  el.textContent = '✅ Disalin!';
+  el.style.color = 'var(--c-success)';
+  setTimeout(() => { el.textContent = orig; el.style.color = ''; }, 1500);
 }
 

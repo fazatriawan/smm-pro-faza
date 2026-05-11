@@ -58,4 +58,16 @@ contextBridge.exposeInMainWorld('api', {
   // Instagram Scraper
   instagramScraper:       (cfg)    => ipcRenderer.invoke('instagram-scraper', cfg),
   instagramScraperExport: (results) => ipcRenderer.invoke('instagram-scraper-export', results),
+
+  // Username Hunter (Sherlock-inspired)
+  usernameHunt:       (cfg)  => ipcRenderer.invoke('username-hunt', cfg),
+  usernameHuntExport: (data) => ipcRenderer.invoke('username-hunt-export', data),
+
+  // Stock Photos (Openverse gratis + Giphy + Unsplash + Pexels)
+  searchStockPhotos:   (data) => ipcRenderer.invoke('search-stock-photos', data),
+  downloadStockPhoto:  (data) => ipcRenderer.invoke('download-stock-photo', data),
+
+  // Content Intelligence (tanpa API key)
+  fetchNewsRss:  (data) => ipcRenderer.invoke('fetch-news-rss', data),
+  fetchReddit:   (data) => ipcRenderer.invoke('fetch-reddit', data),
 });
