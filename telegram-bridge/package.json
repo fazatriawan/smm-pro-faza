@@ -1,0 +1,22 @@
+{
+  "name": "smm-telegram-bridge",
+  "version": "1.0.0",
+  "description": "Telegram bot bridge: Google Drive → Gemini → Outstand → Sheets webhook reporting",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "telegraf": "^4.16.3"
+  }
+}
