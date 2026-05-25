@@ -38,23 +38,31 @@ Tujuan: meletakkan tulang punggung tanpa mengubah perilaku produksi.
 - [x] `src/adapters/OutstandAdapter.js` — skeleton wrapper
 - [x] `package.json` — tambah `pino` & `pino-pretty` (belum `npm install`)
 - [x] `docs/MIGRATION.md` — file ini
-- [x] **Migrasi modul ke `createLogger`** (smoke-tested):
+- [x] **Migrasi modul ke `createLogger`** (SEMUA selesai, smoke-tested):
       - `src/index.js` → `createLogger('app')`
       - `src/services/outstand.js` → `createLogger('outstand')`
       - `src/services/dailySummary.js` → `createLogger('daily-summary')`
       - `src/services/ai.js` → `createLogger('ai')`
       - `src/services/imageToVideo.js` → `createLogger('ffmpeg')`
-- [ ] (Esok malam) Migrasi 3 modul besar sisanya: `bot.js` (18 calls),
-      `sheets.js` (13 calls), `todayPublish.js` (3 calls)
+      - `src/services/sheets.js` → `createLogger('sheets')`
+      - `src/services/todayPublish.js` → `createLogger('today-publish')`
+      - `src/services/bot.js` → `createLogger('bot')`
 - [ ] (Esok malam) `npm install` + restart PM2 + verifikasi log
 
-#### Phase 1 prep (sudah ada di branch, BELUM aktif runtime)
+#### Phase 1 prep — scaffolding (sudah ada di branch, BELUM aktif runtime)
 
 - [x] `src/queue/types.js` — typedef BullMQ job (PublishJobData, StatusPollJobData,
       WebhookJobData, default opts dengan backoff exponential)
+- [x] `src/queue/connection.js` — Redis connection factory (ioredis) untuk BullMQ
+- [x] `src/queue/publish.queue.js` — producer `enqueuePublish()` (idempotent via SHA256 jobId)
+- [x] `src/worker/publish.worker.js` — worker skeleton (TODO Phase 1: wire adapter + DB writes)
+- [x] `src/worker/index.js` — entry point worker process (`npm run worker`)
+- [x] `src/db/prisma.js` — Prisma client lazy init + `pingPrisma()` untuk healthz
+- [x] `src/server/healthz.js` — `/healthz`, `/healthz/deep`, `/healthz/metrics` (belum di-mount)
 - [x] `prisma/schema.prisma` — draft skema 5 tabel: `accounts`, `publish_jobs`,
-      `post_targets`, `job_events`, `webhook_events`. Belum di-`prisma generate`,
-      belum ada DB.
+      `post_targets`, `job_events`, `webhook_events`
+- [x] `package.json` — deps `@prisma/client`, `bullmq`, `ioredis`, devDeps `prisma`;
+      scripts `worker`, `worker:dev`, `prisma:generate`, `prisma:migrate:*`
 
 **Acceptance criteria Phase 0:**
 
@@ -64,13 +72,18 @@ Tujuan: meletakkan tulang punggung tanpa mengubah perilaku produksi.
 3. Publish flow harian tidak terganggu — minimal 1 batch `/random` sukses.
 4. Tidak ada error baru di `pm2 logs smm-telegram-bridge --err`.
 
-### Phase 1 — Queue & Persistence (target: minggu depan)
+### Phase 1 — Queue & Persistence (scaffolding sudah ada, aktivasi minggu depan)
 
-- [ ] Stack: Postgres + Redis di VPS (docker-compose terpisah).
-- [ ] Prisma schema awal: `accounts`, `publish_jobs`, `post_targets`, `events`.
-- [ ] `src/queue/publish.queue.js` — producer dengan idempotencyKey SHA256.
-- [ ] `src/worker/publish.worker.js` — consumer dengan retry/backoff dari BullMQ.
-- [ ] Migrasi 1 alur: `/random` → enqueue → worker → adapter.publish().
+- [x] `prisma/schema.prisma` draft (5 tabel)
+- [x] `src/queue/publish.queue.js` producer (idempotent)
+- [x] `src/queue/connection.js` Redis factory
+- [x] `src/worker/publish.worker.js` skeleton (TODO: wire DB + adapter)
+- [x] `src/db/prisma.js` client wrapper
+- [x] `src/server/healthz.js` probe (belum di-mount)
+- [ ] Stack DI VPS: Postgres + Redis (docker-compose terpisah).
+- [ ] `npx prisma migrate deploy` (butuh DB hidup)
+- [ ] Wire `OutstandAdapter.publish()` ke `services/outstand.publishBulk`.
+- [ ] Migrasi 1 alur: `/random` → `enqueuePublish()` → worker → adapter.
 - [ ] Webhook Outstand → update job state di Postgres → emit ke bot.
 - [ ] Sheets writer baca dari Postgres (event log), bukan dari memory.
 
@@ -200,4 +213,106 @@ state di Postgres/Redis yang perlu di-rollback (belum dipasang).
 
 ---
 
-_Last updated: Phase 0 setup, 2026-05-25 (malam, prep only, no deploy)._
+## 8. Phase 1 — activation runbook (lakukan saat sudah punya ~3 jam tenang)
+
+> **Prasyarat:** Phase 0 sudah dideploy + bot verified jalan ≥ 1 hari di branch baru.
+
+### Step 1 — Provision Postgres + Redis di VPS
+
+```bash
+# di VPS
+cd /opt
+mkdir -p smm-stack && cd smm-stack
+cat > docker-compose.yml <<'EOF'
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smm
+      POSTGRES_USER: smm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redisdata:/data]
+volumes: { pgdata: {}, redisdata: {} }
+EOF
+
+# generate password kuat:
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+echo "REDIS_PASSWORD=$(openssl rand -hex 24)" >> .env
+
+docker compose --env-file .env up -d
+docker compose ps   # pastikan healthy
+```
+
+### Step 2 — Setup .env telegram-bridge
+
+```bash
+cd /opt/telegram-bridge
+# tambahkan ke .env (jangan timpa yang ada):
+echo "DATABASE_URL=postgresql://smm:<POSTGRES_PASSWORD>@localhost:5432/smm?schema=public" >> .env
+echo "REDIS_URL=redis://default:<REDIS_PASSWORD>@localhost:6379" >> .env
+echo "WORKER_PUBLISH_CONCURRENCY=4" >> .env
+echo "LOG_LEVEL=info" >> .env
+```
+
+### Step 3 — Install deps + run migration
+
+```bash
+cd /opt/telegram-bridge
+git checkout feat/phase0-foundation   # atau branch Phase 1 setelahnya
+npm install                            # install bullmq, ioredis, @prisma/client, prisma
+npx prisma migrate deploy              # apply prisma/schema.prisma ke DB
+npx prisma generate                    # generate client
+```
+
+### Step 4 — Smoke test scaffold (BELUM deploy ke produksi)
+
+```bash
+# Verifikasi koneksi DB + Redis tanpa menyentuh bot:
+node -e "import('./src/db/prisma.js').then(m=>m.pingPrisma()).then(r=>console.log('db:',r))"
+node -e "import('./src/queue/connection.js').then(m=>m.pingRedis()).then(r=>console.log('redis:',r))"
+
+# Coba enqueue dummy job (lihat di Redis pakai redis-cli):
+node -e "import('./src/queue/publish.queue.js').then(m=>m.enqueuePublish({targets:[{accountId:'1',network:'instagram'}],media:[{url:'test',kind:'video'}],captions:{},chatId:'test',dayKey:'2026-05-26',adapter:'outstand'})).then(r=>console.log(r))"
+
+# Jalankan worker (akan throw 'NOT_WIRED' — itu wajar, skeleton):
+npm run worker
+```
+
+### Step 5 — Implementasi Phase 1 (kerjakan iteratif di branch baru `feat/phase1-queue`)
+
+1. Wire `OutstandAdapter.publish()` ke `services/outstand.publishBulk`.
+2. Lengkapi `processPublishJob()` di `publish.worker.js`:
+   - Tulis state ke `publish_jobs` + `post_targets`.
+   - Enqueue STATUS_POLL untuk pending posts.
+   - Emit `JobEvent` row.
+3. Tambah `npm run worker` ke `ecosystem.config.cjs` PM2.
+4. Mount `mountHealthz(app)` di `src/server/webhook.js`.
+5. Migrasi 1 perintah (`/random`) ke `enqueuePublish()`.
+6. Setelah verified 1 hari → migrasi `/retry`, `/stuck`, bulk publish.
+
+### Step 6 — Rollback Phase 1
+
+Kalau setelah aktivasi ada masalah:
+
+```bash
+# stop worker, biarkan bot tetap jalan di mode lama
+pm2 stop smm-telegram-worker
+# kembalikan bot ke main (mode pre-queue, langsung pakai outstand):
+cd /opt/telegram-bridge && git checkout main && pm2 restart smm-telegram-bridge
+# bot kembali pakai jalur direct publishBulk seperti sebelumnya.
+```
+
+DB Postgres + Redis tetap hidup tapi idle — tidak ganggu apa-apa.
+
+---
+
+_Last updated: 2026-05-25 (malam, Phase 0 selesai + Phase 1 scaffolding lengkap, BELUM deploy)._
