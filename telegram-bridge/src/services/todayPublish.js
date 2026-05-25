@@ -1,6 +1,9 @@
 import { env } from '../config/env.js';
 import { nowIsoUtc } from '../utils/wibTime.js';
+import { createLogger } from '../utils/logger.js';
 import { getPost, listPostIdsForDailyTab } from './outstand.js';
+
+const log = createLogger('today-publish');
 import {
   getDailyTabName,
   readPostIdsFromDailyTab,
@@ -99,7 +102,7 @@ async function fetchAccountsForPostIds(postIds) {
     const posts = await Promise.all(
       chunk.map((id) =>
         getPost(id).catch((err) => {
-          console.warn(`[Today] getPost ${id}:`, err.message);
+          log.warn({ postId: id, err: err.message }, `[Today] getPost ${id}: ${err.message}`);
           return null;
         })
       )
@@ -121,7 +124,7 @@ export async function collectTodayPublishLinks(options = {}) {
   const tabName = options.tabName || getDailyTabName();
 
   const fromSheet = await readPostIdsFromDailyTab(tabName).catch((err) => {
-    console.warn('[Today] read sheet:', err.message);
+    log.warn({ err: err.message }, `[Today] read sheet: ${err.message}`);
     return [];
   });
 
@@ -129,7 +132,7 @@ export async function collectTodayPublishLinks(options = {}) {
   try {
     fromApi = await listPostIdsForDailyTab(tabName);
   } catch (err) {
-    console.warn('[Today] list Outstand posts:', err.message);
+    log.warn({ err: err.message }, `[Today] list Outstand posts: ${err.message}`);
   }
 
   const postIds = [...new Set([...fromSheet, ...fromApi])];

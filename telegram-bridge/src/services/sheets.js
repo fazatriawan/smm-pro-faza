@@ -28,6 +28,9 @@ import {
 } from '../utils/accountDayUsage.js';
 import { formatWibDateTime } from '../utils/wibTime.js';
 import { buildContentLabel, shortenContentLabel } from '../utils/contentLabel.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('sheets');
 import { reconcileSheetAccounts } from '../utils/accountDayUsage.js';
 import {
   sheetHttpLinkCell,
@@ -138,7 +141,7 @@ async function fetchPostsFresh(postIds) {
     await Promise.all(
       postIds.map((id) =>
         getPost(id).catch((err) => {
-          console.warn(`[Sheets] getPost ${id}:`, err.message);
+          log.warn({ postId: id, err: err.message }, `[Sheets] getPost ${id}: ${err.message}`);
           return null;
         })
       )
@@ -156,7 +159,7 @@ async function resolveAccountsForSheetWrite(accounts, postIds) {
     );
     return annotateNewAccountsAgainstDayHistory(existing, accounts);
   } catch (err) {
-    console.warn('[Sheets] day attempt annotate:', err.message);
+    log.warn({ err: err.message }, `[Sheets] day attempt annotate: ${err.message}`);
     return annotateAccountsWithDayAttempts(accounts);
   }
 }
@@ -371,8 +374,9 @@ export async function upsertPublishEventRow(event) {
     requestBody: { values: rows },
   });
 
-  console.log(
-    `[Sheets] ${rows.length} baris (${deleted} baris lama dihapus) tab ${tabName}`
+  log.info(
+    { tabName, rows: rows.length, deleted },
+    `[Sheets] ${rows.length} baris (${deleted} baris lama dihapus) tab ${tabName}`,
   );
 
   return {
@@ -426,9 +430,10 @@ export async function rewriteDailyTabFromAccounts(event) {
     requestBody: { values: allRows },
   });
 
-  console.log(
+  log.info(
+    { tabName, rows: dataRows.length, dupes: dupes.length },
     `[Sheets] rewrite tab ${tabName}: ${dataRows.length} baris data` +
-      (dupes.length ? `, ${dupes.length} akun duplikat` : '')
+      (dupes.length ? `, ${dupes.length} akun duplikat` : ''),
   );
 
   return {
@@ -573,7 +578,10 @@ export function scheduleSheetRefresh(
         targetLabel: meta.targetLabel,
         contentLabel: meta.contentLabel,
       }).catch((err) => {
-        console.error(`[Sheets] batch refresh +${delayMs / 60000}m:`, err.message);
+        log.error(
+          { delayMin: delayMs / 60000, err: err.message },
+          `[Sheets] batch refresh +${delayMs / 60000}m: ${err.message}`,
+        );
       });
     }, delayMs);
   }
@@ -581,7 +589,10 @@ export function scheduleSheetRefresh(
   for (const delayMs of [15 * 60_000, 60 * 60_000]) {
     setTimeout(() => {
       refreshTodaySheetQuietly(`+${delayMs / 60000}m`).catch((err) => {
-        console.error(`[Sheets] today refresh +${delayMs / 60000}m:`, err.message);
+        log.error(
+          { delayMin: delayMs / 60000, err: err.message },
+          `[Sheets] today refresh +${delayMs / 60000}m: ${err.message}`,
+        );
       });
     }, delayMs);
   }
@@ -594,10 +605,11 @@ export function scheduleSheetRefresh(
 export async function refreshTodaySheetQuietly(reason = '') {
   const { refreshTodaySheetFromOutstand } = await import('./todayPublish.js');
   const result = await refreshTodaySheetFromOutstand();
-  console.log(
+  log.info(
+    { tabName: result.tabName, reason, recorded: result.recorded },
     `[Sheets] Tab ${result.tabName} disinkronkan` +
       (reason ? ` (${reason})` : '') +
-      ` · ${result.recorded} baris`
+      ` · ${result.recorded} baris`,
   );
   return result;
 }
@@ -612,12 +624,13 @@ export function startTodaySheetAutoRefreshLoop() {
   const ms = minutes * 60_000;
   todaySheetAutoRefreshTimer = setInterval(() => {
     refreshTodaySheetQuietly(`auto ${minutes}m`).catch((err) => {
-      console.error('[Sheets] auto refresh:', err.message);
+      log.error({ err: err.message }, `[Sheets] auto refresh: ${err.message}`);
     });
   }, ms);
 
-  console.log(
-    `[Sheets] Auto-refresh tab harian setiap ${minutes} menit (semua Post ID hari ini)`
+  log.info(
+    { minutes },
+    `[Sheets] Auto-refresh tab harian setiap ${minutes} menit (semua Post ID hari ini)`,
   );
 }
 
@@ -729,7 +742,7 @@ export async function ensureDailySheetTab(spreadsheetId, tabName) {
         requests: [{ addSheet: { properties: { title: tabName } } }],
       },
     });
-    console.log(`[Sheets] Tab baru: ${tabName}`);
+    log.info({ tabName }, `[Sheets] Tab baru: ${tabName}`);
   }
 
   const headerRes = await sheets.spreadsheets.values.get({
@@ -744,7 +757,7 @@ export async function ensureDailySheetTab(spreadsheetId, tabName) {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [header] },
     });
-    console.log(`[Sheets] Header tab ${tabName} diperbarui`);
+    log.info({ tabName }, `[Sheets] Header tab ${tabName} diperbarui`);
   }
 
   return tabName;
@@ -825,7 +838,7 @@ export async function recordWebhookToSheet(payload, notify) {
     });
 
     refreshTodaySheetQuietly('webhook').catch((err) => {
-      console.warn('[Sheets] webhook full-tab refresh:', err.message);
+      log.warn({ err: err.message }, `[Sheets] webhook full-tab refresh: ${err.message}`);
     });
 
     if (notify) {
@@ -841,7 +854,7 @@ export async function recordWebhookToSheet(payload, notify) {
       updated: result.updated,
     };
   } catch (err) {
-    console.error('[Sheets] webhook refresh:', err);
+    log.error({ err: err?.message, stack: err?.stack }, `[Sheets] webhook refresh: ${err?.message || err}`);
     return { recorded: 0 };
   }
 }

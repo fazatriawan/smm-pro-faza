@@ -98,6 +98,9 @@ import {
   formatPollWaitHint,
   formatLargeBatchFollowUp,
 } from '../utils/publishPoll.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('bot');
 
 /** @type {import('telegraf').Telegraf<Context> | null} */
 let botInstance = null;
@@ -441,7 +444,7 @@ async function getExcludeIdsForRandomPick(chatId) {
     const published = await getTouchedAccountIdsToday();
     exclude = [...new Set([...exclude, ...published])];
   } catch (err) {
-    console.warn('[Bot] exclude published today:', err.message);
+    log.warn({ err: err.message }, `[Bot] exclude published today: ${err.message}`);
   }
   return exclude;
 }
@@ -990,7 +993,7 @@ async function processIncomingDriveLink(ctx, linkText) {
 
     await showContentPicker(ctx, entry, 0);
   } catch (err) {
-    console.error('[Bot] drive link error:', err);
+    log.error({ err: err?.message, stack: err?.stack }, `[Bot] drive link error: ${err?.message || err}`);
     const hint =
       err.message?.includes('404') || err.message?.includes('403')
         ? '\n\n💡 Pastikan folder di-share ke email service account (client_email di JSON).'
@@ -1037,7 +1040,7 @@ async function handleMissionBroadcast(ctx, text) {
       await processIncomingDriveLink(ctx, mission.driveLink);
     }
   } catch (err) {
-    console.error('[Bot] mission broadcast error:', err);
+    log.error({ err: err?.message, stack: err?.stack }, `[Bot] mission broadcast error: ${err?.message || err}`);
     await ctx.reply(
       `⚠️ Misi tersimpan, tapi ada masalah:\n${err.message}\n\n` +
         `Kirim link Drive atau video secara terpisah.`
@@ -1129,7 +1132,7 @@ async function handleFolderSelect(ctx) {
     const meta = await getFolderMeta(folderId);
     await loadFolderAndCaption(ctx, folderId, meta.name || 'Konten');
   } catch (err) {
-    console.error('[Bot] folder select error:', err);
+    log.error({ err: err?.message, stack: err?.stack }, `[Bot] folder select error: ${err?.message || err}`);
     await ctx.reply(`❌ Error: ${err.message}`);
     resetSession(ctx.chat.id);
   }
@@ -1215,7 +1218,7 @@ async function resolveCaptionForRetry(ctx, input) {
         missionBriefing: session.missionBriefing,
       });
     } catch (err) {
-      console.warn('[Bot] retry caption AI:', err.message);
+      log.warn({ err: err.message }, `[Bot] retry caption AI: ${err.message}`);
     }
   }
 
@@ -1660,7 +1663,7 @@ async function runPublish(ctx, scheduledAt) {
           );
         }
       } catch (sheetErr) {
-        console.error('[Sheets] record after publish:', sheetErr);
+        log.error({ err: sheetErr?.message, stack: sheetErr?.stack }, `[Sheets] record after publish: ${sheetErr?.message || sheetErr}`);
         await ctx.reply(
           `⚠️ Publish selesai, gagal catat Sheets:\n${sheetErr.message}`
         );
@@ -1676,7 +1679,7 @@ async function runPublish(ctx, scheduledAt) {
     try {
       await replyTelegramLong(ctx, reportText);
     } catch (tgErr) {
-      console.error('[Bot] telegram report:', tgErr);
+      log.error({ err: tgErr?.message, stack: tgErr?.stack }, `[Bot] telegram report: ${tgErr?.message || tgErr}`);
       await ctx.reply(
         `✅ Publish selesai (${summary.published} live · ${summary.failed} gagal · ${summary.pending} pending).\n` +
           `Laporan detail ada di Google Sheets (pesan Telegram terlalu panjang).`
@@ -1691,7 +1694,7 @@ async function runPublish(ctx, scheduledAt) {
       });
       await ctx.reply(formatDailyQuotaCompact(quota));
     } catch (quotaErr) {
-      console.warn('[Bot] quota after publish:', quotaErr.message);
+      log.warn({ err: quotaErr.message }, `[Bot] quota after publish: ${quotaErr.message}`);
     }
 
     if (summary.pending > 0) {
@@ -1704,7 +1707,7 @@ async function runPublish(ctx, scheduledAt) {
       });
     }
   } catch (err) {
-    console.error('[Bot] publish error:', err);
+    log.error({ err: err?.message, stack: err?.stack }, `[Bot] publish error: ${err?.message || err}`);
     const detail = err.response?.data;
     const extra =
       typeof detail === 'string'
@@ -1799,7 +1802,7 @@ function schedulePublishStatusFollowUp(ctx, input) {
               { parse_mode: 'Markdown', disable_web_page_preview: true }
             )
             .catch((err) => {
-              console.warn('[FollowUp] reply failed:', err.message);
+              log.warn({ err: err.message }, `[FollowUp] reply failed: ${err.message}`);
             });
         }
 
@@ -1807,7 +1810,10 @@ function schedulePublishStatusFollowUp(ctx, input) {
           stopped = true;
         }
       } catch (err) {
-        console.warn(`[FollowUp] poll +${delayMs / 1000}s:`, err.message);
+        log.warn(
+          { delaySec: delayMs / 1000, err: err.message },
+          `[FollowUp] poll +${delayMs / 1000}s: ${err.message}`,
+        );
       }
     }, delayMs);
   }
@@ -1956,7 +1962,7 @@ async function handleTextMessage(ctx) {
     try {
       await handleMissionBroadcast(ctx, text);
     } catch (err) {
-      console.error('[Bot] mission handler:', err);
+      log.error({ err: err?.message, stack: err?.stack }, `[Bot] mission handler: ${err?.message || err}`);
       await ctx.reply(`❌ Gagal baca broadcast misi:\n${err.message}`);
     }
     return;
@@ -2048,7 +2054,7 @@ export function createBot() {
             { parse_mode: 'Markdown' }
           )
         )
-        .catch((err) => console.warn('[Bot] kuota refresh:', err.message));
+        .catch((err) => log.warn({ err: err.message }, `[Bot] kuota refresh: ${err.message}`));
     } catch (err) {
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
     }
@@ -2589,7 +2595,7 @@ export function createBot() {
         usernames: parsed.usernames || [],
       });
     } catch (err) {
-      console.error('[Bot] /retry:', err);
+      log.error({ err: err?.message, stack: err?.stack }, `[Bot] /retry: ${err?.message || err}`);
       await ctx.reply(`❌ Retry gagal: ${err.message}`).catch(() => {});
     }
   });
@@ -2801,7 +2807,10 @@ export function createBot() {
   bot.on('text', handleTextMessage);
 
   bot.catch((err, ctx) => {
-    console.error('[Bot] unhandled:', err?.message || err, err?.stack);
+    log.error(
+      { err: err?.message || String(err), stack: err?.stack },
+      `[Bot] unhandled: ${err?.message || err}`,
+    );
     const hint =
       err?.response?.description ||
       err?.description ||
@@ -2840,7 +2849,7 @@ export function createBot() {
 export async function startBot() {
   const bot = createBot();
   const me = await bot.telegram.getMe();
-  console.log(`[Bot] Terhubung sebagai @${me.username}`);
+  log.info({ username: me.username }, `[Bot] Terhubung sebagai @${me.username}`);
 
   try {
     await bot.telegram.setMyCommands([
@@ -2859,10 +2868,10 @@ export async function startBot() {
       { command: 'misi', description: 'Lihat misi hari ini' },
     ]);
   } catch (err) {
-    console.warn('[Bot] setMyCommands:', err.message);
+    log.warn({ err: err.message }, `[Bot] setMyCommands: ${err.message}`);
   }
 
   bot.launch({ dropPendingUpdates: true });
-  console.log('[Bot] Telegram bot started (long polling)');
+  log.info('[Bot] Telegram bot started (long polling)');
   return bot;
 }
