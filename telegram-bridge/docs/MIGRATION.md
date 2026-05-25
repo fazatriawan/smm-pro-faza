@@ -38,11 +38,23 @@ Tujuan: meletakkan tulang punggung tanpa mengubah perilaku produksi.
 - [x] `src/adapters/OutstandAdapter.js` — skeleton wrapper
 - [x] `package.json` — tambah `pino` & `pino-pretty` (belum `npm install`)
 - [x] `docs/MIGRATION.md` — file ini
-- [x] **Migrasi 1/5 modul** — `src/index.js` sudah pakai `createLogger('app')`
-      (smoke-tested: logger fallback bekerja tanpa pino)
-- [ ] (Esok malam) Migrasi 4 modul sisanya: `bot.js`, `outstand.js`,
-      `sheets.js`, `todayPublish.js`
+- [x] **Migrasi modul ke `createLogger`** (smoke-tested):
+      - `src/index.js` → `createLogger('app')`
+      - `src/services/outstand.js` → `createLogger('outstand')`
+      - `src/services/dailySummary.js` → `createLogger('daily-summary')`
+      - `src/services/ai.js` → `createLogger('ai')`
+      - `src/services/imageToVideo.js` → `createLogger('ffmpeg')`
+- [ ] (Esok malam) Migrasi 3 modul besar sisanya: `bot.js` (18 calls),
+      `sheets.js` (13 calls), `todayPublish.js` (3 calls)
 - [ ] (Esok malam) `npm install` + restart PM2 + verifikasi log
+
+#### Phase 1 prep (sudah ada di branch, BELUM aktif runtime)
+
+- [x] `src/queue/types.js` — typedef BullMQ job (PublishJobData, StatusPollJobData,
+      WebhookJobData, default opts dengan backoff exponential)
+- [x] `prisma/schema.prisma` — draft skema 5 tabel: `accounts`, `publish_jobs`,
+      `post_targets`, `job_events`, `webhook_events`. Belum di-`prisma generate`,
+      belum ada DB.
 
 **Acceptance criteria Phase 0:**
 
@@ -88,6 +100,9 @@ commit 2: feat(adapter): add IPublishingAdapter interface + OutstandAdapter skel
 commit 3: docs(migration): add Phase 0-3 migration roadmap and rollback plan
 commit 4: feat(utils): add idempotency key builder + structured error taxonomy
 commit 5: refactor(index): migrate src/index.js console.* to createLogger('app')
+commit 6: refactor(services): migrate outstand/daily-summary/ai/ffmpeg to createLogger
+commit 7: feat(queue): add BullMQ job DTO typedefs (Phase 1 prep, zero runtime)
+commit 8: feat(prisma): draft Postgres schema for jobs/accounts/events (Phase 1)
 ```
 
 > **Tidak** akan di-merge ke `main` dan **tidak** di-deploy ke VPS malam ini.

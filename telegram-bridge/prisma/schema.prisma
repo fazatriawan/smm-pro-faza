@@ -1,0 +1,221 @@
+// Prisma schema — Phase 1 storage.
+//
+// Catatan:
+//  - File ini DRAFT. Belum di-`prisma generate` di mesin manapun.
+//  - Database target: PostgreSQL (didocker-compose terpisah di VPS).
+//  - Tabel dirancang untuk:
+//      * Idempotency (publish_jobs.idempotency_key UNIQUE)
+//      * Audit trail (events log per job)
+//      * Fan-out targets (post_targets, satu baris per akun × job)
+//      * Account health scoring (accounts.success_rate, dst)
+//  - Worker BullMQ menulis ke tabel ini setiap transisi state.
+//
+// CARA PAKAI (nanti, di Phase 1):
+//   cd telegram-bridge
+//   npm install -D prisma
+//   npm install @prisma/client
+//   npx prisma migrate dev --name init
+//
+// CARA RUN MIGRATIONS DI PRODUKSI:
+//   npx prisma migrate deploy
+//
+// CARA ROLLBACK:
+//   - Backup DB sebelum migrate.
+//   - Kalau migrate gagal: `prisma migrate resolve` + restore dari backup.
+
+generator client {
+  provider = "prisma-client-js"
+  // output path default: node_modules/@prisma/client
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================
+// ACCOUNTS — daftar akun social yang terhubung lewat adapter
+// =====================================================================
+
+enum Network {
+  facebook
+  instagram
+  threads
+  youtube
+  tiktok
+  twitter
+  linkedin
+}
+
+enum AccountStatus {
+  active
+  paused        // user menonaktifkan manual
+  cooldown      // circuit breaker aktif sementara
+  needs_fix     // token expired / scope kurang / banned
+  archived
+}
+
+model Account {
+  id                String         @id @default(cuid())
+  adapter           String                                  // 'outstand', 'vista', ...
+  externalId        String                                  // ID di sisi adapter (Outstand account id)
+  network           Network
+  username          String
+  pageId            String?                                 // facebook
+  status            AccountStatus  @default(active)
+
+  // Health scoring
+  successRate       Float          @default(1.0)             // 0..1
+  lastSuccessAt     DateTime?
+  lastFailAt        DateTime?
+  consecutiveFails  Int            @default(0)
+  cooldownUntil     DateTime?
+
+  // Per-day usage cache (di-rotate harian oleh worker)
+  todayKey          String?                                  // 'YYYY-MM-DD' WIB
+  todayAttempts     Int            @default(0)
+  todaySuccesses    Int            @default(0)
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  targets           PostTarget[]
+
+  @@unique([adapter, externalId])
+  @@index([network, status])
+  @@index([todayKey])
+  @@map("accounts")
+}
+
+// =====================================================================
+// PUBLISH JOBS — satu baris per request publish (mungkin banyak target)
+// =====================================================================
+
+enum JobStatus {
+  queued
+  processing
+  partial_success     // sebagian akun sukses, sebagian gagal
+  succeeded
+  failed
+  cancelled
+}
+
+model PublishJob {
+  id                  String     @id @default(cuid())
+  idempotencyKey      String     @unique                   // SHA256 hex, juga BullMQ jobId
+
+  chatId              String
+  dayKey              String                                // 'YYYY-MM-DD' WIB
+  adapter             String
+
+  status              JobStatus  @default(queued)
+  requestedAt         DateTime   @default(now())
+  scheduledAt         DateTime?
+  startedAt           DateTime?
+  finishedAt          DateTime?
+
+  // Konten
+  mediaJson           Json                                  // PublishMediaItem[]
+  captionsJson        Json                                  // PublishCaptions
+  title               String?
+  contentLabel        String?
+  batchTag            String?
+
+  // Audit / retry
+  attempts            Int        @default(0)
+  lastErrorCode       String?
+  lastErrorMessage    String?
+  parentJobId         String?
+
+  targets             PostTarget[]
+  events              JobEvent[]
+
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  @@index([chatId, dayKey])
+  @@index([status, requestedAt])
+  @@index([adapter, status])
+  @@map("publish_jobs")
+}
+
+// =====================================================================
+// POST TARGETS — fan-out: satu baris per (job × akun)
+// =====================================================================
+
+enum TargetStatus {
+  pending
+  processing
+  published
+  failed
+  rate_limited
+  cancelled
+  unknown
+}
+
+model PostTarget {
+  id              String        @id @default(cuid())
+  jobId           String
+  accountId       String
+
+  network         Network
+  status          TargetStatus  @default(pending)
+
+  externalPostId  String?                                   // Outstand post id
+  liveUrl         String?
+  errorCode       String?
+  errorMessage    String?
+
+  attempts        Int           @default(0)
+  lastAttemptAt   DateTime?
+  publishedAt     DateTime?
+
+  job             PublishJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  account         Account       @relation(fields: [accountId], references: [id])
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([jobId, status])
+  @@index([accountId, status])
+  @@index([externalPostId])
+  @@index([status, lastAttemptAt])
+  @@map("post_targets")
+}
+
+// =====================================================================
+// EVENTS — audit log untuk debugging & Sheets sync
+// =====================================================================
+
+model JobEvent {
+  id          String     @id @default(cuid())
+  jobId       String
+  type        String                                        // PublishEventType (lihat queue/types.js)
+  payload     Json
+  createdAt   DateTime   @default(now())
+
+  job         PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([type, createdAt])
+  @@map("job_events")
+}
+
+// =====================================================================
+// WEBHOOK LOG — disimpan untuk replay & dedup
+// =====================================================================
+
+model WebhookEvent {
+  id              String   @id @default(cuid())
+  source          String                                    // 'outstand'
+  externalEventId String?                                   // dedup key dari vendor
+  payload         Json
+  signature       String?
+  processedAt     DateTime?
+  errorMessage    String?
+  receivedAt      DateTime @default(now())
+
+  @@unique([source, externalEventId])
+  @@index([source, processedAt])
+  @@map("webhook_events")
+}
