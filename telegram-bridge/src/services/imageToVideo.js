@@ -5,6 +5,9 @@ import os from 'os';
 import { env } from '../config/env.js';
 import { downloadFile } from './drive.js';
 import { getFfmpegExecutable, probeFfmpeg } from '../utils/ffmpegPath.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('ffmpeg');
 
 export { probeFfmpeg };
 
@@ -83,7 +86,7 @@ export async function isFfmpegAvailable() {
   ffmpegResolvedPath = probe.path;
   ffmpegAvailable = probe.ok;
   if (ffmpegAvailable) {
-    console.log(`[FFmpeg] OK — ${ffmpegResolvedPath}`);
+    log.info({ path: ffmpegResolvedPath }, `[FFmpeg] OK — ${ffmpegResolvedPath}`);
   }
   return ffmpegAvailable;
 }
@@ -480,8 +483,9 @@ export async function convertDriveImageToSocialVideo(driveImage, network = 'soci
   }
 
   if (env.imageToVideoAllowSilent) {
-    console.warn(
-      `[${network}] Tidak ada musik — video tanpa suara. Taruh MP3 di assets/audio/.`
+    log.warn(
+      { network },
+      `[${network}] Tidak ada musik — video tanpa suara. Taruh MP3 di assets/audio/.`,
     );
     return buildVideoFromImageSilent(opts);
   }

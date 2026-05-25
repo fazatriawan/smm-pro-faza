@@ -15,6 +15,9 @@ import {
   convertDriveImagesToSocialVideo,
   networksNeedingImageToVideo,
 } from './imageToVideo.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('outstand');
 
 const client = axios.create({
   baseURL: env.outstandBaseUrl,
@@ -217,12 +220,14 @@ export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds) {
       throw new Error('Upload video (dari gambar) gagal');
     }
     if (images.length > 1) {
-      console.log(
-        `[Image→Video] Carousel ${images.length} gambar → video untuk: ${convertNetworks.join(', ')}`
+      log.info(
+        { count: images.length, networks: convertNetworks },
+        `[Image→Video] Carousel ${images.length} gambar → video untuk: ${convertNetworks.join(', ')}`,
       );
     } else {
-      console.log(
-        `[Image→Video] Satu video untuk: ${convertNetworks.join(', ')}`
+      log.info(
+        { networks: convertNetworks },
+        `[Image→Video] Satu video untuk: ${convertNetworks.join(', ')}`,
       );
     }
   }
@@ -434,7 +439,7 @@ export async function fetchCaptionFromPostIds(postIds) {
       const cap = extractPostCaption(raw);
       if (cap) return cap;
     } catch (err) {
-      console.warn(`[Outstand] fetchCaption ${id}:`, err.message);
+      log.warn({ postId: id, err: err.message }, `[Outstand] fetchCaption ${id}: ${err.message}`);
     }
   }
   return '';
@@ -601,7 +606,7 @@ export async function waitForPostsSettled(postIds, options = {}) {
           allSettled = false;
         }
       } catch (err) {
-        console.warn(`[Outstand] poll ${postId}:`, err.message);
+        log.warn({ postId, err: err.message }, `[Outstand] poll ${postId}: ${err.message}`);
         allSettled = false;
       }
     }

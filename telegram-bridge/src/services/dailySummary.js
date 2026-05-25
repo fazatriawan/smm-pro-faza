@@ -8,6 +8,9 @@ import {
   getSheetColumnCount,
   SHEET_STATUS_COLUMN_INDEX,
 } from '../config/sheetLayout.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('daily-summary');
 
 let lastSummaryDate = '';
 
@@ -67,7 +70,7 @@ export async function maybeSendDailySummary() {
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
-    console.warn('[DailySummary]', err.message);
+    log.warn({ err: err.message }, `[DailySummary] ${err.message}`);
   }
 }
 
@@ -75,10 +78,11 @@ export function startDailySummaryLoop() {
   if (!env.dailySummaryEnabled) return;
   setInterval(() => {
     maybeSendDailySummary().catch((err) =>
-      console.warn('[DailySummary]', err.message)
+      log.warn({ err: err.message }, `[DailySummary] ${err.message}`),
     );
   }, 60_000);
-  console.log(
-    `[DailySummary] Aktif — jam ${env.dailySummaryHour}:00 ${env.timezone}`
+  log.info(
+    { hour: env.dailySummaryHour, timezone: env.timezone },
+    `[DailySummary] Aktif — jam ${env.dailySummaryHour}:00 ${env.timezone}`,
   );
 }

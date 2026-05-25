@@ -1,6 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env.js';
 import { downloadFile } from './drive.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('ai');
 import {
   limitHashtagsInCaption,
   adaptCaptionForPlatform,
@@ -129,13 +132,13 @@ async function buildGeminiParts(context) {
             mimeType: mimeType.startsWith('video/') ? mimeType : 'video/mp4',
           },
         });
-        console.log(`[Gemini] Video attached: ${name}`);
+        log.info({ name }, `[Gemini] Video attached: ${name}`);
       } else if (buffer) {
         textPart.text +=
           `\n\nVideo terlalu besar — turunkan caption dari nama file & briefing, tetap spesifik.`;
       }
     } catch (err) {
-      console.warn('[Gemini] Could not attach video:', err.message);
+      log.warn({ err: err.message }, `[Gemini] Could not attach video: ${err.message}`);
     }
   }
 
@@ -156,7 +159,7 @@ async function buildGeminiParts(context) {
         });
       }
     } catch (err) {
-      console.warn('[Gemini] Could not attach image:', err.message);
+      log.warn({ err: err.message }, `[Gemini] Could not attach image: ${err.message}`);
     }
   }
 
@@ -198,7 +201,7 @@ export async function generateCaptionsByNetwork(context) {
   }
 
   if (Object.keys(byNetwork).length < uniqueNets.length) {
-    console.warn('[Gemini] Multi-platform parse incomplete, fallback single caption');
+    log.warn('[Gemini] Multi-platform parse incomplete, fallback single caption');
     const single = await generateCaption(context);
     const fallback = buildCaptionsByNetwork(single, uniqueNets, required);
     for (const net of uniqueNets) {
