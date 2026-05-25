@@ -8,6 +8,9 @@ import {
 } from './services/sheets.js';
 import { ensureSpreadsheetReady } from './services/spreadsheetSetup.js';
 import { probeFfmpeg } from './services/imageToVideo.js';
+import { createLogger } from './utils/logger.js';
+
+const log = createLogger('app');
 
 /**
  * @param {import('express').Express} app
@@ -27,23 +30,23 @@ async function main() {
       './services/sheets.js'
     );
     const tab = await ensureDailySheetTab(sheet.id, getDailyTabName());
-    console.log(`[Sheets] Laporan: ${sheet.url} (tab hari ini: ${tab})`);
+    log.info({ url: sheet.url, tab }, '[Sheets] Laporan siap');
   } catch (err) {
-    console.warn('[Sheets] Startup init skipped:', err.message);
+    log.warn({ err: err?.message }, '[Sheets] Startup init skipped');
     if (String(err.message).includes('permission')) {
-      console.warn(
-        '[Sheets] Buat spreadsheet manual di Google Sheets → Share ke client_email (service account) sebagai Editor → isi GOOGLE_SPREADSHEET_ID di .env. Atau aktifkan Google Sheets API di Google Cloud project service account Anda.'
+      log.warn(
+        '[Sheets] Buat spreadsheet manual di Google Sheets → Share ke client_email (service account) sebagai Editor → isi GOOGLE_SPREADSHEET_ID di .env. Atau aktifkan Google Sheets API di Google Cloud project service account Anda.',
       );
     }
   }
 
   const ff = probeFfmpeg();
   if (ff.ok) {
-    console.log(`[FFmpeg] Siap untuk YouTube (gambar→video): ${ff.path}`);
+    log.info({ path: ff.path }, '[FFmpeg] Siap untuk YouTube (gambar→video)');
   } else {
-    console.warn(
+    log.warn(
       '[FFmpeg] Tidak ditemukan — publish YouTube dari gambar akan gagal.\n' +
-        '  winget install Gyan.FFmpeg → tutup terminal → npm start lagi'
+        '  winget install Gyan.FFmpeg → tutup terminal → npm start lagi',
     );
   }
 
@@ -52,42 +55,43 @@ async function main() {
   let server;
   try {
     server = await listenServer(app, env.port);
-    console.log(`[Server] Webhook listening on http://0.0.0.0:${env.port}`);
-    console.log(`[Server] Outstand webhook path: POST /webhook/outstand`);
+    log.info({ port: env.port }, `[Server] Webhook listening on http://0.0.0.0:${env.port}`);
+    log.info('[Server] Outstand webhook path: POST /webhook/outstand');
   } catch (err) {
     if (err.code === 'EADDRINUSE') {
-      console.error(
+      log.error(
+        { port: env.port },
         `[Server] Port ${env.port} sudah dipakai proses lain (instance lama npm start?).\n` +
           `  PowerShell: Get-NetTCPConnection -LocalPort ${env.port} | Select OwningProcess\n` +
           `  Lalu: taskkill /PID <nomor> /F\n` +
-          `  Atau ubah PORT=3001 di .env`
+          `  Atau ubah PORT=3001 di .env`,
       );
     } else {
-      console.error('[Server] Gagal bind port:', err.message);
+      log.error({ err: err?.message }, '[Server] Gagal bind port');
     }
     process.exit(1);
   }
 
   try {
-    console.log('[Bot] Menghubungkan ke Telegram…');
+    log.info('[Bot] Menghubungkan ke Telegram…');
     await startBot();
     startDailySummaryLoop();
     startTodaySheetAutoRefreshLoop();
   } catch (err) {
-    console.error('[Bot] Gagal start:', err.message);
+    log.error({ err: err?.message, code: err?.response?.error_code }, '[Bot] Gagal start');
     if (err.response?.error_code === 409) {
-      console.error(
-        '[Bot] Instance lain sudah jalan (409). Tutup terminal/PM2 lain yang pakai bot token sama.'
+      log.error(
+        '[Bot] Instance lain sudah jalan (409). Tutup terminal/PM2 lain yang pakai bot token sama.',
       );
     }
     server.close();
     process.exit(1);
   }
 
-  console.log('[App] Siap. Tekan Ctrl+C untuk stop.');
+  log.info('[App] Siap. Tekan Ctrl+C untuk stop.');
 
   const shutdown = async (signal) => {
-    console.log(`[App] ${signal} — shutting down…`);
+    log.info({ signal }, `[App] ${signal} — shutting down…`);
     stopTodaySheetAutoRefreshLoop();
     getBot()?.stop(signal);
     server.close();
@@ -99,6 +103,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[App] Fatal startup error:', err);
+  log.fatal({ err: err?.message, stack: err?.stack }, '[App] Fatal startup error');
   process.exit(1);
 });

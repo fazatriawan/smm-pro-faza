@@ -32,12 +32,16 @@ Tujuan: meletakkan tulang punggung tanpa mengubah perilaku produksi.
 
 - [x] Feature branch `feat/phase0-foundation`
 - [x] `src/utils/logger.js` — Pino wrapper drop-in (fallback `console.*` aman)
+- [x] `src/utils/idempotency.js` — SHA256 publish key builder (order-invariant)
+- [x] `src/utils/errorTypes.js` — taksonomi error terstruktur (`PublishErrorCode`, kelas error)
 - [x] `src/adapters/IPublishingAdapter.js` — kontrak abstrak + typedef DTO
 - [x] `src/adapters/OutstandAdapter.js` — skeleton wrapper
 - [x] `package.json` — tambah `pino` & `pino-pretty` (belum `npm install`)
-- [ ] `docs/MIGRATION.md` — file ini
-- [ ] (Esok malam) Migrasi 5 modul paling chatty ke `createLogger(...)`:
-      `bot.js`, `outstand.js`, `sheets.js`, `todayPublish.js`, `index.js`
+- [x] `docs/MIGRATION.md` — file ini
+- [x] **Migrasi 1/5 modul** — `src/index.js` sudah pakai `createLogger('app')`
+      (smoke-tested: logger fallback bekerja tanpa pino)
+- [ ] (Esok malam) Migrasi 4 modul sisanya: `bot.js`, `outstand.js`,
+      `sheets.js`, `todayPublish.js`
 - [ ] (Esok malam) `npm install` + restart PM2 + verifikasi log
 
 **Acceptance criteria Phase 0:**
@@ -82,11 +86,21 @@ Branch: `feat/phase0-foundation`
 commit 1: chore(logging): add Pino logger wrapper with safe console fallback
 commit 2: feat(adapter): add IPublishingAdapter interface + OutstandAdapter skeleton
 commit 3: docs(migration): add Phase 0-3 migration roadmap and rollback plan
+commit 4: feat(utils): add idempotency key builder + structured error taxonomy
+commit 5: refactor(index): migrate src/index.js console.* to createLogger('app')
 ```
 
 > **Tidak** akan di-merge ke `main` dan **tidak** di-deploy ke VPS malam ini.
 > Branch ini hanya menyimpan groundwork untuk dideploy besok malam setelah
 > user selesai memakai bot pagi/siang.
+
+### Smoke test lokal (sudah dilakukan)
+
+- `node --check` lolos untuk semua file Phase 0.
+- `logger.js` runtime: log keluar via fallback `console.*` saat pino belum
+  ter-install — siap dipakai di VPS sebelum `npm install`.
+- `idempotency.js` runtime: order-invariant terhadap urutan targets, key
+  berubah saat targets/media berbeda.
 
 ---
 
