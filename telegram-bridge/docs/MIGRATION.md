@@ -315,4 +315,84 @@ DB Postgres + Redis tetap hidup tapi idle — tidak ganggu apa-apa.
 
 ---
 
-_Last updated: 2026-05-25 (malam, Phase 0 selesai + Phase 1 scaffolding lengkap, BELUM deploy)._
+## 9. Outstand provider notes (jawaban support 2026-05-26)
+
+### 9.1 Webhook security — HMAC-SHA256
+
+Outstand menandatangani webhook dengan HMAC-SHA256 dan kirim header
+`X-Outstand-Signature: sha256=<hex>`. Kode bot **sudah** memverifikasi
+(`src/server/webhook.js`) — yang perlu dilakukan operator:
+
+**Setup runbook:**
+
+```bash
+# 1. Generate secret kuat di workstation:
+openssl rand -hex 32        # contoh: 7c3a... (catat output)
+
+# 2. Pasang di Outstand:
+#    Buka https://www.outstand.so/app
+#    Settings → Webhooks → Edit endpoint kita
+#    Field "Signing Secret" → paste hex tadi → Save
+
+# 3. Pasang di VPS (.env telegram-bridge):
+ssh root@<vps>
+cd /opt/telegram-bridge
+nano .env
+# Tambah baris (paste hex YANG SAMA):
+#   OUTSTAND_WEBHOOK_SECRET=7c3a...
+
+pm2 restart smm-telegram-bridge --update-env
+
+# 4. Verifikasi:
+#    Outstand → Webhooks → Test button
+#    pm2 logs smm-telegram-bridge -- expect "[Webhook] received test"
+#    Kalau muncul "[Webhook] signature verification failed" → secret tidak match.
+```
+
+**Behaviour:**
+
+- Tanpa `OUTSTAND_WEBHOOK_SECRET` → mode legacy (verifikasi dilewati). Bot tetap jalan
+  tapi rentan spoofing kalau URL webhook bocor.
+- Dengan secret yang **tidak match** → bot reply 401, log warn detail
+  (`reason=signature-mismatch`), Outstand akan retry sampai 5×.
+- Outstand retry juga di-dedup oleh `src/utils/webhookDedup.js` (in-memory,
+  TTL 1 jam, key=SHA256 raw body) supaya tidak double-process.
+
+### 9.2 IP / network — bukan proxy ring
+
+Konfirmasi dari Outstand: mereka pakai **collection of IPs** sendiri, **bukan**
+proxy ring atau jasa rotasi. Mereka panggil **official APIs** (Meta Graph,
+Threads API, dst). Implikasi:
+
+- Rate limit Meta/IG/Threads/YouTube **tetap berlaku normal** ke Outstand.
+- Pasang proxy di sisi **kita sendiri TIDAK MEMBANTU** — Outstand yang manggil API.
+- Anti-duplicate, jeda antar publish, dan circuit breaker **harus dipasang di kita**
+  (sudah dilakukan via `accountDayUsage.js`, `retryPublish.js`,
+  `applyRetrySafetyFilter`, dst).
+
+### 9.3 YouTube — confirmed ~10 videos/org/hari
+
+Outstand pakai **satu Google Cloud project** untuk seluruh customer →
+default 10 videos/org/hari. Mereka sedang menambah quota lewat Google audit.
+
+**Opsi resmi mereka:**
+
+| Opsi | Biaya | Catatan |
+|---|---|---|
+| Tunggu Outstand naikin global quota | gratis | timeline tidak pasti |
+| Add-on dedicated GCP project | €3000 one-time | dibayar setelah quota deal |
+| Enterprise plan | €850/bulan, min 6 bulan | termasuk dedicated quota |
+
+**Keputusan kita:** skip YouTube via Outstand untuk sekarang. Kalau scale
+butuh > 10 video/hari, evaluasi:
+1. Vista Social YouTube (adapter terpisah Phase 2 — `VistaYoutubeAdapter`).
+2. Direct Google API dengan GCP project sendiri (≈100 upload/hari/project default).
+
+`src/config/env.js` sudah punya `YOUTUBE_PROJECT_UPLOADS_PER_DAY` (default 100,
+display saja di `/kuota`) — angka itu adalah **default quota satu GCP project**,
+bukan kapasitas Outstand. Sesuaikan jika kelak punya project sendiri.
+
+---
+
+_Last updated: 2026-05-26 pagi (Phase 0 selesai + Phase 1 scaffolding lengkap +
+Outstand HMAC verifier hardened + provider notes 9.1–9.3)._
