@@ -510,7 +510,11 @@ export function formatTelegramPublishReport(summary, postIdLine) {
  * @param {string} text
  * @param {number} [maxLen]
  */
-export function splitTelegramMessage(text, maxLen = 4000) {
+/**
+ * Telegram limit 4096 char per message. Pakai 3500 sebagai safety margin
+ * supaya markdown escape, retry footer, atau emoji UTF-16 tidak overflow.
+ */
+export function splitTelegramMessage(text, maxLen = 3500) {
   if (!text || text.length <= maxLen) return [text];
 
   const chunks = [];
@@ -526,13 +530,51 @@ export function splitTelegramMessage(text, maxLen = 4000) {
 }
 
 /**
+ * Throttle antar chunk (ms). Telegram global limit ~30 msg/s tapi per-chat
+ * lebih ketat. 700ms aman untuk kirim banyak chunk berturut-turut.
+ */
+const CHUNK_DELAY_MS = 700;
+
+/** Sleep helper untuk throttle & retry. */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Kirim message panjang sebagai beberapa chunk dengan delay antar chunk
+ * (mencegah 429 Too Many Requests). Otomatis retry kalau dapat 429 dengan
+ * `retry_after` dari Telegram.
+ *
  * @param {import('telegraf').Context} ctx
  * @param {string} text
+ * @param {object} [options] di-passthrough ke ctx.reply (mis. parse_mode)
  */
-export async function replyTelegramLong(ctx, text) {
+export async function replyTelegramLong(ctx, text, options = {}) {
   const parts = splitTelegramMessage(text);
-  for (const part of parts) {
-    await ctx.reply(part);
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        await ctx.reply(part, options);
+        break;
+      } catch (err) {
+        const code = err?.response?.error_code ?? err?.code;
+        const retryAfter =
+          err?.response?.parameters?.retry_after ??
+          err?.parameters?.retry_after;
+        if (code === 429 && retryAfter && attempts < 2) {
+          await sleep((Number(retryAfter) + 1) * 1000);
+          attempts += 1;
+          continue;
+        }
+        // Bukan 429 atau attempts habis → bubble ke caller
+        throw err;
+      }
+    }
+    if (i < parts.length - 1) {
+      await sleep(CHUNK_DELAY_MS);
+    }
   }
 }
 
