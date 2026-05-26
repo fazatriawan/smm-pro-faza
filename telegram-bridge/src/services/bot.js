@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
 import { env } from '../config/env.js';
-import { formatWibDateTime } from '../utils/wibTime.js';
+import { formatWibDateTime, getWibDayKey, nowIsoUtc } from '../utils/wibTime.js';
 import {
   listMediaInFolder,
   resolveDriveEntry,
@@ -25,7 +25,14 @@ import {
   YOUTUBE_TITLE_MAX,
   YOUTUBE_DESCRIPTION_MAX,
 } from './captionPlatforms.js';
-import { getSession, resetSession, updateSession } from '../utils/session.js';
+import {
+  getSession,
+  resetSession,
+  updateSession,
+  setSessionMediaFiles,
+  clearSessionContent,
+  getStaleMediaReason,
+} from '../utils/session.js';
 import { ensureSpreadsheetReady } from './spreadsheetSetup.js';
 import {
   recordPublishResultsToSheet,
@@ -127,6 +134,83 @@ async function ack(ctx, text) {
   } catch {
     /* callback kedaluwarsa — abaikan */
   }
+}
+
+/**
+ * Format notice untuk user kalau session.mediaFiles dianggap basi (hari beda /
+ * tidak ber-timestamp / lebih tua dari batas umur).
+ * @param {ReturnType<typeof import('../utils/session.js').getStaleMediaReason>} stale
+ * @param {import('../utils/session.js').PublishSession} session
+ */
+function formatStaleMediaNotice(stale, session) {
+  if (!stale) return '';
+  const setAtWib = stale.setAt ? formatWibDateTime(stale.setAt) : '';
+  const folder = session?.mediaSourceLabel || session?.folderName || '(tidak diketahui)';
+  const fileCount = session?.mediaFiles?.length || 0;
+  const fileSample = (session?.mediaFiles || [])
+    .slice(0, 3)
+    .map((f) => `_${String(f.name || 'media').replace(/[_*`[\]]/g, '\\$&')}_`)
+    .join(', ');
+  const tailNote =
+    fileCount > 3 ? ` …(+${fileCount - 3} lagi)` : '';
+
+  let head;
+  if (stale.reason === 'day-changed') {
+    head =
+      `🛑 *Media basi — hari sudah berganti.*\n` +
+      `Konten terakhir di-load: *${stale.prevDay}* (sekarang ${stale.todayDay}).`;
+  } else if (stale.reason === 'too-old') {
+    const ageH = stale.ageHours?.toFixed(1) ?? '?';
+    head =
+      `🛑 *Media basi — sudah lebih dari ${ageH} jam yang lalu.*`;
+  } else if (stale.reason === 'no-timestamp') {
+    head =
+      `🛑 *Media sesi tidak punya stempel waktu* (kemungkinan tersisa dari sesi sebelum update).`;
+  } else {
+    head = '🛑 *Media basi.*';
+  }
+
+  return (
+    `${head}\n\n` +
+    `📁 *Sumber tersimpan:* ${folder}\n` +
+    (setAtWib ? `🕒 *Di-load pukul:* ${setAtWib}\n` : '') +
+    (fileCount
+      ? `📄 *Daftar (${fileCount}):* ${fileSample}${tailNote}\n`
+      : '') +
+    `\nSesi konten saya kosongkan untuk mencegah salah upload.\n` +
+    `Ketik */publish* dan kirim link folder Drive *hari ini* (atau foto/video langsung), baru pilih akun.`
+  );
+}
+
+/**
+ * Bangun blok preview daftar media yang akan ter-publish.
+ * @param {import('../utils/session.js').PublishSession} session
+ * @param {{ max?: number }} [opts]
+ */
+function formatMediaListPreview(session, opts = {}) {
+  const files = session?.mediaFiles || [];
+  if (!files.length) return '';
+  const max = opts.max ?? 8;
+  const lines = files.slice(0, max).map((f, i) => {
+    const name = String(f.name || 'media').replace(/[_*`[\]]/g, '\\$&');
+    const kind = f.mimeType?.startsWith('video/') ? '🎬' : '🖼';
+    return `${i + 1}. ${kind} _${name}_`;
+  });
+  if (files.length > max) {
+    lines.push(`…(+${files.length - max} file lagi)`);
+  }
+  const folder = session.mediaSourceLabel || session.folderName || '';
+  const setAtWib = session.mediaFilesSetAt
+    ? formatWibDateTime(session.mediaFilesSetAt)
+    : '';
+  const folderLine = folder ? `📁 *${folder}*\n` : '';
+  const setAtLine = setAtWib ? `🕒 Di-load: ${setAtWib}\n` : '';
+  return (
+    `📄 *Konten yang akan ter-publish (${files.length}):*\n` +
+    folderLine +
+    setAtLine +
+    lines.join('\n')
+  );
 }
 
 function isAllowed(ctx) {
@@ -264,6 +348,14 @@ async function showReadyPreview(ctx, accountIds, label, networks) {
   if (session.captionTone) {
     preview += `Gaya: ${getToneLabel(session.captionTone)}\n`;
   }
+
+  // Daftar konten yang akan ter-publish — biar user bisa lihat dan
+  // sigap membatalkan kalau folder Drive berisi file salah/lama.
+  const mediaBlock = formatMediaListPreview(session);
+  if (mediaBlock) {
+    preview += `\n${mediaBlock}\n`;
+  }
+
   preview += onlyYoutube
     ? '\n*YouTube — judul & deskripsi terpisah:*\n'
     : `\n*Caption berbeda per platform* (bukan copy-paste):\n`;
@@ -457,6 +549,31 @@ async function handleRandomAccountPick(ctx, text) {
   const parsed = parseRandomPickCommand(cleanText);
   if (!parsed?.counts || !Object.keys(parsed.counts).length) {
     await ctx.reply(formatRandomPickHelp(), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Anti-stale guard: tolak kalau session.mediaFiles dari hari sebelumnya,
+  // tidak ber-timestamp, atau sudah lebih tua dari batas umur (default 6 jam).
+  // Skenario yang dicegah: bot tidak pernah restart, user lupa /publish ulang,
+  // tetapi langsung `/random ig 22` → upload konten kemarin ke akun acak hari ini.
+  const session = getSession(ctx.chat.id);
+  const stale = getStaleMediaReason(session);
+  if (stale && stale.reason !== 'no-media') {
+    await safeReply(ctx, formatStaleMediaNotice(stale, session), {
+      parse_mode: 'Markdown',
+    });
+    clearSessionContent(ctx.chat.id);
+    updateSession(ctx.chat.id, { step: 'awaiting_media' });
+    return;
+  }
+
+  if (!session.mediaFiles?.length) {
+    await safeReply(
+      ctx,
+      '❌ Belum ada media di sesi.\n\n' +
+        'Ketik */publish* dulu, lalu kirim link folder Drive *hari ini* (atau foto/video langsung).',
+      { parse_mode: 'Markdown' }
+    );
     return;
   }
 
@@ -879,15 +996,18 @@ async function loadFolderAndCaption(ctx, folderId, folderName, presetMedia = nul
     mimeType: f.mimeType || 'application/octet-stream',
   }));
 
-  updateSession(ctx.chat.id, {
-    step: 'selecting_targets',
+  setSessionMediaFiles(ctx.chat.id, mediaFiles, {
     folderId,
     folderName,
-    mediaFiles,
-    caption: undefined,
-    captionsByNetwork: undefined,
-    selectedAccountIds: undefined,
-    targetLabel: undefined,
+    sourceLabel: `Drive · ${folderName}`,
+    extra: {
+      step: 'selecting_targets',
+      caption: undefined,
+      captionsByNetwork: undefined,
+      selectedAccountIds: undefined,
+      targetLabel: undefined,
+      outstandMediaIds: undefined,
+    },
   });
 
   registerNotifyChat('default', ctx.chat.id);
@@ -949,13 +1069,15 @@ async function processIncomingDriveLink(ctx, linkText) {
         source: 'drive',
       }));
 
-      updateSession(ctx.chat.id, {
-        mediaFiles,
+      setSessionMediaFiles(ctx.chat.id, mediaFiles, {
         folderId: entry.id,
         folderName: entry.name,
-        caption: pending.caption,
-        step: 'idle',
-        retryPending: undefined,
+        sourceLabel: `Drive · ${entry.name} (retry)`,
+        extra: {
+          caption: pending.caption,
+          step: 'idle',
+          retryPending: undefined,
+        },
       });
       await ctx.reply('✅ Media dari Drive siap. Melanjutkan retry…');
       await handleRetryPublish(ctx, {
@@ -1067,8 +1189,9 @@ async function processTelegramMedia(ctx) {
 
   if (session.step === 'awaiting_retry_media' && session.retryPending) {
     const pending = session.retryPending;
-    updateSession(ctx.chat.id, {
-      mediaFiles: [
+    setSessionMediaFiles(
+      ctx.chat.id,
+      [
         {
           buffer,
           name: picked.name,
@@ -1076,11 +1199,16 @@ async function processTelegramMedia(ctx) {
           source: 'telegram',
         },
       ],
-      folderName: picked.name,
-      caption: pending.caption,
-      step: 'idle',
-      retryPending: undefined,
-    });
+      {
+        folderName: picked.name,
+        sourceLabel: `Telegram · ${picked.name} (retry)`,
+        extra: {
+          caption: pending.caption,
+          step: 'idle',
+          retryPending: undefined,
+        },
+      }
+    );
     await ctx.reply('✅ Media siap. Melanjutkan retry…');
     await handleRetryPublish(ctx, {
       send: true,
@@ -1101,14 +1229,17 @@ async function processTelegramMedia(ctx) {
     },
   ];
 
-  updateSession(ctx.chat.id, {
-    step: 'selecting_targets',
+  setSessionMediaFiles(ctx.chat.id, mediaFiles, {
     folderName: label,
-    mediaFiles,
-    caption: undefined,
-    captionsByNetwork: undefined,
-    selectedAccountIds: undefined,
-    targetLabel: undefined,
+    sourceLabel: `Telegram · ${picked.name}`,
+    extra: {
+      step: 'selecting_targets',
+      caption: undefined,
+      captionsByNetwork: undefined,
+      selectedAccountIds: undefined,
+      targetLabel: undefined,
+      outstandMediaIds: undefined,
+    },
   });
   registerNotifyChat('default', ctx.chat.id);
 
@@ -1458,6 +1589,16 @@ async function runPublish(ctx, scheduledAt) {
     await ctx.reply(
       'Media belum ada. Kirim link Drive / foto, atau ketik /publish lagi.'
     );
+    return;
+  }
+
+  const staleNow = getStaleMediaReason(session);
+  if (staleNow && staleNow.reason !== 'no-media') {
+    await safeReply(ctx, formatStaleMediaNotice(staleNow, session), {
+      parse_mode: 'Markdown',
+    });
+    clearSessionContent(ctx.chat.id);
+    updateSession(ctx.chat.id, { step: 'awaiting_media' });
     return;
   }
 

@@ -32,3 +32,30 @@ export function formatWibDateTime(input) {
 export function nowIsoUtc() {
   return new Date().toISOString();
 }
+
+/**
+ * Day-key di zona WIB, format `YYYY-MM-DD`. Dipakai untuk anti-stale session:
+ * kalau key berubah, artinya hari sudah ganti dan session media lama harus
+ * di-clear sebelum dipakai ulang.
+ * @param {string | Date | number} [input]
+ */
+export function getWibDayKey(input) {
+  try {
+    const d = input == null || input === ''
+      ? new Date()
+      : input instanceof Date
+        ? input
+        : new Date(input);
+    if (Number.isNaN(d.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: WIB_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(d);
+    const get = (t) => parts.find((p) => p.type === t)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  } catch {
+    return '';
+  }
+}
