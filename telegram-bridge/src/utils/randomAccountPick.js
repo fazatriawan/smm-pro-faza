@@ -14,6 +14,7 @@ export const NETWORK_ALIASES = {
   tiktok: 'tiktok',
   tt: 'tiktok',
   linkedin: 'linkedin',
+  li: 'linkedin',
   pin: 'pinterest',
   pinterest: 'pinterest',
   bluesky: 'bluesky',
@@ -31,6 +32,47 @@ const NET_LABEL = {
   pinterest: 'Pinterest',
   bluesky: 'Bluesky',
 };
+
+/**
+ * Parse filter platform dari command (mis. `/linkshari ig fb`, `/kuota ig`).
+ * Mendukung shortcut (ig, fb, yt, tt, th, x, li, pin) dan nama lengkap
+ * (instagram, facebook, threads, youtube, ...). Pemisah bisa spasi, koma,
+ * titik koma. Token yang tidak dikenal masuk ke `invalid`.
+ *
+ * Tanpa argumen / argumen kosong → `{ networks: [], invalid: [] }` (caller
+ * harus interpretasi sebagai "tampilkan semua").
+ *
+ * @param {string} text
+ * @returns {{ networks: string[], invalid: string[] }}
+ */
+export function parseNetworkFilter(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return { networks: [], invalid: [] };
+
+  /** @type {Set<string>} */
+  const networks = new Set();
+  /** @type {string[]} */
+  const invalid = [];
+
+  for (const token of raw.split(/[\s,;]+/).filter(Boolean)) {
+    const net = resolveAlias(token);
+    if (net) {
+      networks.add(net);
+    } else {
+      invalid.push(token);
+    }
+  }
+
+  return { networks: [...networks], invalid };
+}
+
+/**
+ * Label pendek per platform (untuk header report).
+ * @param {string} network
+ */
+export function getNetworkShortLabel(network) {
+  return NET_LABEL[(network || '').toLowerCase()] || network || '';
+}
 
 /**
  * @param {string} token

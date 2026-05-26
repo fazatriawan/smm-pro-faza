@@ -86,6 +86,8 @@ import {
   parseRandomPickCommand,
   pickRandomAccounts,
   formatRandomPickHelp,
+  parseNetworkFilter,
+  getNetworkShortLabel,
 } from '../utils/randomAccountPick.js';
 import {
   annotateAccountsWithDayAttempts,
@@ -263,7 +265,8 @@ async function showMainMenu(ctx, extraText = '') {
     `• ${MENU.CANCEL} — batalkan sesi\n` +
     `• ${MENU.HELP} — panduan singkat\n\n` +
     'Kirim *broadcast misi* (§1–2–5) → lalu link Drive atau foto/video.\n' +
-    'Perintah: /publish · /retry · /kuota · /linkshari · /synctoday · /refresh · /stuck · /links · /status · /misi';
+    'Perintah: /publish · /retry · /kuota · /linkshari · /synctoday · /refresh · /stuck · /links · /status · /misi\n\n' +
+    '💡 *Tip*: `/linkshari ig` → cuma link IG · `/linkshari fb` → cuma FB · `/linkshari ig fb` → IG+FB.';
 
   await ctx.reply(text, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
 }
@@ -2218,8 +2221,43 @@ export function createBot() {
   });
 
   bot.command('linkshari', async (ctx) => {
+    // Parse optional argument platform filter:
+    //   /linkshari            → semua platform
+    //   /linkshari ig         → hanya Instagram
+    //   /linkshari ig fb      → Instagram + Facebook
+    //   /linkshari instagram,facebook → sama seperti di atas
+    const args = (ctx.message.text || '')
+      .replace(/^\/linkshari(@\w+)?\s*/i, '')
+      .trim();
+    const { networks: filterNets, invalid } = parseNetworkFilter(args);
+
+    if (invalid.length) {
+      await ctx.reply(
+        `⚠️ Platform tidak dikenal: \`${invalid.join('`, `')}\`\n\n` +
+          '*Yang valid:*\n' +
+          '• `ig` / `instagram`\n' +
+          '• `fb` / `facebook`\n' +
+          '• `th` / `threads`\n' +
+          '• `yt` / `youtube`\n' +
+          '• `tt` / `tiktok`\n' +
+          '• `x` / `twitter`\n' +
+          '• `li` / `linkedin`\n' +
+          '• `pin` / `pinterest`\n\n' +
+          '*Contoh:*\n' +
+          '• `/linkshari` — semua platform\n' +
+          '• `/linkshari ig` — link Instagram saja\n' +
+          '• `/linkshari ig fb` — IG + FB',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const filterLabel = filterNets.length
+      ? filterNets.map(getNetworkShortLabel).join(' + ')
+      : 'semua platform';
+
     await ctx.reply(
-      `⏳ Mengambil semua post *hari ini* (${env.timezone}) dari Outstand…`,
+      `⏳ Mengambil post *${filterLabel}* hari ini (${env.timezone}) dari Outstand…`,
       { parse_mode: 'Markdown' }
     );
     try {
@@ -2233,14 +2271,33 @@ export function createBot() {
         return;
       }
 
-      const report = formatPublishLinksReport(
-        data.accounts,
-        `${data.tabName} · ${data.postIds.length} batch`
-      );
+      // Filter accounts berdasarkan network kalau user kasih argumen
+      const filterSet = new Set(filterNets);
+      const filteredAccounts = filterSet.size
+        ? data.accounts.filter((a) =>
+            filterSet.has((a.network || '').toLowerCase())
+          )
+        : data.accounts;
+
+      if (filterSet.size && !filteredAccounts.length) {
+        const validList = filterNets.map(getNetworkShortLabel).join(', ');
+        await ctx.reply(
+          `Tidak ada post *${validList}* untuk tab *${data.tabName}*.\n` +
+            'Cek `/linkshari` (tanpa filter) untuk lihat platform yang tersedia hari ini.',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      const postIdLine = filterSet.size
+        ? `${data.tabName} · ${filterLabel} · ${filteredAccounts.length} akun`
+        : `${data.tabName} · ${data.postIds.length} batch`;
+
+      const report = formatPublishLinksReport(filteredAccounts, postIdLine);
       await replyTelegramLong(ctx, report);
 
       const dupes = buildDuplicateAccountSummary(
-        annotateAccountsWithDayAttempts(data.accounts)
+        annotateAccountsWithDayAttempts(filteredAccounts)
       );
       const dupeNote = dupes.length
         ? `\n\n⚠️ *${dupes.length} akun posting >1× hari ini:*\n` +
@@ -2257,11 +2314,29 @@ export function createBot() {
           '\n\nJalankan `/synctoday` untuk baris REKAP di Sheets.'
         : '';
 
+      // Hitung ringkasan untuk filtered set (atau semua kalau tanpa filter)
+      const counts = filteredAccounts.reduce(
+        (acc, a) => {
+          const st = (a.status || '').toLowerCase();
+          if (st === 'published' || st === 'live') acc.live += 1;
+          else if (st === 'failed' || st === 'error') acc.failed += 1;
+          else acc.pending += 1;
+          return acc;
+        },
+        { live: 0, failed: 0, pending: 0 }
+      );
+
+      const headerLabel = filterSet.size
+        ? `📋 *${data.tabName}* · *${filterLabel}* · ${filteredAccounts.length} akun`
+        : `📋 *${data.tabName}* · ${data.postIds.length} Post ID`;
+
       await ctx.reply(
-        `📋 *${data.tabName}* · ${data.postIds.length} Post ID\n` +
-          `${data.meta.published} live · ${data.meta.failed} gagal · ${data.meta.pending} pending` +
+        headerLabel +
+          `\n${counts.live} live · ${counts.failed} gagal · ${counts.pending} pending` +
           dupeNote +
-          `\n\nSimpan ke Sheets: /synctoday`,
+          (filterSet.size
+            ? `\n\nFilter lain: \`/linkshari ig\`, \`/linkshari fb\`, \`/linkshari ig fb th\`\nSemua: \`/linkshari\``
+            : `\n\nFilter per platform: \`/linkshari ig\`, \`/linkshari fb\`, dst.\nSimpan ke Sheets: /synctoday`),
         { parse_mode: 'Markdown' }
       );
     } catch (err) {
@@ -3006,6 +3081,7 @@ export async function startBot() {
       { command: 'retry', description: 'Ulangi akun yang gagal' },
       { command: 'refresh', description: 'Sync status Outstand → Sheets' },
       { command: 'stuck', description: 'Akun pending >2 jam' },
+      { command: 'linkshari', description: 'Link post hari ini (filter: ig/fb/yt/dll)' },
       { command: 'misi', description: 'Lihat misi hari ini' },
     ]);
   } catch (err) {
