@@ -80,7 +80,7 @@ import {
   downloadTelegramFile,
   extractTelegramMedia,
 } from './telegramMedia.js';
-import { safeReply } from '../utils/telegramMarkdown.js';
+import { safeReply, safeSendMessage } from '../utils/telegramMarkdown.js';
 import {
   looksLikeRandomPick,
   parseRandomPickCommand,
@@ -551,7 +551,7 @@ async function handleRandomAccountPick(ctx, text) {
 
   const parsed = parseRandomPickCommand(cleanText);
   if (!parsed?.counts || !Object.keys(parsed.counts).length) {
-    await ctx.reply(formatRandomPickHelp(), { parse_mode: 'Markdown' });
+    await safeReply(ctx, formatRandomPickHelp(), { parse_mode: 'Markdown' });
     return;
   }
 
@@ -580,7 +580,8 @@ async function handleRandomAccountPick(ctx, text) {
     return;
   }
 
-  await ctx.reply(
+  await safeReply(
+    ctx,
     force
       ? '⏳ Memilih akun acak (mode *force* — termasuk yang sudah post hari ini)…'
       : '⏳ Memilih akun acak (lewati yang sudah post hari ini)…',
@@ -601,10 +602,11 @@ async function handleRandomAccountPick(ctx, text) {
       (result.warnings.length
         ? result.warnings.join('\n')
         : 'Cek koneksi Outstand.');
+    const escBackticks = (s) => String(s || '').replace(/`/g, '');
     const forceHint = suggestForce
-      ? `\n\n🔥 Mau *paksa* tetap pilih (post 2× ke akun yang sama)?\nKetik ulang dengan keyword \`force\`:\n\`${cleanText} force\``
+      ? `\n\n🔥 Mau *paksa* tetap pilih (post 2× ke akun yang sama)?\nKetik ulang dengan keyword \`force\`:\n\`${escBackticks(cleanText)} force\``
       : '';
-    await ctx.reply(baseMsg + forceHint, { parse_mode: 'Markdown' });
+    await safeReply(ctx, baseMsg + forceHint, { parse_mode: 'Markdown' });
     return;
   }
 
@@ -1933,21 +1935,22 @@ function schedulePublishStatusFollowUp(ctx, input) {
                 ? `📉 *Update status* — ${failed} akun *GAGAL*`
                 : `📊 *Update status* — ${published} live, ${failed} gagal`;
 
-          await ctx.telegram
-            .sendMessage(
-              chatId,
-              header +
-                ` (+${Math.round(delayMs / 60000)} mnt)\n\n` +
-                lines.join('\n') +
-                more +
-                (stillPending
-                  ? `\n\n⏳ ${stillPending} akun masih pending.`
-                  : '\n\n✅ Semua post sudah settled.'),
-              { parse_mode: 'Markdown', disable_web_page_preview: true }
-            )
-            .catch((err) => {
-              log.warn({ err: err.message }, `[FollowUp] reply failed: ${err.message}`);
+          const followUpBody =
+            header +
+            ` (+${Math.round(delayMs / 60000)} mnt)\n\n` +
+            lines.join('\n') +
+            more +
+            (stillPending
+              ? `\n\n⏳ ${stillPending} akun masih pending.`
+              : '\n\n✅ Semua post sudah settled.');
+          try {
+            await safeSendMessage(ctx.telegram, chatId, followUpBody, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: true,
             });
+          } catch (err) {
+            log.warn({ err: err.message }, `[FollowUp] reply failed: ${err.message}`);
+          }
         }
 
         if (!stillPending) {
