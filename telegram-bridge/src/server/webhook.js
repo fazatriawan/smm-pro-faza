@@ -3,29 +3,41 @@ import express from 'express';
 import { env } from '../config/env.js';
 import { recordWebhookToSheet } from '../services/sheets.js';
 import { getBot, getNotifyChat } from '../services/bot.js';
+import { createLogger } from '../utils/logger.js';
+import { hashWebhookBody, markIfNew } from '../utils/webhookDedup.js';
+
+const log = createLogger('webhook');
 
 /**
  * @param {import('express').Request} req
  * @param {string} rawBody
+ * @returns {{ ok: boolean, reason?: string }}
  */
 function verifyOutstandSignature(req, rawBody) {
   const secret = env.outstandWebhookSecret;
-  if (!secret) return true;
+  if (!secret) {
+    return { ok: true, reason: 'no-secret-configured' };
+  }
 
   const signature = req.headers['x-outstand-signature'];
-  if (!signature || typeof signature !== 'string') return false;
+  if (!signature || typeof signature !== 'string') {
+    return { ok: false, reason: 'missing-header' };
+  }
 
   const expected =
     'sha256=' +
     crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
 
   try {
-    return crypto.timingSafeEqual(
+    const ok = crypto.timingSafeEqual(
       Buffer.from(signature),
-      Buffer.from(expected)
+      Buffer.from(expected),
     );
+    return ok
+      ? { ok: true }
+      : { ok: false, reason: 'signature-mismatch' };
   } catch {
-    return false;
+    return { ok: false, reason: 'buffer-length-mismatch' };
   }
 }
 
@@ -47,7 +59,17 @@ export function createWebhookApp() {
             ? req.body.toString('utf8')
             : '';
 
-      if (!verifyOutstandSignature(req, rawBody)) {
+      const verdict = verifyOutstandSignature(req, rawBody);
+      if (!verdict.ok) {
+        log.warn(
+          {
+            reason: verdict.reason,
+            ip: req.ip,
+            hasHeader: Boolean(req.headers['x-outstand-signature']),
+            secretConfigured: Boolean(env.outstandWebhookSecret),
+          },
+          `[Webhook] signature verification failed: ${verdict.reason}`,
+        );
         return res.status(401).send('Invalid signature');
       }
 
@@ -55,10 +77,37 @@ export function createWebhookApp() {
       try {
         payload = JSON.parse(rawBody || '{}');
       } catch {
+        log.warn({ ip: req.ip }, '[Webhook] invalid JSON body');
         return res.status(400).send('Invalid JSON');
       }
 
+      const dedupKey = hashWebhookBody(rawBody);
+      const isNew = markIfNew(dedupKey);
+
       res.status(200).send('OK');
+
+      if (!isNew) {
+        log.info(
+          {
+            event: payload?.event,
+            postId: payload?.data?.postId,
+            dedupKey: dedupKey.slice(0, 12),
+          },
+          '[Webhook] duplicate retry ignored',
+        );
+        return;
+      }
+
+      log.info(
+        {
+          event: payload?.event,
+          postId: payload?.data?.postId,
+          accounts: Array.isArray(payload?.data?.socialAccounts)
+            ? payload.data.socialAccounts.length
+            : undefined,
+        },
+        `[Webhook] received ${payload?.event}`,
+      );
 
       setImmediate(async () => {
         try {
@@ -73,10 +122,13 @@ export function createWebhookApp() {
 
           await recordWebhookToSheet(payload, notify);
         } catch (err) {
-          console.error('[Webhook] processing error:', err);
+          log.error(
+            { err: err?.message, stack: err?.stack },
+            `[Webhook] processing error: ${err?.message || err}`,
+          );
         }
       });
-    }
+    },
   );
 
   return app;
