@@ -5,6 +5,60 @@ function isHttpUrl(s) {
   return /^https?:\/\//i.test(String(s || '').trim());
 }
 
+/**
+ * Alphabet base64-url yang dipakai Instagram untuk derive shortcode dari
+ * numeric media_id. URL public Instagram (`/p/{shortcode}/`) HARUS pakai
+ * shortcode, bukan numeric media_id.
+ */
+const IG_BASE64_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+/**
+ * Convert numeric Instagram media_id ke shortcode (base64-url encoding).
+ *
+ * Outstand mengirim `platformPostId` sebagai numeric snowflake (mis.
+ * `18096868406136282`). Bot lama pakai langsung di URL `/reel/{id}/`, yang
+ * **tidak valid** dan tidak resolve di browser. Fungsi ini convert ke
+ * shortcode supaya URL `https://www.instagram.com/p/{shortcode}/` bisa di-buka.
+ *
+ * Support format `{mediaId}_{userId}` — bagian sebelum underscore yang dipakai.
+ *
+ * @param {string | number | bigint} mediaId numeric media_id Instagram
+ * @returns {string} shortcode atau '' kalau tidak bisa convert
+ */
+export function instagramMediaIdToShortcode(mediaId) {
+  try {
+    const raw = String(mediaId ?? '').trim();
+    if (!raw) return '';
+    const numPart = raw.split('_')[0];
+    if (!/^\d+$/.test(numPart)) return '';
+    let id = BigInt(numPart);
+    if (id <= 0n) return '';
+    let shortcode = '';
+    while (id > 0n) {
+      const remainder = Number(id % 64n);
+      shortcode = IG_BASE64_ALPHABET[remainder] + shortcode;
+      id = id / 64n;
+    }
+    return shortcode;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Apakah string `id` cocok bentuk shortcode Instagram
+ * (huruf+angka+_-, 6-15 char, **bukan murni numeric**)?
+ * @param {string} id
+ */
+function looksLikeInstagramShortcode(id) {
+  const s = String(id || '').trim();
+  if (!s) return false;
+  if (!/^[A-Za-z0-9_-]{6,15}$/.test(s)) return false;
+  if (/^\d+$/.test(s)) return false; // murni numeric = pasti media_id
+  return /[A-Za-z]/.test(s); // shortcode selalu punya huruf
+}
+
 const FB_SHARE_R_RE =
   /(?:web\.|www\.|m\.)?facebook\.com\/share\/r\/([a-zA-Z0-9_-]+)/i;
 
@@ -148,11 +202,22 @@ export function buildLivePostUrl(
   const net = (network || '').toLowerCase();
 
   switch (net) {
-    case 'instagram':
-      if (/^\d+$/.test(id) && id.length > 12) {
-        return `https://www.instagram.com/reel/${id}/`;
+    case 'instagram': {
+      // Instagram public URL HARUS pakai shortcode (`/p/{shortcode}/`), bukan
+      // numeric media_id. URL `/reel/{numericId}/` tidak resolve di browser.
+      // Catatan: `/p/{shortcode}/` works untuk post foto, carousel, video,
+      // maupun reel — Instagram redirect otomatis.
+      if (looksLikeInstagramShortcode(id)) {
+        return `https://www.instagram.com/p/${id}/`;
       }
-      return `https://www.instagram.com/p/${id}/`;
+      const shortcode = instagramMediaIdToShortcode(id);
+      if (shortcode) {
+        return `https://www.instagram.com/p/${shortcode}/`;
+      }
+      // Tidak bisa derive shortcode → fallback ke profile (lebih baik dari URL
+      // mati). Tanpa username juga, return '' supaya kolom Link di Sheets blank.
+      return handle ? `https://www.instagram.com/${handle}/` : '';
+    }
     case 'threads':
       return handle
         ? `https://www.threads.net/@${encodeURIComponent(handle)}/post/${id}`
