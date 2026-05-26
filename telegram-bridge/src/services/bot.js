@@ -2333,7 +2333,8 @@ export function createBot() {
         ? `📋 *${data.tabName}* · *${filterLabel}* · ${filteredAccounts.length} akun`
         : `📋 *${data.tabName}* · ${data.postIds.length} Post ID`;
 
-      await ctx.reply(
+      await safeReply(
+        ctx,
         headerLabel +
           `\n${counts.live} live · ${counts.failed} gagal · ${counts.pending} pending` +
           dupeNote +
@@ -2343,7 +2344,20 @@ export function createBot() {
         { parse_mode: 'Markdown' }
       );
     } catch (err) {
-      await ctx.reply(`❌ ${err.message}`);
+      const code = err?.response?.error_code ?? err?.code;
+      if (code === 429) {
+        const retryAfter =
+          err?.response?.parameters?.retry_after ??
+          err?.parameters?.retry_after ??
+          '';
+        await ctx
+          .reply(
+            `⏳ Telegram limit tercapai${retryAfter ? ` (tunggu ${retryAfter}s)` : ''}. Sebagian link sudah terkirim di atas. Ulangi 30 detik lagi atau cek Sheets.`
+          )
+          .catch(() => {});
+      } else {
+        await ctx.reply(`❌ ${err.message}`).catch(() => {});
+      }
     }
   });
 
@@ -3035,6 +3049,7 @@ export function createBot() {
       err?.description ||
       err?.message ||
       'unknown';
+    const code = err?.response?.error_code ?? err?.code;
     const isHandlerTimeout = /timed out after/i.test(String(hint));
     const session = ctx?.chat?.id ? getSession(ctx.chat.id) : null;
     const postIds =
@@ -3049,6 +3064,22 @@ export function createBot() {
             `Post ID: ${postIds}\n` +
             `Sheets akan diperbarui otomatis jika sudah tercatat.\n\n` +
             `Cek status: \`/links ${postIds}\` atau \`/syncsheet ${postIds}\``
+        )
+        .catch(() => {});
+      return;
+    }
+
+    // Telegram rate limit — sebagian message kemungkinan sudah terkirim
+    // (chunk awal). Beri pesan ramah, jangan tampilkan kode error mentah.
+    if (code === 429) {
+      const retryAfter =
+        err?.response?.parameters?.retry_after ??
+        err?.parameters?.retry_after ??
+        '';
+      ctx
+        .reply?.(
+          `⏳ Telegram limit kirim message tercapai${retryAfter ? ` (tunggu ${retryAfter}s)` : ''}.\n\n` +
+            `Sebagian message mungkin sudah terkirim di atas. Coba ulang dalam 30 detik, atau buka Sheets untuk laporan lengkap.`
         )
         .catch(() => {});
       return;

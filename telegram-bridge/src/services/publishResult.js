@@ -530,10 +530,15 @@ export function splitTelegramMessage(text, maxLen = 3500) {
 }
 
 /**
- * Throttle antar chunk (ms). Telegram global limit ~30 msg/s tapi per-chat
- * lebih ketat. 700ms aman untuk kirim banyak chunk berturut-turut.
+ * Throttle antar chunk (ms). Telegram per-chat limit kira-kira 1 msg/s tapi
+ * dengan sliding window — akumulasi message dari publish sebelumnya bisa
+ * trigger 429. 1500ms aman untuk kirim banyak chunk berturut-turut bahkan
+ * setelah aktivitas publish padat.
  */
-const CHUNK_DELAY_MS = 700;
+const CHUNK_DELAY_MS = 1500;
+
+/** Maksimum percobaan kirim ulang per chunk saat dapat 429. */
+const MAX_SEND_ATTEMPTS = 6;
 
 /** Sleep helper untuk throttle & retry. */
 function sleep(ms) {
@@ -543,7 +548,7 @@ function sleep(ms) {
 /**
  * Kirim message panjang sebagai beberapa chunk dengan delay antar chunk
  * (mencegah 429 Too Many Requests). Otomatis retry kalau dapat 429 dengan
- * `retry_after` dari Telegram.
+ * `retry_after` dari Telegram, plus exponential backoff fallback.
  *
  * @param {import('telegraf').Context} ctx
  * @param {string} text
@@ -554,17 +559,25 @@ export async function replyTelegramLong(ctx, text, options = {}) {
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     let attempts = 0;
-    while (attempts < 3) {
+    let lastErr;
+    while (attempts < MAX_SEND_ATTEMPTS) {
       try {
         await ctx.reply(part, options);
+        lastErr = undefined;
         break;
       } catch (err) {
+        lastErr = err;
         const code = err?.response?.error_code ?? err?.code;
         const retryAfter =
           err?.response?.parameters?.retry_after ??
           err?.parameters?.retry_after;
-        if (code === 429 && retryAfter && attempts < 2) {
-          await sleep((Number(retryAfter) + 1) * 1000);
+        if (code === 429 && attempts < MAX_SEND_ATTEMPTS - 1) {
+          // Pakai retry_after dari Telegram + buffer 2s. Kalau Telegram tidak
+          // kasih retry_after, pakai exponential backoff (3s → 6s → 12s …).
+          const waitSec = retryAfter
+            ? Number(retryAfter) + 2
+            : Math.min(60, 3 * 2 ** attempts);
+          await sleep(waitSec * 1000);
           attempts += 1;
           continue;
         }
@@ -572,6 +585,7 @@ export async function replyTelegramLong(ctx, text, options = {}) {
         throw err;
       }
     }
+    if (lastErr) throw lastErr;
     if (i < parts.length - 1) {
       await sleep(CHUNK_DELAY_MS);
     }
