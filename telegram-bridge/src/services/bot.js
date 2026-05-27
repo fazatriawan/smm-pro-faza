@@ -2564,7 +2564,11 @@ export function createBot() {
   bot.command('refresh', runSyncTodayCommand);
 
   bot.command('stop', async (ctx) => {
-    const args = (ctx.message.text || '')
+    // Telegram kadang kirim multi-baris (user paste 2 command sekaligus).
+    // Ambil baris pertama saja supaya token `/stop` di baris berikutnya
+    // tidak dianggap "platform".
+    const firstLine = String(ctx.message.text || '').split(/\r?\n/)[0] || '';
+    const args = firstLine
       .replace(/^\/stop(@\w+)?\s*/i, '')
       .trim()
       .toLowerCase();
@@ -2579,6 +2583,7 @@ export function createBot() {
       const cleaned = args
         .replace(/\b(\d+)\s*d\b/g, ' ')
         .replace(/\b(yes|ya|kirim|confirm|batalkan|stuck)\b/g, ' ')
+        .replace(/(^|\s)\/\w+(\s|$)/g, ' ') // abaikan token command lain (/stop, /start, dll)
         .replace(/\s+/g, ' ')
         .trim();
       const { networks, invalid } = parseNetworkFilter(cleaned);
