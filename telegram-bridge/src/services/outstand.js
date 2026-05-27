@@ -594,6 +594,64 @@ export async function listPostIdsForDailyTab(targetTab) {
   return ids;
 }
 
+function isoDaysAgo(daysAgo = 0) {
+  const d = new Date(Date.now() - Math.max(0, Number(daysAgo) || 0) * 86_400_000);
+  return d.toISOString();
+}
+
+/**
+ * Ambil Post ID Outstand terbaru dari window waktu tertentu (mis. 3 hari terakhir).
+ * Dipakai untuk cancel massal pending batch lama tanpa perlu tahu Post ID.
+ *
+ * @param {{ daysBack?: number }} [options]
+ */
+export async function listRecentPostIds(options = {}) {
+  const daysBack = Math.max(0, Number(options.daysBack ?? 3) || 3);
+  const cutoffIso = isoDaysAgo(daysBack);
+  const cutoffMs = Date.parse(cutoffIso);
+  const ids = [];
+  const seen = new Set();
+  let offset = 0;
+  const limit = 50;
+
+  for (let page = 0; page < 60; page++) {
+    const res = await client.get('/v1/posts', { params: { limit, offset } });
+    const body = parseResponseBody(res);
+    const batch = Array.isArray(body?.data)
+      ? body.data
+      : Array.isArray(body?.posts)
+        ? body.posts
+        : (body?.items ?? []);
+    if (!batch.length) break;
+
+    let stopPaging = false;
+    for (const raw of batch) {
+      const ts =
+        raw.createdAt ??
+        raw.created_at ??
+        raw.publishedAt ??
+        raw.scheduledAt ??
+        raw.updatedAt;
+      const t = Date.parse(ts || '');
+      if (!Number.isFinite(t)) continue;
+      if (Number.isFinite(cutoffMs) && t < cutoffMs) {
+        stopPaging = true;
+        break;
+      }
+      const id = String(raw.id ?? raw.postId ?? '').trim();
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+
+    if (stopPaging || batch.length < limit) break;
+    offset += limit;
+  }
+
+  return ids;
+}
+
 /**
  * Poll until each account is published/failed or timeout.
  * @param {string[]} postIds

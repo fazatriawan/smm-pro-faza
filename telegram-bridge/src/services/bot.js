@@ -52,6 +52,7 @@ import {
 } from './publishArchive.js';
 import {
   listPendingToday,
+  listPendingRecent,
   groupPendingByPostId,
   cancelPendingPostIds,
   formatPendingReport,
@@ -2514,6 +2515,8 @@ export function createBot() {
 
     const stuckOnly = /\bstuck\b/.test(args);
     const doCancel = /\b(yes|ya|kirim|confirm|batalkan)\b/.test(args);
+    const daysMatch = args.match(/\b(\d+)\s*d\b/);
+    const daysBack = daysMatch ? Math.min(14, Math.max(1, Number(daysMatch[1]) || 0)) : 0;
 
     let network = null;
     if (!stuckOnly) {
@@ -2536,10 +2539,16 @@ export function createBot() {
     await ctx.reply('⏳ Mengecek antrian pending di Outstand…');
 
     try {
-      const data = await listPendingToday({
-        network: network || undefined,
-        stuckOnly,
-      });
+      const data = daysBack
+        ? await listPendingRecent({
+            daysBack,
+            network: network || undefined,
+            stuckOnly,
+          })
+        : await listPendingToday({
+            network: network || undefined,
+            stuckOnly,
+          });
 
       if (!data.pending.length) {
         await safeReply(ctx, formatPendingReport(data), { parse_mode: 'Markdown' });
@@ -2554,8 +2563,10 @@ export function createBot() {
         await safeReply(
           ctx,
           formatPendingReport(data) +
+            (daysBack ? `\n\n🔎 Mode scan: *${daysBack} hari terakhir*` : '') +
             '\n\n⚠️ *Batalkan semua batch di atas?*\n' +
             'Ketik `/stop ya` atau `/stop ig ya` (sesuai filter).\n' +
+            (daysBack ? `Atau: \`/stop ${daysBack}d ya\`` : '') +
             '_Ini menghentikan antrian Outstand — post yang sudah live di IG tidak terhapus._',
           {
             parse_mode: 'Markdown',

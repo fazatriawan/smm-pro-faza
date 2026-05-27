@@ -1,4 +1,4 @@
-import { cancelOutstandPost } from './outstand.js';
+import { cancelOutstandPost, getPost, listRecentPostIds } from './outstand.js';
 import { collectTodayPublishLinks } from './todayPublish.js';
 import { getWibDayKey } from '../utils/wibTime.js';
 import {
@@ -82,6 +82,63 @@ export async function listPendingToday(options = {}) {
     postIds: data.postIds,
     pending: rows,
     meta: data.meta,
+  };
+}
+
+/**
+ * Scan pending dari Outstand untuk beberapa hari terakhir (tanpa Sheets).
+ * Dipakai untuk menemukan batch lama yang masih berjalan dan bisa menyebabkan
+ * "konten kemarin" muncul hari ini.
+ *
+ * @param {{ daysBack?: number, network?: string, stuckOnly?: boolean }} [options]
+ */
+export async function listPendingRecent(options = {}) {
+  const daysBack = Math.max(0, Number(options.daysBack ?? 3) || 3);
+  const network = options.network ? String(options.network).toLowerCase() : null;
+  const stuckOnly = Boolean(options.stuckOnly);
+  const today = getWibDayKey();
+
+  const postIds = await listRecentPostIds({ daysBack });
+  /** @type {Array<{ postId: string, network: string, username: string, status: string, hours: number, contentLabel: string, kontenHari: string, stuck: boolean }>} */
+  const rows = [];
+
+  for (const pid of postIds) {
+    if (!pid) continue;
+    let post;
+    try {
+      post = await getPost(pid);
+    } catch (err) {
+      log.warn({ postId: pid, err: err.message }, `[Pending] getPost ${pid}: ${err.message}`);
+      continue;
+    }
+    const accounts = post?.socialAccounts || [];
+    for (const a of accounts) {
+      const st = normalizeOutstandStatus(a.status);
+      if (st !== 'pending') continue;
+      const net = (a.network || '').toLowerCase();
+      if (network && net !== network) continue;
+      const hours = hoursSincePost(a, post?.createdAt || post?.scheduledAt || post?.publishedAt);
+      const stuck = isPendingStuck({ ...a, rowTimestamp: post?.createdAt }, post?.createdAt);
+      if (stuckOnly && !stuck) continue;
+      rows.push({
+        postId: pid,
+        network: net,
+        username: (a.username || '').replace(/^@/, ''),
+        status: st,
+        hours,
+        contentLabel: '', // Outstand tidak expose label; Sheets akan tetap punya kolom Konten
+        kontenHari: '', // unknown; ditandai di Sheets via context kalau berasal dari bot
+        stuck,
+      });
+    }
+  }
+
+  return {
+    tabName: `${today} (scan ${daysBack}d)`,
+    today,
+    postIds,
+    pending: rows,
+    meta: { pending: rows.length },
   };
 }
 
