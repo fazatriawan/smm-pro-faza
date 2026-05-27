@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { formatWibDateTime, getWibDayKey, nowIsoUtc } from '../utils/wibTime.js';
 import {
   listMediaInFolder,
+  pickDriveMediaForWibDay,
   resolveDriveEntry,
   getFolderMeta,
 } from './drive.js';
@@ -47,6 +48,7 @@ import {
   savePublishArchive,
   loadPublishArchive,
   hydrateMediaFromArchive,
+  getArchiveStaleReason,
 } from './publishArchive.js';
 import {
   collectTodayPublishLinks,
@@ -963,8 +965,9 @@ function contentChoiceKeyboard(entry, page = 0) {
 async function showContentPicker(ctx, entry, page = 0) {
   const n = entry.media.length;
   let text =
-    `📂 ${entry.name}\n\n` +
-    `Pilih *satu file* (ketuk nomor) atau *semua*:\n` +
+    `📂 ${escapeMarkdown(entry.name)}\n\n` +
+    `Pilih *satu file* konten *hari ini* (disarankan) atau *semua*:\n` +
+    `_Semua file_ hanya memakai media yang diubah di Drive hari ini (WIB).\n` +
     `Total: ${n} file`;
 
   if (n > FILES_PER_PAGE) {
@@ -993,12 +996,33 @@ async function showContentPicker(ctx, entry, page = 0) {
  * @param {Array<{ id: string, name?: string, mimeType?: string }>} [presetMedia]
  */
 async function loadFolderAndCaption(ctx, folderId, folderName, presetMedia = null) {
-  const mediaRaw = presetMedia?.length
+  let mediaRaw = presetMedia?.length
     ? presetMedia
     : await listMediaInFolder(folderId);
 
   if (!mediaRaw.length) {
     await ctx.reply('Tidak ada gambar/video di pilihan ini.');
+    resetSession(ctx.chat.id);
+    return;
+  }
+
+  let filterNote = '';
+  if (!presetMedia?.length) {
+    const picked = pickDriveMediaForWibDay(mediaRaw);
+    mediaRaw = picked.media;
+    if (picked.excluded > 0) {
+      filterNote +=
+        `\n⚠️ *${picked.excluded}* file di folder tidak diubah hari ini (WIB) — dilewati.`;
+    }
+    if (picked.usedFallback && picked.media[0]) {
+      const fn = escapeMarkdown(picked.media[0].name || 'media');
+      filterNote +=
+        `\n⚠️ Tidak ada file diubah hari ini — dipakai *1 file terbaru*: _${fn}_`;
+    }
+  }
+
+  if (!mediaRaw.length) {
+    await ctx.reply('Tidak ada media yang bisa dipakai untuk hari ini.');
     resetSession(ctx.chat.id);
     return;
   }
@@ -1029,14 +1053,23 @@ async function loadFolderAndCaption(ctx, folderId, folderName, presetMedia = nul
   const kind = mediaFiles.some((f) => f.mimeType?.startsWith('video/'))
     ? 'video'
     : 'gambar';
+  const filePreview = mediaFiles
+    .slice(0, 5)
+    .map((f, i) => `${i + 1}. _${escapeMarkdown(f.name)}_`)
+    .join('\n');
+  const moreFiles =
+    mediaFiles.length > 5 ? `\n…+${mediaFiles.length - 5} file` : '';
+
   let msg =
-    `✅ Media siap (${kind}): *${folderName}*\n`;
+    `✅ Media siap (${kind}): *${escapeMarkdown(folderName)}*\n` +
+    `📄 *${mediaFiles.length}* file untuk publish hari ini:\n${filePreview}${moreFiles}`;
+  if (filterNote) msg += filterNote;
   if (session.missionBriefing) {
-    msg += '📋 Caption akan mengikuti *misi hari ini* (§1, §2, §5).\n';
+    msg += '\n📋 Caption akan mengikuti *misi hari ini* (§1, §2, §5).';
   }
   msg +=
-    '\n🎯 Pilih target platform — caption disesuaikan limit terpendek (mis. X/Threads).';
-  await ctx.reply(msg, { parse_mode: 'Markdown' });
+    '\n\n🎯 Pilih target platform — caption disesuaikan limit terpendek (mis. X/Threads).';
+  await safeReply(ctx, msg, { parse_mode: 'Markdown' });
   await showTargetPicker(ctx);
 }
 
@@ -1525,9 +1558,45 @@ async function handleRetryPublish(ctx, options = {}) {
     return;
   }
 
+  const archiveStale = getArchiveStaleReason(archive);
+  if (archiveStale?.reason === 'day-changed') {
+    await safeReply(
+      ctx,
+      `🛑 *Arsip publish dari hari ${archiveStale.prevDay}* — tidak bisa retry dengan media kemarin.\n\n` +
+        'Langkah aman:\n' +
+        '1. `/publish`\n' +
+        '2. Kirim folder Drive *hari ini*\n' +
+        '3. Pilih *satu file* konten hari ini (hindari *Semua file* kalau folder campur)\n' +
+        '4. Publish ke akun yang gagal',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
   let mediaFiles = await hydrateMediaFromArchive(archive);
   if (!mediaFiles?.length && session.mediaFiles?.some((f) => f.id || f.buffer)) {
-    mediaFiles = session.mediaFiles;
+    const sessionStale = getStaleMediaReason(session);
+    if (!sessionStale || sessionStale.reason === 'no-media') {
+      mediaFiles = session.mediaFiles;
+    }
+  }
+
+  const mediaStale = mediaFiles?.length
+    ? getStaleMediaReason({
+        mediaFiles,
+        mediaFilesSetAt: archive?.savedAt || session.mediaFilesSetAt,
+        mediaFilesDay: archive?.mediaFilesDay || session.mediaFilesDay,
+      })
+    : null;
+  if (mediaStale && mediaStale.reason !== 'no-media') {
+    await safeReply(
+      ctx,
+      formatStaleMediaNotice(mediaStale, session) +
+        '\n\n_Retry dibatalkan — kirim media baru via `/publish`._',
+      { parse_mode: 'Markdown' }
+    );
+    clearSessionContent(ctx.chat.id);
+    return;
   }
 
   if (!mediaFiles?.length) {
@@ -1724,22 +1793,7 @@ async function runPublish(ctx, scheduledAt) {
       socialAccountIds: session.selectedAccountIds,
     });
 
-    updateSession(ctx.chat.id, {
-      outstandMediaIds: allMediaIds,
-      outstandPostIds: result.postIds,
-      step: 'idle',
-      lastPublish: {
-        mediaFiles: session.mediaFiles,
-        caption: session.caption,
-        folderName: session.folderName,
-        folderId: session.folderId,
-        targetLabel: targetInfo,
-        postIds: result.postIds,
-        selectedAccountIds: session.selectedAccountIds,
-      },
-    });
-
-    savePublishArchive(ctx.chat.id, {
+    const lastPublish = {
       mediaFiles: session.mediaFiles,
       caption: session.caption,
       folderName: session.folderName,
@@ -1747,7 +1801,31 @@ async function runPublish(ctx, scheduledAt) {
       targetLabel: targetInfo,
       postIds: result.postIds,
       selectedAccountIds: session.selectedAccountIds,
+      mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+      savedAt: nowIsoUtc(),
+    };
+
+    savePublishArchive(ctx.chat.id, lastPublish);
+
+    // Kosongkan media/caption di sesi aktif supaya /random atau /republish
+    // tidak bisa pakai konten batch ini lagi tanpa /publish + Drive baru.
+    clearSessionContent(ctx.chat.id);
+    updateSession(ctx.chat.id, {
+      step: 'idle',
+      lastPublish,
+      outstandPostIds: result.postIds,
+      outstandMediaIds: allMediaIds,
     });
+
+    log.info(
+      {
+        folder: session.folderName,
+        files: (session.mediaFiles || []).map((f) => f.name),
+        postIds: result.postIds,
+        accounts: session.selectedAccountIds?.length,
+      },
+      '[Bot] Publish submitted — session media cleared'
+    );
 
     const postIdLine = result.postIds.join(', ') || '—';
 
@@ -2775,6 +2853,17 @@ export function createBot() {
         'Belum ada publish tersimpan.\nSelesaikan satu publish dulu, lalu /republish.\n\n' +
           'Atau `/retry ig` untuk ulangi akun gagal hari ini.',
         mainMenuKeyboard()
+      );
+      return;
+    }
+
+    const archiveStale = getArchiveStaleReason(last);
+    if (archiveStale?.reason === 'day-changed') {
+      await safeReply(
+        ctx,
+        `🛑 Publish terakhir dari hari *${archiveStale.prevDay}*.\n\n` +
+          'Gunakan `/publish` + folder Drive hari ini — jangan `/republish` untuk konten kemarin.',
+        { parse_mode: 'Markdown', ...mainMenuKeyboard() }
       );
       return;
     }

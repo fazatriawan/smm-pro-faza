@@ -54,7 +54,7 @@ const sessions = new Map();
  */
 function getMediaMaxAgeHours() {
   const n = Number(process.env.SESSION_MEDIA_MAX_AGE_HOURS);
-  return Number.isFinite(n) && n > 0 ? n : 6;
+  return Number.isFinite(n) && n > 0 ? n : 3;
 }
 
 /**

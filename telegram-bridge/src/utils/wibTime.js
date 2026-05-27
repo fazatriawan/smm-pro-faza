@@ -59,3 +59,17 @@ export function getWibDayKey(input) {
     return '';
   }
 }
+
+/** Awal hari (00:00:00) di WIB, dalam epoch ms UTC. */
+export function getWibDayStartMs(dayKey) {
+  if (!dayKey || !/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return NaN;
+  const d = new Date(`${dayKey}T00:00:00+07:00`);
+  return d.getTime();
+}
+
+/** Akhir hari (23:59:59.999) di WIB, dalam epoch ms UTC. */
+export function getWibDayEndMs(dayKey) {
+  const start = getWibDayStartMs(dayKey);
+  if (!Number.isFinite(start)) return NaN;
+  return start + 86_400_000 - 1;
+}

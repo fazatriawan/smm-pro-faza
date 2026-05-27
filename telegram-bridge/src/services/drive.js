@@ -3,6 +3,11 @@ import { getDriveClient } from '../config/google.js';
 import { env } from '../config/env.js';
 import { getRuntime, setRuntime } from '../utils/runtimeStore.js';
 import { parseDriveId } from '../utils/driveId.js';
+import {
+  getWibDayEndMs,
+  getWibDayKey,
+  getWibDayStartMs,
+} from '../utils/wibTime.js';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const MEDIA_QUERY =
@@ -206,6 +211,57 @@ export async function listMediaInFolder(folderId) {
   });
 
   return res.data.files ?? [];
+}
+
+/**
+ * Filter media Drive ke file yang `modifiedTime`-nya jatuh pada hari WIB tertentu.
+ * Kalau tidak ada yang cocok (file lama tidak disentuh), fallback ke **1 file terbaru**
+ * supaya publish tidak gagal total — caller wajib tampilkan peringatan `usedFallback`.
+ *
+ * @param {Array<{ id: string, name?: string, mimeType?: string, modifiedTime?: string }>} files
+ * @param {string} [dayKey] YYYY-MM-DD WIB
+ */
+export function pickDriveMediaForWibDay(files, dayKey = getWibDayKey()) {
+  if (!files?.length) {
+    return { media: [], excluded: 0, usedFallback: false, total: 0 };
+  }
+
+  const startMs = getWibDayStartMs(dayKey);
+  const endMs = getWibDayEndMs(dayKey);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    return {
+      media: files,
+      excluded: 0,
+      usedFallback: false,
+      total: files.length,
+    };
+  }
+
+  const today = files.filter((f) => {
+    const t = new Date(f.modifiedTime || 0).getTime();
+    return Number.isFinite(t) && t >= startMs && t <= endMs;
+  });
+
+  if (today.length) {
+    return {
+      media: today,
+      excluded: files.length - today.length,
+      usedFallback: false,
+      total: files.length,
+    };
+  }
+
+  const sorted = [...files].sort(
+    (a, b) =>
+      new Date(b.modifiedTime || 0).getTime() -
+      new Date(a.modifiedTime || 0).getTime()
+  );
+  return {
+    media: sorted.slice(0, 1),
+    excluded: files.length - 1,
+    usedFallback: true,
+    total: files.length,
+  };
 }
 
 /**

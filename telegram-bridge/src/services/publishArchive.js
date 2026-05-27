@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { listMediaInFolder } from '../services/drive.js';
+import { getWibDayKey } from '../utils/wibTime.js';
 
 const archiveDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -33,6 +33,7 @@ function sanitizeSnapshot(snapshot) {
 
   return {
     savedAt: snapshot.savedAt || new Date().toISOString(),
+    mediaFilesDay: snapshot.mediaFilesDay || getWibDayKey(snapshot.savedAt),
     caption: snapshot.caption || '',
     folderName: snapshot.folderName || '',
     folderId: snapshot.folderId || '',
@@ -116,16 +117,22 @@ export async function hydrateMediaFromArchive(archive) {
     }));
   }
 
-  if (archive.folderId) {
-    const media = await listMediaInFolder(archive.folderId);
-    if (!media.length) return null;
-    return media.map((f) => ({
-      id: f.id,
-      name: f.name || 'media',
-      mimeType: f.mimeType || 'application/octet-stream',
-      source: 'drive',
-    }));
-  }
+  // Jangan re-list seluruh folder Drive — folder sering berisi file beberapa hari
+  // dan akan meng-upload konten kemarin lagi. Paksa user kirim link Drive baru.
+  return null;
+}
 
+/**
+ * Apakah arsip publish dari hari WIB sebelumnya (tidak boleh dipakai retry otomatis).
+ * @param {ReturnType<typeof loadPublishArchive>} archive
+ */
+export function getArchiveStaleReason(archive) {
+  if (!archive) return { reason: 'no-archive' };
+  const today = getWibDayKey();
+  const savedDay =
+    archive.mediaFilesDay || getWibDayKey(archive.savedAt || '');
+  if (savedDay && savedDay !== today) {
+    return { reason: 'day-changed', prevDay: savedDay, todayDay: today };
+  }
   return null;
 }
