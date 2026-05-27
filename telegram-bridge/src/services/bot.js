@@ -67,6 +67,7 @@ import {
   getTodayAccountUsageCounts,
   clearPublishedTodayCache,
 } from './todayPublish.js';
+import { buildAuditFromSheets } from './audit.js';
 import {
   buildDailyQuotaStatus,
   clearQuotaCache,
@@ -2562,6 +2563,48 @@ export function createBot() {
 
   bot.command('synctoday', runSyncTodayCommand);
   bot.command('refresh', runSyncTodayCommand);
+
+  bot.command('audit', async (ctx) => {
+    const raw = String(ctx.message.text || '')
+      .replace(/^\/audit(@\w+)?\s*/i, '')
+      .trim();
+    const from = (raw.split(/\s+/)[0] || '').trim();
+    const to = (raw.split(/\s+/)[1] || '').trim();
+
+    if (!from) {
+      await ctx.reply(
+        'Format:\n' +
+          '`/audit 2026-05-21` (scan sampai hari ini)\n' +
+          '`/audit 2026-05-21 2026-05-27` (range spesifik)\n\n' +
+          'Hasilnya membuat 2 tab baru: `AUDIT-SUMMARY <from>` dan `AUDIT-DETAIL <from>`.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const today = getWibDayKey();
+    await ctx.reply('⏳ Audit duplikat dari Sheets… (bisa 1–3 menit)');
+    try {
+      const result = await buildAuditFromSheets({
+        fromDayKey: from,
+        toDayKey: to || today,
+      });
+      await safeReply(
+        ctx,
+        `✅ Audit selesai\n` +
+          `Range: *${result.fromDayKey}..${result.toDayKey}*\n` +
+          `Tab discan: *${result.tabsScanned}*\n` +
+          `Baris detail: *${result.rowsDetail}*\n\n` +
+          `📌 Hasil:\n` +
+          `• *${result.summaryTab}* (top offender)\n` +
+          `• *${result.detailTab}* (per akun per hari)\n\n` +
+          `${result.url}`,
+        { parse_mode: 'Markdown', disable_web_page_preview: true }
+      );
+    } catch (err) {
+      await ctx.reply(`❌ Audit gagal: ${err.message}`).catch(() => {});
+    }
+  });
 
   bot.command('stop', async (ctx) => {
     // Telegram kadang kirim multi-baris (user paste 2 command sekaligus).
