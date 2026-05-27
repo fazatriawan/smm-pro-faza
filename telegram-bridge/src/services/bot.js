@@ -123,6 +123,8 @@ import {
   collectRetryAccountIds,
   filterRetryIdsByUsernames,
   formatRetryBlockedNotice,
+  classifyRetryError,
+  RETRY_ACTION,
 } from '../utils/retryPublish.js';
 import {
   computePublishPollPlan,
@@ -2097,6 +2099,15 @@ async function runPublish(ctx, scheduledAt) {
       });
     }
 
+    // Tawarkan akun pengganti untuk yang failed karena masalah AKUN
+    // (token/restricted/permission) — bukan rate limit.
+    // Bot tidak auto-publish; user harus klik tombol.
+    await offerReplacementAccountsIfAny(ctx, {
+      summary,
+      snapshot,
+      result,
+    });
+
     // Lepaskan lock publishing setelah seluruh pipeline selesai.
     updateSession(ctx.chat.id, {
       step: 'idle',
@@ -2125,6 +2136,76 @@ async function runPublish(ctx, scheduledAt) {
  * Sheets sudah di-refresh oleh scheduleSheetRefresh; ini khusus untuk notifikasi Telegram.
  */
 const FOLLOW_UP_DELAYS_MS = [90_000, 240_000, 480_000];
+
+/**
+ * Tawarkan akun pengganti untuk yang gagal karena masalah AKUN (token/restricted).
+ * - Tidak mencakup error rate-limit (post bisa jadi tetap live di platform).
+ * - User harus klik tombol untuk konfirmasi.
+ *
+ * @param {import('telegraf').Context} ctx
+ * @param {{ summary: any, snapshot: any, result: any }} input
+ */
+async function offerReplacementAccountsIfAny(ctx, input) {
+  const { summary, snapshot, result } = input;
+  const accounts = summary?.sheetAccounts || [];
+
+  // Hanya gagal karena masalah akun (FIX_ACCOUNT). Skip rate-limit & quota.
+  const fixAccountFailed = accounts.filter((a) => {
+    if ((a.status || '').toLowerCase() !== 'failed') return false;
+    const c = classifyRetryError(a.error);
+    return c.action === RETRY_ACTION.FIX_ACCOUNT;
+  });
+
+  if (!fixAccountFailed.length) return;
+
+  /** @type {Record<string, number>} */
+  const byNetwork = {};
+  for (const a of fixAccountFailed) {
+    const net = (a.network || 'unknown').toLowerCase();
+    byNetwork[net] = (byNetwork[net] || 0) + 1;
+  }
+
+  const lines = Object.entries(byNetwork).map(
+    ([net, count]) => `• *${getNetworkShortLabel(net)}*: ${count} akun gagal akses`
+  );
+
+  // Simpan konteks utk action handler.
+  updateSession(ctx.chat.id, {
+    pendingReplacement: {
+      byNetwork,
+      mediaFiles: snapshot.mediaFiles,
+      caption: snapshot.caption,
+      captionsByNetwork: undefined,
+      folderName: snapshot.folderName,
+      folderId: snapshot.folderId,
+      mediaFilesDay: snapshot.mediaFilesDay,
+      originalPostIds: result?.postIds || [],
+      at: Date.now(),
+    },
+  });
+
+  const buttons = Object.keys(byNetwork).map((net) => [
+    Markup.button.callback(
+      `🔁 Suggest pengganti ${getNetworkShortLabel(net)} (${byNetwork[net]})`,
+      `replace:yes:${net}`
+    ),
+  ]);
+  buttons.push([Markup.button.callback('Batal', 'replace:skip')]);
+
+  await safeReply(
+    ctx,
+    `📌 *Saran akun pengganti*\n` +
+      lines.join('\n') +
+      `\n\nAkun gagal karena masalah token/akses (bukan rate-limit). ` +
+      `Mau aku pilih akun pengganti dari pool yang sudah pernah post hari ini?\n` +
+      `_Bot tidak auto-publish — pilih dulu di bawah._\n` +
+      `Catatan: akun pengganti akan posting 2× hari ini.`,
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard(buttons),
+    }
+  );
+}
 
 function schedulePublishStatusFollowUp(ctx, input) {
   const { chatId, postIds, expectedAccountIds, baseCaption, initialSummary } = input;
@@ -3467,6 +3548,102 @@ export function createBot() {
       step: 'selecting_targets',
     });
     await finalizeTargetSelection(ctx, pending.baseAccountIds, pending.label);
+  });
+
+  bot.action(/^replace:yes:(.+)$/, async (ctx) => {
+    const network = ctx.match[1].toLowerCase();
+    await ack(ctx, `Mencari pengganti ${network}…`);
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingReplacement;
+    if (!pending || Date.now() - pending.at > 30 * 60_000) {
+      await ctx.reply('⌛ Saran pengganti kadaluarsa. Ulangi /publish kalau perlu.');
+      updateSession(ctx.chat.id, { pendingReplacement: undefined });
+      return;
+    }
+
+    const needCount = pending.byNetwork?.[network] || 0;
+    if (!needCount) {
+      await ctx.reply('Tidak ada akun gagal untuk platform ini.');
+      return;
+    }
+
+    if (!pending.mediaFiles?.length) {
+      await ctx.reply(
+        '❌ Media batch sebelumnya tidak tersimpan. Kirim ulang via /publish.'
+      );
+      updateSession(ctx.chat.id, { pendingReplacement: undefined });
+      return;
+    }
+
+    if (session.publishingSince && Date.now() - session.publishingSince < 15 * 60_000) {
+      await ctx.reply('⏳ Tunggu publish sebelumnya selesai dulu.');
+      return;
+    }
+
+    const accounts = await listSocialAccounts();
+    const excludeIds = await getExcludeIdsForRandomPick(ctx.chat.id);
+    const { added, summary: fillSummary } = fillShortageFromExcludedPool(
+      accounts,
+      [{ network, missing: needCount }],
+      {
+        excludeAccountIds: excludeIds,
+        maxReusePerAccount: env.maxReusePerAccount,
+      }
+    );
+
+    if (!added.length) {
+      await ctx.reply(
+        `❌ Pool akun ${getNetworkShortLabel(network)} kosong — tidak ada pengganti yang bisa dipakai.`
+      );
+      return;
+    }
+
+    const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+    const sample = added
+      .slice(0, 6)
+      .map((a) => `@${escUser((a.username || a.id).replace(/^@/, ''))}`)
+      .join(', ');
+    await safeReply(
+      ctx,
+      `🔁 *Pengganti ${getNetworkShortLabel(network)}* (${added.length} akun):\n` +
+        (sample ? `${sample}${added.length > 6 ? '…' : ''}` : '') +
+        `\n\nMenyiapkan publish ulang dengan media yang sama…`,
+      { parse_mode: 'Markdown' }
+    );
+
+    // Kurangi quota untuk network ini di pendingReplacement supaya
+    // klik tombol kedua untuk network sama tidak men-trigger lagi.
+    const newByNetwork = { ...pending.byNetwork };
+    delete newByNetwork[network];
+
+    // Set up session untuk publish ulang ke akun pengganti.
+    updateSession(ctx.chat.id, {
+      mediaFiles: pending.mediaFiles,
+      mediaFilesSetAt: nowIsoUtc(),
+      mediaFilesDay: pending.mediaFilesDay,
+      mediaSourceLabel: `Pengganti ${network}`,
+      caption: pending.caption,
+      captionsByNetwork: undefined,
+      youtubeFields: undefined,
+      folderName: pending.folderName,
+      folderId: pending.folderId,
+      selectedAccountIds: added.map((a) => a.id),
+      targetLabel: `Pengganti ${network} (${added.length})`,
+      step: 'ready',
+      lastPublishKey: undefined,
+      lastPublishAt: undefined,
+      pendingReplacement: Object.keys(newByNetwork).length
+        ? { ...pending, byNetwork: newByNetwork, at: Date.now() }
+        : undefined,
+    });
+
+    await runPublish(ctx);
+  });
+
+  bot.action('replace:skip', async (ctx) => {
+    await ack(ctx);
+    updateSession(ctx.chat.id, { pendingReplacement: undefined });
+    await ctx.reply('Oke, tidak menambah akun pengganti.');
   });
 
   bot.action(/^tone:(.+)$/, async (ctx) => {
