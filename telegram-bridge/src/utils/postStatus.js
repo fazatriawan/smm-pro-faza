@@ -121,9 +121,9 @@ export function sheetNoteForAccount(acc, eventIso) {
   }
   if (isPendingStuck(acc, eventIso)) {
     const h = Math.round(hoursSincePost(acc, eventIso));
-    return `Pending ${h} jam — cek profil platform; mungkin sudah live atau perlu cancel di Outstand`;
+    return `Pending ${h} jam — mungkin konten kemarin; batalkan: /stop · cek profil IG`;
   }
-  return 'Masih antrian — tunggu webhook atau /refresh';
+  return 'Antrian Outstand — /stop untuk batalkan · /refresh untuk update status';
 }
 
 /**

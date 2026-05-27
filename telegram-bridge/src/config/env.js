@@ -233,4 +233,9 @@ export const env = {
     0,
     Number(process.env.SHEET_AUTO_REFRESH_MINUTES || 20)
   ),
+  /** Notifikasi otomatis antrian pending ke Telegram (menit). 0 = mati. */
+  pendingMonitorMinutes: Math.max(
+    0,
+    Number(process.env.PENDING_MONITOR_MINUTES || 20)
+  ),
 };

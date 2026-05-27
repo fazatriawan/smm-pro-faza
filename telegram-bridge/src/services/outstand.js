@@ -510,6 +510,22 @@ export async function getPost(postId) {
   return enrichPostWithAccountDirectory(post);
 }
 
+/**
+ * Batalkan post yang masih di antrian Outstand (belum live).
+ * DELETE /v1/posts/{id} — seluruh akun dalam batch ikut dibatalkan.
+ * @param {string} postId
+ */
+export async function cancelOutstandPost(postId) {
+  const id = String(postId || '').trim();
+  if (!id) throw new Error('Post ID kosong');
+  const res = await client.delete(`/v1/posts/${id}`);
+  const body = parseResponseBody(res);
+  return {
+    success: body.success !== false,
+    message: body.message || 'Post cancelled',
+  };
+}
+
 function dailyTabForIso(iso) {
   const d = iso ? new Date(iso) : new Date();
   const parts = new Intl.DateTimeFormat('en-CA', {

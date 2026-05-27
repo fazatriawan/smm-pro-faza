@@ -51,6 +51,14 @@ import {
   getArchiveStaleReason,
 } from './publishArchive.js';
 import {
+  listPendingToday,
+  groupPendingByPostId,
+  cancelPendingPostIds,
+  formatPendingReport,
+  formatCancelResults,
+  isPostIdCancelled,
+} from './pendingControl.js';
+import {
   collectTodayPublishLinks,
   syncTodayToSheet,
   getPublishedAccountIdsToday,
@@ -128,7 +136,14 @@ export function getBot() {
 }
 
 export function registerNotifyChat(key, chatId) {
-  if (chatId) notifyChats.set(key, chatId);
+  if (chatId) {
+    notifyChats.set(key, chatId);
+    if (key === 'default') {
+      import('../utils/runtimeStore.js').then(({ setRuntime }) => {
+        setRuntime('notifyChatId', String(chatId));
+      }).catch(() => {});
+    }
+  }
 }
 
 export function getNotifyChat(key = 'default') {
@@ -271,7 +286,7 @@ async function showMainMenu(ctx, extraText = '') {
     `• ${MENU.CANCEL} — batalkan sesi\n` +
     `• ${MENU.HELP} — panduan singkat\n\n` +
     'Kirim *broadcast misi* (§1–2–5) → lalu link Drive atau foto/video.\n' +
-    'Perintah: /publish · /retry · /kuota · /linkshari · /synctoday · /refresh · /stuck · /links · /status · /misi\n\n' +
+    'Perintah: /publish · /stop · /retry · /kuota · /linkshari · /synctoday · /refresh · /stuck · /links · /status · /misi\n\n' +
     '💡 *Tip*: `/linkshari ig` → cuma link IG · `/linkshari fb` → cuma FB · `/linkshari ig fb` → IG+FB.';
 
   await ctx.reply(text, { parse_mode: 'Markdown', ...mainMenuKeyboard() });
@@ -1436,6 +1451,18 @@ async function handleRetryPublish(ctx, options = {}) {
     return;
   }
 
+  const cancelledIds = postIds.filter((id) => isPostIdCancelled(id));
+  if (send && cancelledIds.length) {
+    await safeReply(
+      ctx,
+      `🛑 Post ID sudah dibatalkan (\`/stop\`): \`${cancelledIds.join('`, `')}\`\n\n` +
+        'Jangan retry batch ini — bisa memicu konten kemarin lagi.\n' +
+        'Publish baru: `/publish` + folder Drive hari ini.',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
   const useArchiveScope =
     argPostIds.length > 0 &&
     archive?.postIds?.length &&
@@ -1882,6 +1909,7 @@ async function runPublish(ctx, scheduledAt) {
             folderName: session.folderName,
             targetLabel: session.targetLabel,
             mediaFiles: session.mediaFiles,
+            mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
           }
         );
         if (sheetResult.recorded > 0) {
@@ -2478,6 +2506,111 @@ export function createBot() {
   bot.command('synctoday', runSyncTodayCommand);
   bot.command('refresh', runSyncTodayCommand);
 
+  bot.command('stop', async (ctx) => {
+    const args = (ctx.message.text || '')
+      .replace(/^\/stop(@\w+)?\s*/i, '')
+      .trim()
+      .toLowerCase();
+
+    const stuckOnly = /\bstuck\b/.test(args);
+    const doCancel = /\b(yes|ya|kirim|confirm|batalkan)\b/.test(args);
+
+    let network = null;
+    if (!stuckOnly) {
+      const { networks, invalid } = parseNetworkFilter(args.replace(/\b(yes|ya|kirim|confirm|batalkan|stuck)\b/g, '').trim());
+      if (invalid.length) {
+        await ctx.reply(
+          `Platform tidak dikenal: ${invalid.join(', ')}\n\n` +
+            'Contoh:\n' +
+            '• `/stop` — lihat antrian + cara batalkan\n' +
+            '• `/stop ig` — antrian Instagram saja\n' +
+            '• `/stop stuck` — pending >2 jam\n' +
+            '• `/stop ig ya` — batalkan batch IG pending',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+      if (networks.length === 1) network = networks[0];
+    }
+
+    await ctx.reply('⏳ Mengecek antrian pending di Outstand…');
+
+    try {
+      const data = await listPendingToday({
+        network: network || undefined,
+        stuckOnly,
+      });
+
+      if (!data.pending.length) {
+        await safeReply(ctx, formatPendingReport(data), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (!doCancel) {
+        const byPost = groupPendingByPostId(data);
+        const postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
+        updateSession(ctx.chat.id, { pendingStopPostIds: postIds });
+
+        await safeReply(
+          ctx,
+          formatPendingReport(data) +
+            '\n\n⚠️ *Batalkan semua batch di atas?*\n' +
+            'Ketik `/stop ya` atau `/stop ig ya` (sesuai filter).\n' +
+            '_Ini menghentikan antrian Outstand — post yang sudah live di IG tidak terhapus._',
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🛑 Ya, batalkan antrian', 'stop:confirm')],
+              [Markup.button.callback('❌ Batal', 'stop:abort')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      const byPost = groupPendingByPostId(data);
+      const postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
+      const results = await cancelPendingPostIds(postIds);
+      clearPublishedTodayCache();
+
+      await safeReply(ctx, formatCancelResults(results), {
+        parse_mode: 'Markdown',
+      });
+      await runSyncTodayCommand(ctx).catch(() => {});
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  bot.action('stop:confirm', async (ctx) => {
+    await ack(ctx, 'Membatalkan…');
+    const session = getSession(ctx.chat.id);
+    const postIds = session.pendingStopPostIds || [];
+    if (!postIds.length) {
+      await ctx.reply('Daftar kosong. Ketik `/stop` dulu.');
+      return;
+    }
+    const results = await cancelPendingPostIds(postIds);
+    clearPublishedTodayCache();
+    updateSession(ctx.chat.id, { pendingStopPostIds: undefined });
+    await safeReply(ctx, formatCancelResults(results), { parse_mode: 'Markdown' });
+    await runSyncTodayCommand(ctx).catch(() => {});
+  });
+
+  bot.action('stop:abort', async (ctx) => {
+    await ack(ctx);
+    updateSession(ctx.chat.id, { pendingStopPostIds: undefined });
+    await ctx.reply('Dibatalkan. Antrian Outstand tidak diubah.');
+  });
+
+  bot.command('antrian', async (ctx) => {
+    ctx.message.text = `/stop ${(ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '')}`;
+    return ctx.telegram.callApi('sendMessage', ctx.message).catch(() => {
+      const args = (ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '').trim();
+      ctx.message.text = `/stop ${args}`;
+    });
+  });
+
   bot.command('stuck', async (ctx) => {
     await ctx.reply('⏳ Mengecek akun pending lama…');
     try {
@@ -2580,10 +2713,10 @@ export function createBot() {
           lines.join('\n') +
           extra +
           '\n\n*Sebelum republish:*\n' +
-          '1. Cek profil — kalau sudah live → `/refresh`\n' +
-          '2. Cancel job pending di dashboard Outstand (cegah dobel)\n' +
-          '3. Baru tekan tombol di bawah\n\n' +
-          '_Bot akan otomatis skip akun yang sudah punya post / sudah live._',
+          '1. Batalkan antrian lama: `/stop` (disarankan)\n' +
+          '2. Cek profil — kalau sudah live → `/refresh`\n' +
+          '3. Jangan retry kalau konten kemarin — `/publish` folder hari ini\n\n' +
+          '_Republish = media batch lama. Bot skip akun yang sudah live._',
         {
           parse_mode: 'Markdown',
           disable_web_page_preview: true,
@@ -3211,6 +3344,7 @@ export async function startBot() {
       { command: 'republish', description: 'Publish ulang ke target lain' },
       { command: 'retry', description: 'Ulangi akun yang gagal' },
       { command: 'refresh', description: 'Sync status Outstand → Sheets' },
+      { command: 'stop', description: 'Lihat/batalkan antrian pending Outstand' },
       { command: 'stuck', description: 'Akun pending >2 jam' },
       { command: 'linkshari', description: 'Link post hari ini (filter: ig/fb/yt/dll)' },
       { command: 'misi', description: 'Lihat misi hari ini' },

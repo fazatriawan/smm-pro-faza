@@ -26,7 +26,7 @@ import {
   buildDuplicateAccountSummary,
   buildDuplicateRekapSheetRows,
 } from '../utils/accountDayUsage.js';
-import { formatWibDateTime } from '../utils/wibTime.js';
+import { formatWibDateTime, getWibDayKey } from '../utils/wibTime.js';
 import { buildContentLabel, shortenContentLabel } from '../utils/contentLabel.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -40,7 +40,7 @@ import {
   sheetStatusLabel,
 } from '../utils/postStatus.js';
 
-/** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, timestamp: string }>} */
+/** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, mediaFilesDay?: string, timestamp: string }>} */
 const publishContextByPostId = new Map();
 
 const SHEET_BATCH_REFRESH_DELAYS_MS = [
@@ -66,7 +66,7 @@ function splitPostIds(postId) {
  * @param {string[]} expectedAccountIds
  * @param {string} baseCaption
  * @param {string} [timestamp]
- * @param {{ folderName?: string, targetLabel?: string, mediaFiles?: Array<{ name?: string }>, contentLabel?: string }} [meta]
+ * @param {{ folderName?: string, targetLabel?: string, mediaFiles?: Array<{ name?: string }>, contentLabel?: string, mediaFilesDay?: string }} [meta]
  */
 export function registerPublishContext(
   postIds,
@@ -91,6 +91,7 @@ export function registerPublishContext(
     contentLabel,
     folderName: meta.folderName || '',
     targetLabel: meta.targetLabel || '',
+    mediaFilesDay: meta.mediaFilesDay || '',
     timestamp: ts,
   };
   for (const id of entry.postIds) {
@@ -122,7 +123,20 @@ function attachContentLabelsToAccounts(accounts, event = {}) {
       fallbackLabel ||
       shortenContentLabel(ctx?.baseCaption || event.baseCaption || '');
 
-    return { ...acc, contentLabel: shortenContentLabel(label, 110) };
+    const mediaFilesDay = ctx?.mediaFilesDay || '';
+    const todayDay = getWibDayKey();
+    const staleBatch =
+      mediaFilesDay && todayDay && mediaFilesDay !== todayDay;
+    const finalLabel = staleBatch
+      ? `⚠️${mediaFilesDay} ${shortenContentLabel(label, 95)}`
+      : shortenContentLabel(label, 110);
+
+    return {
+      ...acc,
+      contentLabel: finalLabel,
+      mediaFilesDay: mediaFilesDay || undefined,
+      kontenHari: mediaFilesDay || undefined,
+    };
   });
 }
 
@@ -842,9 +856,15 @@ export async function recordWebhookToSheet(payload, notify) {
     });
 
     if (notify) {
-      await notify(
-        formatWebhookNotify(result.summary, postIds.join(', '))
-      );
+      const ctxStale =
+        ctx?.mediaFilesDay && ctx.mediaFilesDay !== getWibDayKey();
+      let notifyText = formatWebhookNotify(result.summary, postIds.join(', '));
+      if (ctxStale && event === 'post.published') {
+        notifyText +=
+          `\n\n⚠️ *Konten batch ${ctx.mediaFilesDay}* baru live dari antrian — ` +
+          `bukan folder hari ini. Cek profil & batalkan sisa antrian: \`/stop\``;
+      }
+      await notify(notifyText);
     }
 
     return {
