@@ -218,10 +218,27 @@ export function buildLivePostUrl(
       // mati). Tanpa username juga, return '' supaya kolom Link di Sheets blank.
       return handle ? `https://www.instagram.com/${handle}/` : '';
     }
-    case 'threads':
+    case 'threads': {
+      // Threads URL public memakai "code" (mis. DY2Kg7Llgzq) yang TIDAK punya
+      // mapping deterministik ke `platformPostId` numerik yang dikirim
+      // Outstand (mis. 17865291177567878 — itu media pk internal, namespace
+      // berbeda). Membangun URL dari numeric ID akan menghasilkan link mati.
+      //
+      // Strategi:
+      //   1. Kalau ID sudah berbentuk shortcode (huruf+angka), pakai langsung.
+      //   2. Kalau numeric, fallback ke profile URL (lebih baik daripada link
+      //      mati). User bisa cari post terbaru via profil.
+      //   3. Domain canonical: threads.com (lama threads.net redirect).
+      if (looksLikeInstagramShortcode(id)) {
+        return handle
+          ? `https://www.threads.com/@${encodeURIComponent(handle)}/post/${id}`
+          : `https://www.threads.com/post/${id}`;
+      }
+      // Numeric → tidak ada mapping aman → fallback profile / blank.
       return handle
-        ? `https://www.threads.net/@${encodeURIComponent(handle)}/post/${id}`
-        : `https://www.threads.net/post/${id}`;
+        ? `https://www.threads.com/@${encodeURIComponent(handle)}`
+        : '';
+    }
     case 'tiktok':
       return handle
         ? `https://www.tiktok.com/@${encodeURIComponent(handle)}/video/${id}`

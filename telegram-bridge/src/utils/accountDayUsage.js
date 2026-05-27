@@ -2,7 +2,7 @@ import { PLATFORM_LABELS } from '../config/sheetLayout.js';
 
 /** URL live umum semua platform (untuk deteksi sudah terbit). */
 export const LIVE_POST_URL_RE =
-  /instagram\.com|facebook\.com|fb\.watch|threads\.net|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|twitter\.com|x\.com|pinterest\.com|bsky\.app/i;
+  /instagram\.com|facebook\.com|fb\.watch|threads\.(net|com)|youtube\.com|youtu\.be|tiktok\.com|linkedin\.com|twitter\.com|x\.com|pinterest\.com|bsky\.app/i;
 
 /**
  * Error API yang sering berarti post tetap terbit (semua platform, terutama Meta/IG).
