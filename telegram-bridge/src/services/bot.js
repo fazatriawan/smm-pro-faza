@@ -1696,6 +1696,18 @@ async function handleRetryPublish(ctx, options = {}) {
 
 async function runPublish(ctx, scheduledAt) {
   const session = getSession(ctx.chat.id);
+
+  // Hard lock: jika ada publish lain sedang berjalan untuk chat ini, tolak.
+  // `publishingSince` di-set di sini lalu di-clear di akhir / catch block.
+  if (session.publishingSince && Date.now() - session.publishingSince < 15 * 60_000) {
+    await ctx
+      .reply(
+        '⏳ Masih mempublish batch sebelumnya. Tunggu sampai laporan keluar atau ketik /cancel kalau yakin batch lama sudah selesai.'
+      )
+      .catch(() => {});
+    return;
+  }
+
   if (
     session.step !== 'ready' &&
     session.step !== 'awaiting_schedule' &&
@@ -1704,6 +1716,11 @@ async function runPublish(ctx, scheduledAt) {
     await ctx.reply('Sesi tidak valid. Ketik /publish untuk mulai lagi.');
     return;
   }
+
+  updateSession(ctx.chat.id, {
+    step: 'publishing',
+    publishingSince: Date.now(),
+  });
 
   // Idempotency guard: request publish sama dalam window pendek dianggap duplikat.
   // Ini mencegah konten hari ini ter-submit berkali-kali akibat double click / reconnect.
@@ -1735,7 +1752,7 @@ async function runPublish(ctx, scheduledAt) {
           `Kalau ada antrian lama: \`/stop 3d ya\``,
         { parse_mode: 'Markdown' }
       );
-      updateSession(ctx.chat.id, { step: 'idle' });
+      updateSession(ctx.chat.id, { step: 'idle', publishingSince: undefined });
       return;
     }
 
@@ -1748,6 +1765,7 @@ async function runPublish(ctx, scheduledAt) {
     await ctx.reply(
       'Media belum ada. Kirim link Drive / foto, atau ketik /publish lagi.'
     );
+    updateSession(ctx.chat.id, { step: 'idle', publishingSince: undefined });
     return;
   }
 
@@ -1757,7 +1775,7 @@ async function runPublish(ctx, scheduledAt) {
       parse_mode: 'Markdown',
     });
     clearSessionContent(ctx.chat.id);
-    updateSession(ctx.chat.id, { step: 'awaiting_media' });
+    updateSession(ctx.chat.id, { step: 'awaiting_media', publishingSince: undefined });
     return;
   }
 
@@ -1798,6 +1816,7 @@ async function runPublish(ctx, scheduledAt) {
   if (!session.selectedAccountIds?.length) {
     await ctx.reply('Pilih target publish dulu:');
     await showTargetPicker(ctx);
+    updateSession(ctx.chat.id, { step: 'selecting_targets', publishingSince: undefined });
     return;
   }
 
@@ -1812,6 +1831,7 @@ async function runPublish(ctx, scheduledAt) {
   });
   if (!validation.ok) {
     await ctx.reply(`❌ Tidak bisa publish:\n${validation.errors.join('\n')}`);
+    updateSession(ctx.chat.id, { step: 'idle', publishingSince: undefined });
     return;
   }
   if (validation.warnings.length) {
@@ -1848,13 +1868,29 @@ async function runPublish(ctx, scheduledAt) {
       );
     }
 
+    // Snapshot semua field session yang masih dibutuhkan SETELAH publishBulk
+    // (record sheets, mark used, scheduling refresh, follow-up poll).
+    // Tanpa snapshot: clearSessionContent menghapus session.* lebih cepat
+    // dari pemakaian → expectedAccountIds undefined → Sheets tidak ter-record
+    // dengan benar dan markAccountsUsedForToday tidak mengisi exclude list
+    // sehingga /random berikutnya bisa memilih akun yang sama lagi.
+    const snapshot = {
+      selectedAccountIds: [...(session.selectedAccountIds || [])],
+      mediaFiles: session.mediaFiles ? [...session.mediaFiles] : [],
+      caption: session.caption || '',
+      folderName: session.folderName || '',
+      folderId: session.folderId || '',
+      targetLabel: session.targetLabel || targetInfo,
+      mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+    };
+
     const {
       byNetwork: mediaByNetwork,
       imageToVideoNetworks,
       imageToVideoSilent,
     } = await uploadMediaForTargets(
-      session.mediaFiles,
-      session.selectedAccountIds
+      snapshot.mediaFiles,
+      snapshot.selectedAccountIds
     );
 
     const allMediaIds = Object.values(mediaByNetwork)
@@ -1862,33 +1898,42 @@ async function runPublish(ctx, scheduledAt) {
       .map((m) => m.id);
 
     const result = await publishBulk({
-      baseCaption: session.caption,
+      baseCaption: snapshot.caption,
       captionsByNetwork: session.captionsByNetwork,
       youtubeFields: session.youtubeFields,
       mediaByNetwork,
       scheduledAt,
-      socialAccountIds: session.selectedAccountIds,
+      socialAccountIds: snapshot.selectedAccountIds,
     });
 
     const lastPublish = {
-      mediaFiles: session.mediaFiles,
-      caption: session.caption,
-      folderName: session.folderName,
-      folderId: session.folderId,
+      mediaFiles: snapshot.mediaFiles,
+      caption: snapshot.caption,
+      folderName: snapshot.folderName,
+      folderId: snapshot.folderId,
       targetLabel: targetInfo,
       postIds: result.postIds,
-      selectedAccountIds: session.selectedAccountIds,
-      mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+      selectedAccountIds: snapshot.selectedAccountIds,
+      mediaFilesDay: snapshot.mediaFilesDay,
       savedAt: nowIsoUtc(),
     };
 
     savePublishArchive(ctx.chat.id, lastPublish);
 
+    // ANTI-DUPLIKAT: catat akun yang dipakai SEGERA setelah publishBulk
+    // berhasil (jangan tunggu polling selesai), plus invalidate cache
+    // "touched today" supaya /random berikutnya tidak memilih akun yang sama.
+    markAccountsUsedForToday(ctx.chat.id, snapshot.selectedAccountIds);
+    clearPublishedTodayCache();
+    clearQuotaCache();
+
     // Kosongkan media/caption di sesi aktif supaya /random atau /republish
     // tidak bisa pakai konten batch ini lagi tanpa /publish + Drive baru.
+    // Lock `publishing` SENGAJA dipertahankan sampai polling selesai supaya
+    // double-tap Send Now tidak men-trigger submit baru.
     clearSessionContent(ctx.chat.id);
     updateSession(ctx.chat.id, {
-      step: 'idle',
+      step: 'publishing',
       lastPublish,
       outstandPostIds: result.postIds,
       outstandMediaIds: allMediaIds,
@@ -1896,10 +1941,10 @@ async function runPublish(ctx, scheduledAt) {
 
     log.info(
       {
-        folder: session.folderName,
-        files: (session.mediaFiles || []).map((f) => f.name),
+        folder: snapshot.folderName,
+        files: snapshot.mediaFiles.map((f) => f.name),
         postIds: result.postIds,
-        accounts: session.selectedAccountIds?.length,
+        accounts: snapshot.selectedAccountIds.length,
       },
       '[Bot] Publish submitted — session media cleared'
     );
@@ -1934,32 +1979,28 @@ async function runPublish(ctx, scheduledAt) {
       maxWaitMs: pollPlan.maxWaitMs,
       intervalMs: 3_000,
     });
-    const summary = summarizePublishResults(posts, session.caption);
-
-    markAccountsUsedForToday(ctx.chat.id, session.selectedAccountIds);
-    clearPublishedTodayCache();
-    clearQuotaCache();
+    const summary = summarizePublishResults(posts, snapshot.caption);
 
     if (result.postIds?.length) {
       try {
         const sheetResult = await recordPublishResultsToSheet({
           postIds: result.postIds,
           posts,
-          expectedAccountIds: session.selectedAccountIds,
-          baseCaption: session.caption,
-          folderName: session.folderName,
-          targetLabel: session.targetLabel,
-          mediaFiles: session.mediaFiles,
+          expectedAccountIds: snapshot.selectedAccountIds,
+          baseCaption: snapshot.caption,
+          folderName: snapshot.folderName,
+          targetLabel: snapshot.targetLabel,
+          mediaFiles: snapshot.mediaFiles,
         });
         scheduleSheetRefresh(
           result.postIds,
-          session.selectedAccountIds,
-          session.caption || '',
+          snapshot.selectedAccountIds,
+          snapshot.caption,
           {
-            folderName: session.folderName,
-            targetLabel: session.targetLabel,
-            mediaFiles: session.mediaFiles,
-            mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+            folderName: snapshot.folderName,
+            targetLabel: snapshot.targetLabel,
+            mediaFiles: snapshot.mediaFiles,
+            mediaFilesDay: snapshot.mediaFilesDay,
           }
         );
         if (sheetResult.recorded > 0) {
@@ -2011,11 +2052,17 @@ async function runPublish(ctx, scheduledAt) {
       schedulePublishStatusFollowUp(ctx, {
         chatId: ctx.chat.id,
         postIds: result.postIds,
-        expectedAccountIds: session.selectedAccountIds,
-        baseCaption: session.caption || '',
+        expectedAccountIds: snapshot.selectedAccountIds,
+        baseCaption: snapshot.caption,
         initialSummary: summary,
       });
     }
+
+    // Lepaskan lock publishing setelah seluruh pipeline selesai.
+    updateSession(ctx.chat.id, {
+      step: 'idle',
+      publishingSince: undefined,
+    });
   } catch (err) {
     log.error({ err: err?.message, stack: err?.stack }, `[Bot] publish error: ${err?.message || err}`);
     const detail = err.response?.data;
@@ -2027,7 +2074,10 @@ async function runPublish(ctx, scheduledAt) {
       `❌ Publish gagal: ${err.message}${extra ? `\n${extra}` : ''}`
     );
     // Pastikan lock dilepas jika publish gagal, supaya user bisa coba ulang.
-    updateSession(ctx.chat.id, { step: 'idle' });
+    updateSession(ctx.chat.id, {
+      step: 'idle',
+      publishingSince: undefined,
+    });
   }
 }
 
