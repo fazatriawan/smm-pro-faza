@@ -546,9 +546,23 @@ function sleep(ms) {
 }
 
 /**
- * Kirim message panjang sebagai beberapa chunk dengan delay antar chunk
- * (mencegah 429 Too Many Requests). Otomatis retry kalau dapat 429 dengan
- * `retry_after` dari Telegram, plus exponential backoff fallback.
+ * Threshold otomatis switch ke document mode. Kalau report > 2 chunks
+ * (~7000 char), kirim sebagai file .txt — jauh lebih hemat rate-limit
+ * Telegram (1 upload vs N message), plus user dapat 1 file rapi yang bisa
+ * di-search & copy.
+ */
+const DOCUMENT_FALLBACK_CHUNK_THRESHOLD = 3;
+
+/**
+ * Kirim message panjang ke Telegram dengan strategi adaptif:
+ *
+ * - **Pendek** (≤ 3500 char, 1 chunk) → kirim sebagai satu message biasa.
+ * - **Sedang** (2 chunks) → kirim sebagai 2 message dengan delay 1500ms.
+ * - **Panjang** (≥ 3 chunks atau ≥ ~7000 char) → kirim sebagai file `.txt`,
+ *   plus 1 message header pendek dengan ringkasan. Ini menghindari sliding
+ *   window 429 di Telegram yang sering muncul saat report mencapai 5+ chunk.
+ *
+ * Otomatis retry kalau dapat 429 dengan `retry_after` + exponential backoff.
  *
  * @param {import('telegraf').Context} ctx
  * @param {string} text
@@ -556,6 +570,11 @@ function sleep(ms) {
  */
 export async function replyTelegramLong(ctx, text, options = {}) {
   const parts = splitTelegramMessage(text);
+
+  if (parts.length >= DOCUMENT_FALLBACK_CHUNK_THRESHOLD) {
+    return sendAsDocument(ctx, text, parts.length);
+  }
+
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     let attempts = 0;
@@ -588,6 +607,67 @@ export async function replyTelegramLong(ctx, text, options = {}) {
     if (lastErr) throw lastErr;
     if (i < parts.length - 1) {
       await sleep(CHUNK_DELAY_MS);
+    }
+  }
+}
+
+/**
+ * Kirim text panjang sebagai file `.txt`. Strategi:
+ *   1. Buat preview pendek (header + summary baris pertama)
+ *   2. Kirim header sebagai message biasa (single ctx.reply — 1 hit rate)
+ *   3. Attach full text sebagai document
+ *
+ * Telegram menghitung document upload terpisah dari message rate limit,
+ * jadi bahkan kalau chat sedang ter-throttle, document tetap bisa terkirim.
+ *
+ * @param {import('telegraf').Context} ctx
+ * @param {string} text
+ * @param {number} chunkCount jumlah chunk kalau dipecah (untuk info)
+ */
+async function sendAsDocument(ctx, text, chunkCount) {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[:T]/g, '-')
+    .slice(0, 19);
+  const filename = `linkshari-${stamp}.txt`;
+  const previewLines = text.split('\n').slice(0, 3).join('\n');
+  const totalLines = text.split('\n').length;
+  const header =
+    `📎 Report panjang (${totalLines} baris, ${chunkCount} pesan)\n` +
+    `📥 File terlampir: \`${filename}\`\n\n` +
+    `Preview:\n${previewLines.slice(0, 300)}${previewLines.length > 300 ? '…' : ''}`;
+
+  // Header pendek dulu — kalau pun gagal (429), document tetap berusaha kirim
+  await ctx
+    .reply(header, { parse_mode: 'Markdown', disable_web_page_preview: true })
+    .catch(() => {
+      // Kalau header gagal, kirim plain text minimal
+      return ctx.reply(`Report panjang — lihat file ${filename}`).catch(() => {});
+    });
+
+  // Document upload — terpisah dari message rate limit
+  let attempts = 0;
+  while (attempts < MAX_SEND_ATTEMPTS) {
+    try {
+      await ctx.replyWithDocument({
+        source: Buffer.from(text, 'utf-8'),
+        filename,
+      });
+      return;
+    } catch (err) {
+      const code = err?.response?.error_code ?? err?.code;
+      const retryAfter =
+        err?.response?.parameters?.retry_after ??
+        err?.parameters?.retry_after;
+      if (code === 429 && attempts < MAX_SEND_ATTEMPTS - 1) {
+        const waitSec = retryAfter
+          ? Number(retryAfter) + 2
+          : Math.min(60, 3 * 2 ** attempts);
+        await sleep(waitSec * 1000);
+        attempts += 1;
+        continue;
+      }
+      throw err;
     }
   }
 }

@@ -80,7 +80,11 @@ import {
   downloadTelegramFile,
   extractTelegramMedia,
 } from './telegramMedia.js';
-import { safeReply, safeSendMessage } from '../utils/telegramMarkdown.js';
+import {
+  escapeMarkdown,
+  safeReply,
+  safeSendMessage,
+} from '../utils/telegramMarkdown.js';
 import {
   looksLikeRandomPick,
   parseRandomPickCommand,
@@ -205,7 +209,7 @@ function formatMediaListPreview(session, opts = {}) {
   const setAtWib = session.mediaFilesSetAt
     ? formatWibDateTime(session.mediaFilesSetAt)
     : '';
-  const folderLine = folder ? `📁 *${folder}*\n` : '';
+  const folderLine = folder ? `📁 *${escapeMarkdown(folder)}*\n` : '';
   const setAtLine = setAtWib ? `🕒 Di-load: ${setAtWib}\n` : '';
   return (
     `📄 *Konten yang akan ter-publish (${files.length}):*\n` +
@@ -325,8 +329,9 @@ function tonePickerKeyboard() {
 }
 
 async function showTonePicker(ctx, label) {
-  await ctx.reply(
-    `🎨 *Gaya caption* untuk *${label}*\n\nPilih tone AI (bisa diubah lagi nanti):`,
+  await safeReply(
+    ctx,
+    `🎨 *Gaya caption* untuk *${escapeMarkdown(label)}*\n\nPilih tone AI (bisa diubah lagi nanti):`,
     { parse_mode: 'Markdown', ...tonePickerKeyboard() }
   );
 }
@@ -347,9 +352,9 @@ async function showReadyPreview(ctx, accountIds, label, networks) {
     session.captionsByNetwork || buildCaptionsByNetwork(caption, networks);
 
   let preview =
-    `✅ *${label}* — ${accountIds.length} akun · ${networks.length} platform\n`;
+    `✅ *${escapeMarkdown(label)}* — ${accountIds.length} akun · ${networks.length} platform\n`;
   if (session.captionTone) {
-    preview += `Gaya: ${getToneLabel(session.captionTone)}\n`;
+    preview += `Gaya: ${escapeMarkdown(getToneLabel(session.captionTone))}\n`;
   }
 
   // Daftar konten yang akan ter-publish — biar user bisa lihat dan
@@ -370,20 +375,20 @@ async function showReadyPreview(ctx, accountIds, label, networks) {
         session.youtubeFields || buildYoutubePostFields(captionsByNetwork.youtube || caption);
       preview +=
         `\n${labelNet}\n` +
-        `*Judul* (${yt.title.length}/${YOUTUBE_TITLE_MAX}):\n${yt.title}\n\n` +
-        `*Deskripsi* (${yt.description.length}/${YOUTUBE_DESCRIPTION_MAX}):\n${yt.description}\n`;
+        `*Judul* (${yt.title.length}/${YOUTUBE_TITLE_MAX}):\n${escapeMarkdown(yt.title)}\n\n` +
+        `*Deskripsi* (${yt.description.length}/${YOUTUBE_DESCRIPTION_MAX}):\n${escapeMarkdown(yt.description)}\n`;
       if (yt.tags.length) {
-        preview += `\n_Tag:_ ${yt.tags.join(', ')}\n`;
+        preview += `\n_Tag:_ ${escapeMarkdown(yt.tags.join(', '))}\n`;
       }
     } else {
       const cap = captionsByNetwork[net] || '';
       const platLimit = getMinCharLimitForNetworks([net]);
-      preview += `\n${labelNet} (${cap.length}/${platLimit}):\n${cap}\n`;
+      preview += `\n${labelNet} (${cap.length}/${platLimit}):\n${escapeMarkdown(cap)}\n`;
     }
   }
   if (preview.length > 3900) preview = `${preview.slice(0, 3900)}…`;
 
-  await ctx.reply(preview, { parse_mode: 'Markdown', ...actionKeyboard() });
+  await safeReply(ctx, preview, { parse_mode: 'Markdown', ...actionKeyboard() });
 }
 
 async function generateCaptionAndShowPreview(ctx, accountIds, label, networks) {
@@ -391,11 +396,14 @@ async function generateCaptionAndShowPreview(ctx, accountIds, label, networks) {
   const { limit: minLimit } = getTightestPlatform(networks);
   const onlyYoutube = networks.length === 1 && networks[0] === 'youtube';
 
-  await ctx.reply(
+  await safeReply(
+    ctx,
     onlyYoutube
       ? `⏳ Membuat *judul* & *deskripsi* YouTube…`
-      : `⏳ Membuat caption untuk *${label}*…\nLimit: *${minLimit}* karakter` +
-          (session.captionTone ? ` · gaya: ${getToneLabel(session.captionTone)}` : ''),
+      : `⏳ Membuat caption untuk *${escapeMarkdown(label)}*…\nLimit: *${minLimit}* karakter` +
+          (session.captionTone
+            ? ` · gaya: ${escapeMarkdown(getToneLabel(session.captionTone))}`
+            : ''),
     { parse_mode: 'Markdown' }
   );
 
