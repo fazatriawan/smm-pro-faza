@@ -2576,7 +2576,12 @@ export function createBot() {
 
     let network = null;
     if (!stuckOnly) {
-      const { networks, invalid } = parseNetworkFilter(args.replace(/\b(yes|ya|kirim|confirm|batalkan|stuck)\b/g, '').trim());
+      const cleaned = args
+        .replace(/\b(\d+)\s*d\b/g, ' ')
+        .replace(/\b(yes|ya|kirim|confirm|batalkan|stuck)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const { networks, invalid } = parseNetworkFilter(cleaned);
       if (invalid.length) {
         await ctx.reply(
           `Platform tidak dikenal: ${invalid.join(', ')}\n\n` +
@@ -2584,7 +2589,9 @@ export function createBot() {
             '• `/stop` — lihat antrian + cara batalkan\n' +
             '• `/stop ig` — antrian Instagram saja\n' +
             '• `/stop stuck` — pending >2 jam\n' +
-            '• `/stop ig ya` — batalkan batch IG pending',
+            '• `/stop ig ya` — batalkan batch IG pending\n' +
+            '• `/stop 4d ig` — scan 4 hari terakhir (IG)\n' +
+            '• `/stop 4d ig ya` — cancel pending 4 hari terakhir (IG)',
           { parse_mode: 'Markdown' }
         );
         return;
