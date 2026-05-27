@@ -227,6 +227,8 @@ export function pickRandomAccounts(allAccounts, counts, options = {}) {
   const picked = [];
   const breakdown = [];
   const warnings = [];
+  /** @type {Array<{ network: string, want: number, got: number, missing: number, skippedUsed: number, totalOnNet: number }>} */
+  const shortages = [];
 
   for (const [net, want] of Object.entries(counts)) {
     const totalOnNet = byNet[net] || [];
@@ -241,12 +243,33 @@ export function pickRandomAccounts(allAccounts, counts, options = {}) {
       warnings.push(
         `${NET_LABEL[net] || net}: ${skippedUsed} akun sudah dipakai hari ini — tidak ada sisa`
       );
+      if (skippedUsed > 0) {
+        shortages.push({
+          network: net,
+          want,
+          got: 0,
+          missing: want,
+          skippedUsed,
+          totalOnNet: totalOnNet.length,
+        });
+      }
       continue;
     }
 
     const selected = pickWithReuseCap(pool, want, maxReuse);
     const uniqueInPool = pool.length;
     const repeats = selected.length - new Set(selected.map((a) => a.id)).size;
+
+    if (selected.length < want && skippedUsed > 0) {
+      shortages.push({
+        network: net,
+        want,
+        got: selected.length,
+        missing: want - selected.length,
+        skippedUsed,
+        totalOnNet: totalOnNet.length,
+      });
+    }
 
     if (selected.length < want) {
       warnings.push(
@@ -280,7 +303,57 @@ export function pickRandomAccounts(allAccounts, counts, options = {}) {
       ? `Random ${breakdown.join(', ')} (${picked.length} slot)`
       : 'Random (0 akun)';
 
-  return { accountIds: picked.map((a) => a.id), picked, breakdown, warnings, label };
+  return {
+    accountIds: picked.map((a) => a.id),
+    picked,
+    breakdown,
+    warnings,
+    label,
+    shortages,
+  };
+}
+
+/**
+ * Force-pick akun pengganti dari pool yang sudah dipakai hari ini (exclude list)
+ * untuk menutup kekurangan slot. Aman dipakai setelah user konfirmasi.
+ *
+ * @param {Array<{ id: string, network?: string, username?: string }>} allAccounts
+ * @param {Array<{ network: string, missing: number }>} shortages
+ * @param {{ excludeAccountIds: string[], maxReusePerAccount?: number }} options
+ */
+export function fillShortageFromExcludedPool(allAccounts, shortages, options) {
+  const exclude = new Set(options.excludeAccountIds || []);
+  const maxReuse = options.maxReusePerAccount ?? 2;
+
+  /** @type {Record<string, typeof allAccounts>} */
+  const byNet = {};
+  for (const a of allAccounts) {
+    const net = (a.network || 'unknown').toLowerCase();
+    if (!byNet[net]) byNet[net] = [];
+    byNet[net].push(a);
+  }
+
+  /** @type {Array<{ id: string, network?: string, username?: string }>} */
+  const added = [];
+  /** @type {Array<{ network: string, requested: number, filled: number }>} */
+  const summary = [];
+
+  for (const s of shortages) {
+    const pool = (byNet[s.network] || []).filter((a) => exclude.has(a.id));
+    if (!pool.length) {
+      summary.push({ network: s.network, requested: s.missing, filled: 0 });
+      continue;
+    }
+    const picks = pickWithReuseCap(pool, s.missing, maxReuse);
+    added.push(...picks);
+    summary.push({
+      network: s.network,
+      requested: s.missing,
+      filled: picks.length,
+    });
+  }
+
+  return { added, summary };
 }
 
 export function formatRandomPickHelp() {

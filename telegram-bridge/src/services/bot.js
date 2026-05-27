@@ -109,6 +109,7 @@ import {
   formatRandomPickHelp,
   parseNetworkFilter,
   getNetworkShortLabel,
+  fillShortageFromExcludedPool,
 } from '../utils/randomAccountPick.js';
 import {
   annotateAccountsWithDayAttempts,
@@ -668,6 +669,44 @@ async function handleRandomAccountPick(ctx, text) {
   }
 
   await safeReply(ctx, msg, { parse_mode: 'Markdown' });
+
+  // Tawarkan: kalau ada shortage (mis. Threads minta 6 hanya dapat 1 karena
+  // kuota sisa), tanya user mau isi sisa dari akun yang sudah dipakai hari
+  // ini? Tidak auto — user harus konfirmasi.
+  const shortages = (result.shortages || []).filter((s) => s.missing > 0);
+  if (!force && shortages.length) {
+    updateSession(ctx.chat.id, {
+      pendingFillShortage: {
+        baseAccountIds: result.accountIds,
+        shortages,
+        label: result.label,
+        at: Date.now(),
+      },
+      step: 'selecting_targets',
+    });
+
+    const lines = shortages.map((s) => {
+      const lab = getNetworkShortLabel(s.network);
+      return `• *${lab}*: kurang *${s.missing}* akun (stok ${s.skippedUsed} sudah dipakai hari ini)`;
+    });
+    await safeReply(
+      ctx,
+      `📌 *Saran isi sisa slot?*\n` +
+        lines.join('\n') +
+        `\n\nMau aku tambah pengganti dari akun yang sudah pernah post hari ini?\n` +
+        `_Bot tidak akan auto — silakan pilih._\n` +
+        `Catatan: ini akan posting 2× ke beberapa akun. Hanya lakukan kalau memang perlu.`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('🔥 Ya, isi sisa', 'randomfill:yes')],
+          [Markup.button.callback('Lanjut tanpa isi', 'randomfill:skip')],
+        ]),
+      }
+    );
+    return;
+  }
+
   updateSession(ctx.chat.id, { step: 'selecting_targets' });
   await finalizeTargetSelection(ctx, result.accountIds, result.label);
 }
@@ -3352,6 +3391,82 @@ export function createBot() {
     }
     updateSession(ctx.chat.id, { step: 'awaiting_random_counts' });
     await ctx.reply(formatRandomPickHelp(), { parse_mode: 'Markdown' });
+  });
+
+  bot.action('randomfill:yes', async (ctx) => {
+    await ack(ctx, 'Mengisi sisa…');
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingFillShortage;
+    if (!pending || Date.now() - pending.at > 30 * 60_000) {
+      await ctx.reply('⌛ Saran sudah kadaluarsa. Ulangi `/random` jika perlu.');
+      updateSession(ctx.chat.id, { pendingFillShortage: undefined });
+      return;
+    }
+
+    const accounts = await listSocialAccounts();
+    const excludeIds = await getExcludeIdsForRandomPick(ctx.chat.id);
+    const { added, summary } = fillShortageFromExcludedPool(
+      accounts,
+      pending.shortages,
+      {
+        excludeAccountIds: excludeIds,
+        maxReusePerAccount: env.maxReusePerAccount,
+      }
+    );
+
+    if (!added.length) {
+      await ctx.reply(
+        '⚠️ Tidak ada akun pengganti yang tersedia (pool excluded kosong).\n' +
+          'Lanjut dengan akun terpilih awal.'
+      );
+      const baseIds = pending.baseAccountIds || [];
+      updateSession(ctx.chat.id, {
+        pendingFillShortage: undefined,
+        step: 'selecting_targets',
+      });
+      await finalizeTargetSelection(ctx, baseIds, pending.label);
+      return;
+    }
+
+    const combinedIds = [...pending.baseAccountIds, ...added.map((a) => a.id)];
+    const filledLines = summary
+      .filter((s) => s.filled > 0)
+      .map((s) => `• *${getNetworkShortLabel(s.network)}*: +${s.filled} akun`);
+    const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+    const samplePicks = added
+      .slice(0, 6)
+      .map((a) => `@${escUser((a.username || a.id).replace(/^@/, ''))}`)
+      .join(', ');
+
+    await safeReply(
+      ctx,
+      `🔥 *Tambahan ${added.length} akun pengganti* (force, sudah pernah post hari ini):\n` +
+        filledLines.join('\n') +
+        (samplePicks ? `\nContoh: ${samplePicks}${added.length > 6 ? '…' : ''}` : '') +
+        `\n\nTotal target sekarang: *${combinedIds.length}* akun.`,
+      { parse_mode: 'Markdown' }
+    );
+
+    updateSession(ctx.chat.id, {
+      pendingFillShortage: undefined,
+      step: 'selecting_targets',
+    });
+    await finalizeTargetSelection(ctx, combinedIds, `${pending.label} + fill ${added.length}`);
+  });
+
+  bot.action('randomfill:skip', async (ctx) => {
+    await ack(ctx);
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingFillShortage;
+    if (!pending) {
+      await ctx.reply('Saran sudah tidak ada.');
+      return;
+    }
+    updateSession(ctx.chat.id, {
+      pendingFillShortage: undefined,
+      step: 'selecting_targets',
+    });
+    await finalizeTargetSelection(ctx, pending.baseAccountIds, pending.label);
   });
 
   bot.action(/^tone:(.+)$/, async (ctx) => {
