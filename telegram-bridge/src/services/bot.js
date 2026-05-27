@@ -1933,6 +1933,7 @@ async function runPublish(ctx, scheduledAt) {
       folderId: session.folderId || '',
       targetLabel: session.targetLabel || targetInfo,
       mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+      idempotencyKey: session.lastPublishKey || '',
     };
 
     const {
@@ -2046,6 +2047,7 @@ async function runPublish(ctx, scheduledAt) {
           folderName: snapshot.folderName,
           targetLabel: snapshot.targetLabel,
           mediaFiles: snapshot.mediaFiles,
+          idempotencyKey: snapshot.idempotencyKey,
         });
         scheduleSheetRefresh(
           result.postIds,
@@ -2056,14 +2058,16 @@ async function runPublish(ctx, scheduledAt) {
             targetLabel: snapshot.targetLabel,
             mediaFiles: snapshot.mediaFiles,
             mediaFilesDay: snapshot.mediaFilesDay,
+            idempotencyKey: snapshot.idempotencyKey,
           }
         );
         if (sheetResult.recorded > 0) {
           const rows = sheetResult.rowCount ?? sheetResult.recorded;
+          const instr = sheetResult.instructionCount ?? 1;
           await ctx.reply(
-            `📊 Sheets: *${rows} baris* (1 baris = 1 posting)\n` +
+            `📊 Sheets: *${rows} baris akun* · *${instr} instruksi* (kolom terpisah per waktu publish)\n` +
               `Tab: ${sheetResult.tabName} · ${sheetResult.summary.statusSummary}\n` +
-              `Kolom Ke-# / Duplikat / Konten.\n` +
+              `Kolom: Platform/Akun + blok #1, #2, … (Konten/Status/Link/Post ID).\n` +
               `Status diperbarui otomatis +5…+120 menit & tiap 20 menit (/refresh).\n` +
               `${sheetResult.spreadsheetUrl}`
           );

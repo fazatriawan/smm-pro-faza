@@ -1,6 +1,11 @@
 import { getSheetsClient } from '../config/google.js';
 import { getSpreadsheetId, getSpreadsheetUrl } from './spreadsheetSetup.js';
-import { columnLetterFromIndex, getHeaderRow } from '../config/sheetLayout.js';
+import {
+  PLATFORM_LABELS,
+  columnLetterFromIndex,
+  isWideSheetHeader,
+  parseWideSheetHeader,
+} from '../config/sheetLayout.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('audit');
@@ -81,14 +86,27 @@ async function clearTab(spreadsheetId, tabName) {
  * @param {string} spreadsheetId
  * @param {string} tabName
  */
+function platformLabelToNetwork(label) {
+  const s = String(label || '').trim().toLowerCase();
+  for (const [key, name] of Object.entries(PLATFORM_LABELS)) {
+    if (name.toLowerCase() === s) return key;
+  }
+  return s;
+}
+
 async function readDailyTabRows(spreadsheetId, tabName) {
   const sheets = getSheetsClient();
-  const lastCol = columnLetterFromIndex(getHeaderRow().length);
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteTab(tabName)}!A1:ZZ1`,
+  });
+  const header = headerRes.data.values?.[0] || [];
+  const lastCol = columnLetterFromIndex(Math.max(header.length, 4));
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${quoteTab(tabName)}!A2:${lastCol}`,
   });
-  return res.data.values || [];
+  return { header, rows: res.data.values || [] };
 }
 
 function safeNum(v) {
@@ -122,8 +140,59 @@ export async function buildAuditFromSheets(input) {
   /** @type {Map<string, { network: string, username: string, total: number, days: Set<string> }>} */
   const byAccount = new Map();
 
+  const bump = (tab, network, username, content, postId) => {
+    if (!network || !username) return;
+    const key = `${tab}|${network}|${username.toLowerCase()}`;
+    if (!byDayAccount.has(key)) {
+      byDayAccount.set(key, {
+        day: tab,
+        network,
+        username,
+        count: 0,
+        contents: new Set(),
+        postIds: new Set(),
+      });
+    }
+    const entry = byDayAccount.get(key);
+    entry.count += 1;
+    if (content) entry.contents.add(content);
+    if (postId) entry.postIds.add(postId);
+
+    const accKey = `${network}|${username.toLowerCase()}`;
+    if (!byAccount.has(accKey)) {
+      byAccount.set(accKey, {
+        network,
+        username,
+        total: 0,
+        days: new Set(),
+      });
+    }
+    const acc = byAccount.get(accKey);
+    acc.total += 1;
+    acc.days.add(tab);
+  };
+
   for (const tab of tabs) {
-    const rows = await readDailyTabRows(spreadsheetId, tab);
+    const { header, rows } = await readDailyTabRows(spreadsheetId, tab);
+
+    if (isWideSheetHeader(header)) {
+      const { instructions } = parseWideSheetHeader(header);
+      for (const r of rows) {
+        const platformCell = String(r[0] || '').trim();
+        if (!platformCell || /^REKAP/i.test(platformCell)) continue;
+        const network = platformLabelToNetwork(platformCell);
+        const username = parseAccountCell(r[1] || '');
+        for (const inst of instructions) {
+          const content = String(r[inst.kontenIdx] || '').trim();
+          const status = String(r[inst.statusIdx] || '').trim();
+          const postId = String(r[inst.postIdIdx] || '').trim();
+          if (!content && !status && !postId) continue;
+          bump(tab, network, username, content, postId);
+        }
+      }
+      continue;
+    }
+
     for (const r of rows) {
       const postId = String(r[1] || '').trim();
       const network = String(r[2] || '').trim().toLowerCase();
@@ -131,35 +200,7 @@ export async function buildAuditFromSheets(input) {
       const content = String(r[6] || '').trim();
       if (!network || !username) continue;
       if (/^REKAP/i.test(postId)) continue;
-
-      const key = `${tab}|${network}|${username.toLowerCase()}`;
-      if (!byDayAccount.has(key)) {
-        byDayAccount.set(key, {
-          day: tab,
-          network,
-          username,
-          count: 0,
-          contents: new Set(),
-          postIds: new Set(),
-        });
-      }
-      const entry = byDayAccount.get(key);
-      entry.count += 1;
-      if (content) entry.contents.add(content);
-      if (postId) entry.postIds.add(postId);
-
-      const accKey = `${network}|${username.toLowerCase()}`;
-      if (!byAccount.has(accKey)) {
-        byAccount.set(accKey, {
-          network,
-          username,
-          total: 0,
-          days: new Set(),
-        });
-      }
-      const acc = byAccount.get(accKey);
-      acc.total += 1;
-      acc.days.add(tab);
+      bump(tab, network, username, content, postId);
     }
   }
 

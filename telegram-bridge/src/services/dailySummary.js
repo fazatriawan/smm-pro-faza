@@ -5,8 +5,9 @@ import { getSheetsClient } from '../config/google.js';
 import { getBot, getNotifyChat } from './bot.js';
 import {
   columnLetterFromIndex,
-  getSheetColumnCount,
-  SHEET_STATUS_COLUMN_INDEX,
+  isLegacySheetHeader,
+  isWideSheetHeader,
+  parseWideSheetHeader,
 } from '../config/sheetLayout.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -40,23 +41,41 @@ export async function maybeSendDailySummary() {
   try {
     const spreadsheetId = await getSpreadsheetId();
     const sheets = getSheetsClient();
-    const colLetter = columnLetterFromIndex(getSheetColumnCount());
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${tabName.replace(/'/g, "''")}'!A:${colLetter}`,
+      range: `'${tabName.replace(/'/g, "''")}'!A:ZZ`,
     });
     const rows = res.data.values || [];
+    const header = rows[0] || [];
+    const colLetter = columnLetterFromIndex(Math.max(header.length, 4));
     const count = Math.max(0, rows.length - 1);
     let live = 0;
     let fail = 0;
     let pending = 0;
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][0] || '').startsWith('REKAP')) continue;
-      const cell = String(rows[i][SHEET_STATUS_COLUMN_INDEX] || '');
-      const st = cell.toLowerCase();
+
+    const tallyStatus = (cell) => {
+      const st = String(cell || '').toLowerCase();
       if (st.includes('gagal')) fail += 1;
       else if (st.includes('pending')) pending += 1;
       else if (st.includes('live')) live += 1;
+    };
+
+    if (isWideSheetHeader(header)) {
+      const { instructions } = parseWideSheetHeader(header);
+      const statusCols = instructions.map((i) => i.statusIdx);
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0] || '').startsWith('REKAP')) continue;
+        for (const col of statusCols) {
+          const cell = String(rows[i][col] || '').trim();
+          if (cell) tallyStatus(cell);
+        }
+      }
+    } else {
+      const statusIdx = isLegacySheetHeader(header) ? 7 : 7;
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0] || '').startsWith('REKAP')) continue;
+        tallyStatus(rows[i][statusIdx]);
+      }
     }
 
     await bot.telegram.sendMessage(

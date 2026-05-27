@@ -1,7 +1,7 @@
 import { getDriveClient, getSheetsClient } from '../config/google.js';
 import { env } from '../config/env.js';
 import { getRuntime, setRuntime } from '../utils/runtimeStore.js';
-import { getHeaderRow, columnLetterFromIndex } from '../config/sheetLayout.js';
+import { getWideBaseHeaderRow, columnLetterFromIndex } from '../config/sheetLayout.js';
 
 let cachedSpreadsheetId = null;
 
@@ -59,7 +59,7 @@ async function createPublishLogSpreadsheet() {
   const id = res.data.spreadsheetId;
   if (!id) throw new Error('Gagal membuat spreadsheet otomatis');
 
-  const header = getHeaderRow();
+  const header = getWideBaseHeaderRow();
   const lastCol = columnLetterFromIndex(header.length);
 
   await sheets.spreadsheets.values.update({

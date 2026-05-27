@@ -5,6 +5,25 @@ export const WIB_TIMEZONE = 'Asia/Jakarta';
  * Format tanggal-waktu untuk Sheets & Telegram: `21/05/2026 13:21 WIB`
  * @param {string | Date | number} input ISO string, Date, atau epoch ms
  */
+/** Jam:menit WIB saja, mis. `14:30` */
+export function formatWibTimeShort(input) {
+  if (input == null || input === '') return '';
+  try {
+    const d = input instanceof Date ? input : new Date(input);
+    if (Number.isNaN(d.getTime())) return '';
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: WIB_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const get = (type) => parts.find((p) => p.type === type)?.value || '';
+    return `${get('hour')}:${get('minute')}`;
+  } catch {
+    return '';
+  }
+}
+
 export function formatWibDateTime(input) {
   if (input == null || input === '') return '';
   try {

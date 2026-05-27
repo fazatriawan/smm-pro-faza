@@ -6,11 +6,16 @@ import {
   PLATFORM_LABELS,
   PLATFORM_COLUMNS,
   PLATFORM_SORT_ORDER,
-  getHeaderRow,
+  WIDE_ROW_HEADERS,
+  buildWideHeaderRow,
+  getWideBaseHeaderRow,
   getSheetColumnCount,
   columnLetterFromIndex,
-  SHEET_STATUS_COLUMN_INDEX,
+  isLegacySheetHeader,
+  isWideSheetHeader,
+  parseWideSheetHeader,
 } from '../config/sheetLayout.js';
+import { shortKey } from '../utils/idempotency.js';
 import {
   summarizePublishResults,
   mergeSheetAccounts,
@@ -26,7 +31,7 @@ import {
   buildDuplicateAccountSummary,
   buildDuplicateRekapSheetRows,
 } from '../utils/accountDayUsage.js';
-import { formatWibDateTime, getWibDayKey } from '../utils/wibTime.js';
+import { formatWibDateTime, formatWibTimeShort, getWibDayKey } from '../utils/wibTime.js';
 import { buildContentLabel, shortenContentLabel } from '../utils/contentLabel.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -40,7 +45,7 @@ import {
   sheetStatusLabel,
 } from '../utils/postStatus.js';
 
-/** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, mediaFilesDay?: string, timestamp: string }>} */
+/** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, mediaFilesDay?: string, timestamp: string, instructionId?: string, instructionLabel?: string, idempotencyKey?: string }>} */
 const publishContextByPostId = new Map();
 
 const SHEET_BATCH_REFRESH_DELAYS_MS = [
@@ -84,6 +89,11 @@ export function registerPublishContext(
       mediaFiles: meta.mediaFiles,
       targetLabel: meta.targetLabel,
     });
+  const instructionId =
+    meta.idempotencyKey ||
+    meta.instructionId ||
+    [...postIds].sort().join('|') ||
+    ts;
   const entry = {
     postIds: postIds.filter(Boolean),
     expectedAccountIds: expectedAccountIds.filter(Boolean),
@@ -93,6 +103,11 @@ export function registerPublishContext(
     targetLabel: meta.targetLabel || '',
     mediaFilesDay: meta.mediaFilesDay || '',
     timestamp: ts,
+    instructionId,
+    instructionLabel:
+      meta.instructionLabel ||
+      buildInstructionLabel(ts, null, meta.idempotencyKey),
+    idempotencyKey: meta.idempotencyKey || '',
   };
   for (const id of entry.postIds) {
     publishContextByPostId.set(id, entry);
@@ -195,9 +210,162 @@ function sortAccountsForSheet(accounts) {
   });
 }
 
+function buildInstructionLabel(timestamp, seq, idempotencyKey) {
+  const time = formatWibTimeShort(timestamp) || '??:??';
+  const seqPart = seq != null ? `#${seq} ` : '';
+  const keyPart = idempotencyKey ? ` (${shortKey(idempotencyKey)})` : '';
+  return `${seqPart}${time} WIB${keyPart}`.trim();
+}
+
+function enrichAccountsWithInstruction(accounts) {
+  return accounts.map((acc) => {
+    const ctx = acc.postId ? getPublishContext(acc.postId) : null;
+    const ts = ctx?.timestamp || acc.rowTimestamp || new Date().toISOString();
+    const instructionId =
+      ctx?.instructionId || acc.instructionId || acc.postId || String(ts);
+    const instructionSort = new Date(ts).getTime() || 0;
+    return {
+      ...acc,
+      instructionId,
+      instructionLabel:
+        ctx?.instructionLabel ||
+        acc.instructionLabel ||
+        buildInstructionLabel(ts, null, ctx?.idempotencyKey),
+      instructionSort,
+    };
+  });
+}
+
 /**
- * Satu baris = satu posting. Kolom per platform (@ + Link berdampingan).
- * Hanya kolom platform terkait yang diisi; diurutkan per platform (FB → IG → …).
+ * Layout lebar: satu baris = satu akun (platform + username).
+ * Tiap instruksi publish (beda waktu) = blok kolom Konten / Status / Link / Post ID.
+ */
+function buildWideSheetFromAccounts(event) {
+  const annotated = (event.accounts || []).some((a) => a.attemptToday != null)
+    ? event.accounts
+    : annotateAccountsWithDayAttempts(event.accounts || []);
+  const enriched = enrichAccountsWithInstruction(annotated);
+
+  /** @type {Map<string, { id: string, label: string, sort: number }>} */
+  const instructionMap = new Map();
+  for (const acc of enriched) {
+    if (!instructionMap.has(acc.instructionId)) {
+      const ctx = acc.postId ? getPublishContext(acc.postId) : null;
+      instructionMap.set(acc.instructionId, {
+        id: acc.instructionId,
+        label: acc.instructionLabel,
+        sort: acc.instructionSort || 0,
+        idempotencyKey: ctx?.idempotencyKey || '',
+      });
+    }
+  }
+
+  const instructions = [...instructionMap.values()]
+    .sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id))
+    .map((inst, idx) => {
+      const keyForLabel =
+        inst.idempotencyKey ||
+        (/^[a-f0-9]{64}$/i.test(inst.id) ? inst.id : '');
+      return {
+        ...inst,
+        seq: idx + 1,
+        headerPrefix: buildInstructionLabel(
+          new Date(inst.sort || Date.now()).toISOString(),
+          idx + 1,
+          keyForLabel
+        ),
+      };
+    });
+
+  /** @type {Map<string, { network: string, username: string, attemptToday: number, isDuplicate: boolean, byInstruction: Map<string, object> }>} */
+  const rowMap = new Map();
+
+  for (const acc of enriched) {
+    const colKey = mapNetworkToColumnKey(acc.network);
+    const user = (acc.username || '').replace(/^@/, '');
+    const rowKey = `${colKey}:${user.toLowerCase()}`;
+    if (!rowMap.has(rowKey)) {
+      rowMap.set(rowKey, {
+        network: colKey,
+        username: user,
+        attemptToday: acc.attemptToday ?? 1,
+        isDuplicate: !!acc.isDuplicate,
+        byInstruction: new Map(),
+      });
+    }
+    const row = rowMap.get(rowKey);
+    if ((acc.attemptToday ?? 1) > row.attemptToday) {
+      row.attemptToday = acc.attemptToday;
+      row.isDuplicate = !!acc.isDuplicate;
+    }
+    row.byInstruction.set(acc.instructionId, acc);
+  }
+
+  const sortedRows = [...rowMap.values()].sort((a, b) => {
+    const order = PLATFORM_SORT_ORDER;
+    const ia = order.indexOf(a.network);
+    const ib = order.indexOf(b.network);
+    if (ia !== ib) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.username.localeCompare(b.username, 'id');
+  });
+
+  const headerRow = buildWideHeaderRow(instructions);
+  const dataRows = sortedRows.map((row) => {
+    const platformLabel = PLATFORM_LABELS[row.network] || row.network || '';
+    const attempt = row.attemptToday ?? 1;
+    const duplikat = row.isDuplicate ? `⚠️ ${attempt}×` : '';
+    const cells = [
+      platformLabel,
+      row.username ? `@${row.username}` : '',
+      String(attempt),
+      duplikat,
+    ];
+
+    for (const inst of instructions) {
+      const acc = row.byInstruction.get(inst.id);
+      if (!acc) {
+        cells.push('', '', '', '');
+        continue;
+      }
+      const accountName = row.username;
+      const st = acc.status || 'pending';
+      const liveUrl = buildLivePostUrl(
+        acc.network,
+        accountName,
+        acc.platformPostId,
+        acc.url,
+        acc.pageId
+      );
+      cells.push(
+        acc.contentLabel || '',
+        sheetStatusLabel(st, acc, event.timestamp),
+        sheetHttpLinkCell(liveUrl, st),
+        acc.postId || splitPostIds(event.postId || '')[0] || ''
+      );
+    }
+    return cells;
+  });
+
+  return { headerRow, dataRows, instructionCount: instructions.length };
+}
+
+async function mergeTodayAccountsForWideSheet(newAccounts, newPostIds) {
+  const ids = new Set((newPostIds || []).filter(Boolean));
+  try {
+    const { collectTodayPublishLinks } = await import('./todayPublish.js');
+    const today = await collectTodayPublishLinks();
+    const others = (today.accounts || []).filter(
+      (a) => !ids.has(a.postId || '')
+    );
+    return reconcileSheetAccounts([...others, ...(newAccounts || [])]);
+  } catch (err) {
+    log.warn({ err: err.message }, `[Sheets] merge today: ${err.message}`);
+    return reconcileSheetAccounts(newAccounts || []);
+  }
+}
+
+/**
+ * @deprecated Format lama — satu baris per posting.
  */
 function buildPublishEventRows(event) {
   const fallbackPostId = splitPostIds(event.postId || '')[0] || '';
@@ -253,9 +421,9 @@ function buildPublishEventRows(event) {
 /**
  * Hapus semua baris data (sisakan header) — hindari campur format lama.
  */
-async function clearDailyTabDataRows(spreadsheetId, tabName) {
+async function clearDailyTabDataRows(spreadsheetId, tabName, colCount) {
   const sheets = getSheetsClient();
-  const colLetter = columnLetterFromIndex(getSheetColumnCount());
+  const colLetter = columnLetterFromIndex(colCount || getSheetColumnCount());
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
     range: `${quoteTab(tabName)}!A2:${colLetter}`,
@@ -343,64 +511,29 @@ async function deleteRowsForPostIds(spreadsheetId, tabName, postIds) {
  */
 export async function upsertPublishEventRow(event) {
   const spreadsheetId = await getSpreadsheetId();
-  const tabName = await ensureDailySheetTab(
-    spreadsheetId,
-    getDailyTabName(event.timestamp)
-  );
-  const sheets = getSheetsClient();
-  const colLetter = columnLetterFromIndex(getSheetColumnCount());
+  const tabName = getDailyTabName(event.timestamp);
 
   const postIds = [
     ...new Set(
       [
         ...splitPostIds(event.postId || ''),
-        ...event.accounts
-          .map((a) => a.postId)
-          .filter(Boolean),
+        ...(event.accounts || []).map((a) => a.postId).filter(Boolean),
       ].filter(Boolean)
     ),
   ];
 
-  const accountsForRows = attachContentLabelsToAccounts(
+  const resolved = attachContentLabelsToAccounts(
     await resolveAccountsForSheetWrite(event.accounts || [], postIds),
     event
   );
-  const rows = buildPublishEventRows({ ...event, accounts: accountsForRows });
-  if (!rows.length) {
-    return {
-      tabName,
-      spreadsheetUrl: getSpreadsheetUrl(spreadsheetId),
-      updated: false,
-      rowCount: 0,
-    };
-  }
+  const merged = await mergeTodayAccountsForWideSheet(resolved, postIds);
 
-  const deleted =
-    !event.skipDelete && postIds.length
-      ? await deleteRowsForPostIds(spreadsheetId, tabName, postIds)
-      : 0;
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${quoteTab(tabName)}!A:${colLetter}`,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: rows },
-  });
-
-  log.info(
-    { tabName, rows: rows.length, deleted },
-    `[Sheets] ${rows.length} baris (${deleted} baris lama dihapus) tab ${tabName}`,
-  );
-
-  return {
+  return writeWideDailyTab({
+    ...event,
+    accounts: merged,
     tabName,
-    spreadsheetUrl: getSpreadsheetUrl(spreadsheetId),
-    updated: deleted > 0,
-    rowCount: rows.length,
-    deletedRows: deleted,
-    deduped: false,
-  };
+    spreadsheetId,
+  });
 }
 
 /**
@@ -409,20 +542,36 @@ export async function upsertPublishEventRow(event) {
  */
 export async function rewriteDailyTabFromAccounts(event) {
   const spreadsheetId = await getSpreadsheetId();
-  const tabName = await ensureDailySheetTab(
-    spreadsheetId,
-    getDailyTabName(event.timestamp)
-  );
-  await clearDailyTabDataRows(spreadsheetId, tabName);
-
-  const colCount = getSheetColumnCount();
+  const tabName = getDailyTabName(event.timestamp);
   const annotated = attachContentLabelsToAccounts(
     annotateAccountsWithDayAttempts(event.accounts || []),
     event
   );
+  return writeWideDailyTab({
+    ...event,
+    accounts: annotated,
+    tabName,
+    spreadsheetId,
+  });
+}
+
+/**
+ * Tulis tab harian format lebar (instruksi = blok kolom).
+ * @param {{ timestamp: string, accounts: Array<object>, tabName: string, spreadsheetId: string, postId?: string }} event
+ */
+async function writeWideDailyTab(event) {
+  const { spreadsheetId, tabName } = event;
+  const { headerRow, dataRows, instructionCount } = buildWideSheetFromAccounts(
+    event
+  );
+
+  await ensureDailySheetTab(spreadsheetId, tabName, headerRow);
+  await clearDailyTabDataRows(spreadsheetId, tabName, headerRow.length);
+
+  const annotated = event.accounts || [];
   const dupes = buildDuplicateAccountSummary(annotated);
+  const colCount = headerRow.length;
   const rekapRows = buildDuplicateRekapSheetRows(dupes, colCount);
-  const dataRows = buildPublishEventRows({ ...event, accounts: annotated });
   const allRows = [...rekapRows, ...dataRows];
 
   if (!allRows.length) {
@@ -431,6 +580,7 @@ export async function rewriteDailyTabFromAccounts(event) {
       spreadsheetUrl: getSpreadsheetUrl(spreadsheetId),
       recorded: 0,
       duplicateAccounts: dupes.length,
+      instructionCount: 0,
     };
   }
 
@@ -445,8 +595,8 @@ export async function rewriteDailyTabFromAccounts(event) {
   });
 
   log.info(
-    { tabName, rows: dataRows.length, dupes: dupes.length },
-    `[Sheets] rewrite tab ${tabName}: ${dataRows.length} baris data` +
+    { tabName, rows: dataRows.length, instructions: instructionCount, dupes: dupes.length },
+    `[Sheets] tab ${tabName}: ${dataRows.length} baris akun, ${instructionCount} instruksi` +
       (dupes.length ? `, ${dupes.length} akun duplikat` : ''),
   );
 
@@ -456,6 +606,7 @@ export async function rewriteDailyTabFromAccounts(event) {
     recorded: dataRows.length,
     duplicateAccounts: dupes.length,
     rowCount: allRows.length,
+    instructionCount,
   };
 }
 
@@ -691,20 +842,44 @@ function quoteTab(tabName) {
  * Post ID dari kolom B tab harian (baris yang sudah pernah dicatat).
  * @param {string} [tabName] default: hari ini (TZ env)
  */
-export async function readPostIdsFromDailyTab(tabName) {
+async function readDailyTabHeaderAndRows(tabName) {
   const tab = tabName || getDailyTabName();
   const spreadsheetId = await getSpreadsheetId();
   await ensureDailySheetTab(spreadsheetId, tab);
-
   const sheets = getSheetsClient();
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${quoteTab(tab)}!A1:ZZ1`,
+  });
+  const header = headerRes.data.values?.[0] || [];
+  const lastCol = columnLetterFromIndex(Math.max(header.length, WIDE_ROW_HEADERS.length));
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${quoteTab(tab)}!B2:B2000`,
+    range: `${quoteTab(tab)}!A2:${lastCol}2000`,
   });
+  return { header, rows: res.data.values || [], tab, spreadsheetId };
+}
 
+function collectPostIdsFromDailyRows(header, rows) {
   const ids = new Set();
-  for (const row of res.data.values || []) {
-    const cell = String(row[0] || '').trim();
+
+  if (isWideSheetHeader(header)) {
+    const { instructions } = parseWideSheetHeader(header);
+    const postIdCols = instructions.map((i) => i.postIdIdx);
+    for (const row of rows) {
+      if (String(row[0] || '').startsWith('REKAP')) continue;
+      for (const col of postIdCols) {
+        const cell = String(row[col] || '').trim();
+        for (const id of splitPostIds(cell)) {
+          if (isValidOutstandPostId(id)) ids.add(id);
+        }
+      }
+    }
+    return [...ids];
+  }
+
+  for (const row of rows) {
+    const cell = String(row[1] ?? row[0] ?? '').trim();
     if (!cell || cell.startsWith('REKAP')) continue;
     for (const id of splitPostIds(cell)) {
       if (isValidOutstandPostId(id)) ids.add(id);
@@ -713,24 +888,33 @@ export async function readPostIdsFromDailyTab(tabName) {
   return [...ids];
 }
 
+export async function readPostIdsFromDailyTab(tabName) {
+  const { header, rows } = await readDailyTabHeaderAndRows(tabName);
+  return collectPostIdsFromDailyRows(header, rows);
+}
+
 /**
- * Post ID dari baris terakhir tab harian (hindari /retry tanpa arg menggabung semua batch hari ini).
+ * Post ID instruksi terakhir (kolom Post ID paling kanan yang terisi).
  * @param {string} [tabName]
  */
 export async function readLatestPostIdsFromDailyTab(tabName) {
-  const tab = tabName || getDailyTabName();
-  const spreadsheetId = await getSpreadsheetId();
-  await ensureDailySheetTab(spreadsheetId, tab);
+  const { header, rows } = await readDailyTabHeaderAndRows(tabName);
 
-  const sheets = getSheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${quoteTab(tab)}!B2:B2000`,
-  });
+  if (isWideSheetHeader(header)) {
+    const { instructions } = parseWideSheetHeader(header);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (String(rows[i][0] || '').startsWith('REKAP')) continue;
+      for (let j = instructions.length - 1; j >= 0; j--) {
+        const cell = String(rows[i][instructions[j].postIdIdx] || '').trim();
+        const ids = splitPostIds(cell).filter((id) => isValidOutstandPostId(id));
+        if (ids.length) return ids;
+      }
+    }
+    return [];
+  }
 
-  const rows = res.data.values || [];
   for (let i = rows.length - 1; i >= 0; i--) {
-    const cell = String(rows[i][0] || '').trim();
+    const cell = String(rows[i][1] ?? rows[i][0] ?? '').trim();
     if (!cell || cell.startsWith('REKAP')) continue;
     const ids = splitPostIds(cell).filter((id) => isValidOutstandPostId(id));
     if (ids.length) return ids;
@@ -738,7 +922,7 @@ export async function readLatestPostIdsFromDailyTab(tabName) {
   return [];
 }
 
-export async function ensureDailySheetTab(spreadsheetId, tabName) {
+export async function ensureDailySheetTab(spreadsheetId, tabName, headerRow) {
   const sheets = getSheetsClient();
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -746,8 +930,7 @@ export async function ensureDailySheetTab(spreadsheetId, tabName) {
   });
 
   const exists = meta.data.sheets?.some((s) => s.properties?.title === tabName);
-  const header = getHeaderRow();
-  const lastCol = columnLetterFromIndex(header.length);
+  const header = headerRow?.length ? headerRow : getWideBaseHeaderRow();
 
   if (!exists) {
     await sheets.spreadsheets.batchUpdate({
@@ -759,19 +942,24 @@ export async function ensureDailySheetTab(spreadsheetId, tabName) {
     log.info({ tabName }, `[Sheets] Tab baru: ${tabName}`);
   }
 
+  const lastCol = columnLetterFromIndex(header.length);
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${quoteTab(tabName)}!A1:${lastCol}1`,
+    range: `${quoteTab(tabName)}!A1:ZZ1`,
   });
   const currentHeader = headerRes.data.values?.[0] || [];
-  if (currentHeader.join('|') !== header.join('|')) {
+  const needsUpdate =
+    currentHeader.join('|') !== header.join('|') ||
+    isLegacySheetHeader(currentHeader);
+
+  if (needsUpdate) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${quoteTab(tabName)}!A1:${lastCol}1`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [header] },
     });
-    log.info({ tabName }, `[Sheets] Header tab ${tabName} diperbarui`);
+    log.info({ tabName, cols: header.length }, `[Sheets] Header tab ${tabName} diperbarui`);
   }
 
   return tabName;
@@ -795,10 +983,17 @@ export async function recordPublishResultsToSheet({
   targetLabel,
   mediaFiles,
   contentLabel,
+  idempotencyKey,
 }) {
   const ids = (postIds || []).filter(Boolean);
   const ts = timestamp || new Date().toISOString();
-  const meta = { folderName, targetLabel, mediaFiles, contentLabel };
+  const meta = {
+    folderName,
+    targetLabel,
+    mediaFiles,
+    contentLabel,
+    idempotencyKey,
+  };
 
   if (expectedAccountIds?.length) {
     registerPublishContext(ids, expectedAccountIds, baseCaption || '', ts, meta);
