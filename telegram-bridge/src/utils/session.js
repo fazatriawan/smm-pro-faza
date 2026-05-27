@@ -45,7 +45,7 @@ import { getWibDayKey, nowIsoUtc } from './wibTime.js';
  * @property {string} [usedAccountsTab] tab YYYY-MM-DD untuk usedAccountIdsToday
  * @property {string[]} [usedAccountIdsToday] akun sudah dipakai publish hari ini (sesi bot)
  * @property {{ baseAccountIds: string[], shortages: Array<{ network: string, missing: number, skippedUsed: number }>, label: string, at: number }} [pendingFillShortage]
- * @property {{ byNetwork: Record<string, number>, instructionTargets?: Record<string, number>, mediaFiles: MediaFile[], caption: string, folderName: string, folderId: string, mediaFilesDay: string, originalPostIds: string[], targetLabel?: string, at: number }} [pendingReplacement]
+ * @property {{ byNetwork: Record<string, number>, instructionTargets?: Record<string, number>, mediaFiles: MediaFile[], caption: string, folderName: string, folderId: string, mediaFilesDay: string, mediaFilesSetAt?: string, originalPostIds: string[], targetLabel?: string, at: number }} [pendingReplacement]
  * @property {string} [replacementOfferedKey] postIds batch yang sudah ditawari pengganti
  * @property {Record<string, number>} [instructionTargets] target per platform instruksi aktif
  * @property {number} [publishingSince] timestamp ms — lock anti double-submit
@@ -188,4 +188,21 @@ export function getStaleMediaReason(session, opts = {}) {
   }
 
   return null;
+}
+
+/**
+ * Apakah batch media (session / pendingReplacement / archive) basi untuk publish baru.
+ * @param {{ mediaFiles?: MediaFile[], mediaFilesSetAt?: string, mediaFilesDay?: string }} batch
+ */
+export function isStaleMediaBatch(batch) {
+  if (!batch?.mediaFiles?.length) {
+    return { stale: true, reason: 'no-media' };
+  }
+  const reason = getStaleMediaReason({
+    mediaFiles: batch.mediaFiles,
+    mediaFilesSetAt: batch.mediaFilesSetAt,
+    mediaFilesDay: batch.mediaFilesDay,
+  });
+  if (!reason) return { stale: false };
+  return { stale: true, ...reason };
 }

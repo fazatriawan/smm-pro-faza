@@ -33,6 +33,7 @@ import {
   setSessionMediaFiles,
   clearSessionContent,
   getStaleMediaReason,
+  isStaleMediaBatch,
 } from '../utils/session.js';
 import { ensureSpreadsheetReady } from './spreadsheetSetup.js';
 import {
@@ -83,6 +84,7 @@ import {
   formatTelegramPublishReport,
   formatPublishLinksReport,
   replyTelegramLong,
+  sendTelegramDocument,
 } from './publishResult.js';
 import { validateBeforePublish, buildPublishPreviewText } from './validatePublish.js';
 import { parseScheduleInput, formatScheduleHelp } from '../utils/scheduleParse.js';
@@ -1884,6 +1886,9 @@ async function runPublish(ctx, scheduledAt) {
   const validation = await validateBeforePublish({
     mediaFiles: session.mediaFiles,
     selectedAccountIds: session.selectedAccountIds,
+    caption: session.caption,
+    folderName: session.folderName,
+    targetLabel: session.targetLabel,
   });
   if (!validation.ok) {
     await ctx.reply(`❌ Tidak bisa publish:\n${validation.errors.join('\n')}`);
@@ -1944,6 +1949,7 @@ async function runPublish(ctx, scheduledAt) {
       folderId: session.folderId || '',
       targetLabel: session.targetLabel || targetInfo,
       mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
+      mediaFilesSetAt: session.mediaFilesSetAt || nowIsoUtc(),
       idempotencyKey: session.lastPublishKey || '',
       instructionTargets,
     };
@@ -2221,6 +2227,41 @@ async function offerReplacementAccountsIfAny(ctx, input) {
     snapshot.mediaFiles?.length ? snapshot.mediaFiles : last.mediaFiles;
   if (!mediaFiles?.length) return;
 
+  const mediaFilesDay =
+    snapshot.mediaFilesDay || last.mediaFilesDay || '';
+  const mediaFilesSetAt =
+    snapshot.mediaFilesSetAt || last.savedAt || '';
+  const batchStale = isStaleMediaBatch({
+    mediaFiles,
+    mediaFilesDay,
+    mediaFilesSetAt,
+  });
+  const archiveStale = getArchiveStaleReason(
+    last?.mediaFiles?.length ? last : null
+  );
+
+  if (batchStale.stale || archiveStale) {
+    const day =
+      batchStale.prevDay ||
+      archiveStale?.prevDay ||
+      mediaFilesDay ||
+      '?';
+    await safeReply(
+      ctx,
+      `🛑 *Tidak bisa melengkapi dengan media lama*\n` +
+        `Batch konten: *${day}* (bukan hari ini).\n\n` +
+        `Kalau @abrorsoeka dll. baru posting konten lama tanpa Anda suruh, ` +
+        `biasanya *antrian Outstand* dari hari itu yang baru selesai — ` +
+        `bukan publish baru dari bot.\n\n` +
+        `• Batalkan antrian lama: \`/stop 3d ig ya\`\n` +
+        `• Konten hari ini: \`/publish\` + media baru, lalu publish lagi\n\n` +
+        `_Tombol "Lengkapi" tidak ditawarkan untuk media batch kemarin._`,
+      { parse_mode: 'Markdown' }
+    );
+    updateSession(ctx.chat.id, { pendingReplacement: undefined });
+    return;
+  }
+
   updateSession(ctx.chat.id, {
     replacementOfferedKey: postKey,
     pendingReplacement: {
@@ -2230,7 +2271,8 @@ async function offerReplacementAccountsIfAny(ctx, input) {
       caption: snapshot.caption || last.caption || '',
       folderName: snapshot.folderName || last.folderName || '',
       folderId: snapshot.folderId || last.folderId || '',
-      mediaFilesDay: snapshot.mediaFilesDay || last.mediaFilesDay || getWibDayKey(),
+      mediaFilesDay,
+      mediaFilesSetAt,
       originalPostIds: postIds,
       targetLabel: snapshot.targetLabel || last.targetLabel || '',
       at: Date.now(),
@@ -2309,6 +2351,27 @@ async function startReplacementPublish(ctx, pending, networkFilter) {
   if (!pending.mediaFiles?.length) {
     await ctx.reply(
       '❌ Media batch instruksi tidak tersimpan. Ulangi /publish dengan media baru.'
+    );
+    updateSession(ctx.chat.id, { pendingReplacement: undefined });
+    return;
+  }
+
+  const batchStale = isStaleMediaBatch({
+    mediaFiles: pending.mediaFiles,
+    mediaFilesDay: pending.mediaFilesDay,
+    mediaFilesSetAt: pending.mediaFilesSetAt,
+  });
+  if (batchStale.stale) {
+    await safeReply(
+      ctx,
+      formatStaleMediaNotice(batchStale, {
+        mediaFiles: pending.mediaFiles,
+        mediaFilesDay: pending.mediaFilesDay,
+        folderName: pending.folderName,
+      }) +
+        `\n\n_Publish pengganti dibatalkan._\n` +
+        `Ketik \`/publish\` dengan konten hari ini.`,
+      { parse_mode: 'Markdown' }
     );
     updateSession(ctx.chat.id, { pendingReplacement: undefined });
     return;
@@ -2531,6 +2594,9 @@ async function handleAction(ctx) {
     const validation = await validateBeforePublish({
       mediaFiles: session.mediaFiles,
       selectedAccountIds: session.selectedAccountIds,
+      caption: session.caption,
+      folderName: session.folderName,
+      targetLabel: session.targetLabel,
     });
     let text = buildPublishPreviewText(session);
     if (!validation.ok) {
@@ -2855,27 +2921,28 @@ export function createBot() {
         : `${data.tabName} · ${data.postIds.length} batch`;
 
       const report = formatPublishLinksReport(filteredAccounts, postIdLine);
-      await replyTelegramLong(ctx, report);
 
       const dupes = buildDuplicateAccountSummary(
         annotateAccountsWithDayAttempts(filteredAccounts)
       );
-      const dupeNote = dupes.length
-        ? `\n\n⚠️ *${dupes.length} akun posting >1× hari ini:*\n` +
+      let dupeNote = '';
+      if (dupes.length) {
+        dupeNote =
+          `\n\n⚠️ ${dupes.length} akun posting >1× hari ini` +
+          (dupes.length > 8 ? ` (top 8 di bawah)` : '') +
+          ':\n' +
           dupes
             .slice(0, 8)
             .map((d) => {
               const konten = d.contentSummary
-                ? `\n  _${d.contentSummary}_`
+                ? ` — ${String(d.contentSummary).slice(0, 60)}`
                 : '';
-              return `• @${d.username} — *${d.count}×* (${d.network})${konten}`;
+              return `• @${d.username} ${d.count}× (${d.network})${konten}`;
             })
             .join('\n') +
-          (dupes.length > 8 ? `\n_…+${dupes.length - 8} akun_` : '') +
-          '\n\nJalankan `/synctoday` untuk baris REKAP di Sheets.'
-        : '';
+          '\n\nREKAP lengkap: /synctoday';
+      }
 
-      // Hitung ringkasan untuk filtered set (atau semua kalau tanpa filter)
       const counts = filteredAccounts.reduce(
         (acc, a) => {
           const st = (a.status || '').toLowerCase();
@@ -2888,21 +2955,42 @@ export function createBot() {
       );
 
       const headerLabel = filterSet.size
-        ? `📋 *${data.tabName}* · *${filterLabel}* · ${filteredAccounts.length} akun`
-        : `📋 *${data.tabName}* · ${data.postIds.length} Post ID`;
+        ? `${data.tabName} · ${filterLabel} · ${filteredAccounts.length} akun`
+        : `${data.tabName} · ${data.postIds.length} batch`;
 
-      await safeReply(
-        ctx,
-        headerLabel +
-          `\n${counts.live} live · ${counts.failed} gagal · ${counts.pending} pending` +
-          dupeNote +
-          (filterSet.size
-            ? `\n\nFilter lain: \`/linkshari ig\`, \`/linkshari fb\`, \`/linkshari ig fb th\`\nSemua: \`/linkshari\``
-            : `\n\nFilter per platform: \`/linkshari ig\`, \`/linkshari fb\`, dst.\nSimpan ke Sheets: /synctoday`),
-        { parse_mode: 'Markdown' }
-      );
+      const footer =
+        `📋 ${headerLabel}\n` +
+        `${counts.live} live · ${counts.failed} gagal · ${counts.pending} pending` +
+        dupeNote +
+        (filterSet.size
+          ? `\n\nFilter: /linkshari ig · /linkshari fb · semua: /linkshari`
+          : `\n\nFilter: /linkshari ig · /linkshari fb · Sheets: /synctoday`);
+
+      if (report.length >= 1800) {
+        await sendTelegramDocument(
+          ctx,
+          report,
+          Math.ceil(report.length / 3500),
+          'linkshari'
+        );
+        await safeReply(ctx, footer.slice(0, 3200), { parse_mode: 'Markdown' });
+      } else {
+        await replyTelegramLong(ctx, report);
+        await safeReply(ctx, footer.slice(0, 3200), { parse_mode: 'Markdown' });
+      }
     } catch (err) {
       const code = err?.response?.error_code ?? err?.code;
+      const msg = String(err?.message || err);
+      if (/too long/i.test(msg)) {
+        await ctx
+          .reply(
+            '✅ File link (.txt) biasanya sudah terkirim di atas.\n' +
+              'Isi lengkap ada di file — chat Telegram tidak muat satu pesan.\n' +
+              'Ringkasan: buka file atau cek Google Sheets.'
+          )
+          .catch(() => {});
+        return;
+      }
       if (code === 429) {
         const retryAfter =
           err?.response?.parameters?.retry_after ??
@@ -2936,7 +3024,11 @@ export function createBot() {
 
     const session = getSession(ctx.chat.id);
     const last = session.lastPublish;
-    if (last?.instructionTargets && last?.mediaFiles?.length) {
+    if (
+      last?.instructionTargets &&
+      last?.mediaFiles?.length &&
+      !getArchiveStaleReason(last)
+    ) {
       const expected = new Set(last.selectedAccountIds || []);
       const batchAccounts = (result.accounts || []).filter((a) =>
         expected.has(a.accountId)

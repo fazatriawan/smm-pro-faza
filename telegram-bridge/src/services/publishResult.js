@@ -1,4 +1,7 @@
-import { buildLivePostUrl } from '../utils/platformUrl.js';
+import {
+  buildLivePostUrl,
+  isThreadsProfileOnlyUrl,
+} from '../utils/platformUrl.js';
 import { normalizeOutstandStatus } from '../utils/postStatus.js';
 import { buildYoutubePostFields } from './captionPlatforms.js';
 import { env } from '../config/env.js';
@@ -17,6 +20,26 @@ const TELEGRAM_SAFE_LEN = 3800;
 const MAX_DETAIL_LINES = 25;
 const MAX_ERROR_SAMPLES = 8;
 const MAX_LIVE_SAMPLES = 12;
+
+/**
+ * URL live per akun — utamakan `/post/` Threads, bukan profil.
+ * @param {string} net
+ * @param {{ username?: string, platformPostId?: string, url?: string, pageId?: string }} acct
+ */
+function resolveAccountLiveUrl(net, acct) {
+  const user = (acct.username || '').replace(/^@/, '');
+  const built = buildLivePostUrl(
+    net,
+    user,
+    acct.platformPostId,
+    acct.url,
+    acct.pageId
+  );
+  if (built) return built;
+  const raw = String(acct.url || '').trim();
+  if (net === 'threads' && isThreadsProfileOnlyUrl(raw)) return undefined;
+  return raw || undefined;
+}
 
 /**
  * @param {string} err
@@ -159,15 +182,7 @@ export function summarizePublishResults(posts, baseCaption = '') {
           post.createdAt ||
           post.updatedAt ||
           null,
-        url:
-          acct.url ||
-          buildLivePostUrl(
-            net,
-            user,
-            acct.platformPostId,
-            acct.url,
-            acct.pageId
-          ),
+        url: resolveAccountLiveUrl(net, acct),
       });
     }
   }
@@ -309,13 +324,12 @@ export function buildSheetAccountsFromTargets(allAccounts, expectedIds, posts) {
       platformPostId: acct.platformPostId ?? undefined,
       status,
       error: shortErr || acct.error || undefined,
-      url: buildLivePostUrl(
-        net,
-        user,
-        acct.platformPostId,
-        acct.url ?? undefined,
-        acct.pageId ?? exp.pageId
-      ),
+      url: resolveAccountLiveUrl(net, {
+        username: user,
+        platformPostId: acct.platformPostId,
+        url: acct.url ?? undefined,
+        pageId: acct.pageId ?? exp.pageId,
+      }),
     };
   });
 }
@@ -551,7 +565,10 @@ function sleep(ms) {
  * Telegram (1 upload vs N message), plus user dapat 1 file rapi yang bisa
  * di-search & copy.
  */
-const DOCUMENT_FALLBACK_CHUNK_THRESHOLD = 3;
+const DOCUMENT_FALLBACK_CHUNK_THRESHOLD = 2;
+
+/** Di atas ini selalu kirim sebagai file .txt (linkshari / laporan link). */
+const DOCUMENT_FALLBACK_CHAR_THRESHOLD = 1800;
 
 /**
  * Kirim message panjang ke Telegram dengan strategi adaptif:
@@ -571,8 +588,11 @@ const DOCUMENT_FALLBACK_CHUNK_THRESHOLD = 3;
 export async function replyTelegramLong(ctx, text, options = {}) {
   const parts = splitTelegramMessage(text);
 
-  if (parts.length >= DOCUMENT_FALLBACK_CHUNK_THRESHOLD) {
-    return sendAsDocument(ctx, text, parts.length);
+  if (
+    parts.length >= DOCUMENT_FALLBACK_CHUNK_THRESHOLD ||
+    text.length >= DOCUMENT_FALLBACK_CHAR_THRESHOLD
+  ) {
+    return sendTelegramDocument(ctx, text, parts.length);
   }
 
   for (let i = 0; i < parts.length; i++) {
@@ -624,28 +644,26 @@ export async function replyTelegramLong(ctx, text, options = {}) {
  * @param {string} text
  * @param {number} chunkCount jumlah chunk kalau dipecah (untuk info)
  */
-async function sendAsDocument(ctx, text, chunkCount) {
+/**
+ * Kirim laporan panjang sebagai file .txt (prioritas file dulu, lalu teks pendek).
+ * @param {import('telegraf').Context} ctx
+ * @param {string} text
+ * @param {number} [chunkCount]
+ * @param {string} [filenamePrefix]
+ */
+export async function sendTelegramDocument(
+  ctx,
+  text,
+  chunkCount = 1,
+  filenamePrefix = 'linkshari'
+) {
   const stamp = new Date()
     .toISOString()
     .replace(/[:T]/g, '-')
     .slice(0, 19);
-  const filename = `linkshari-${stamp}.txt`;
-  const previewLines = text.split('\n').slice(0, 3).join('\n');
+  const filename = `${filenamePrefix}-${stamp}.txt`;
   const totalLines = text.split('\n').length;
-  const header =
-    `📎 Report panjang (${totalLines} baris, ${chunkCount} pesan)\n` +
-    `📥 File terlampir: \`${filename}\`\n\n` +
-    `Preview:\n${previewLines.slice(0, 300)}${previewLines.length > 300 ? '…' : ''}`;
 
-  // Header pendek dulu — kalau pun gagal (429), document tetap berusaha kirim
-  await ctx
-    .reply(header, { parse_mode: 'Markdown', disable_web_page_preview: true })
-    .catch(() => {
-      // Kalau header gagal, kirim plain text minimal
-      return ctx.reply(`Report panjang — lihat file ${filename}`).catch(() => {});
-    });
-
-  // Document upload — terpisah dari message rate limit
   let attempts = 0;
   while (attempts < MAX_SEND_ATTEMPTS) {
     try {
@@ -653,7 +671,7 @@ async function sendAsDocument(ctx, text, chunkCount) {
         source: Buffer.from(text, 'utf-8'),
         filename,
       });
-      return;
+      break;
     } catch (err) {
       const code = err?.response?.error_code ?? err?.code;
       const retryAfter =
@@ -670,6 +688,17 @@ async function sendAsDocument(ctx, text, chunkCount) {
       throw err;
     }
   }
+
+  const header =
+    `📎 Report panjang (${totalLines} baris` +
+    (chunkCount > 1 ? `, ${chunkCount} bagian` : '') +
+    `)\n` +
+    `📥 File: ${filename}\n` +
+    `Buka file untuk semua link (pesan chat tidak muat).`;
+
+  await ctx
+    .reply(header, { disable_web_page_preview: true })
+    .catch(() => {});
 }
 
 /**
