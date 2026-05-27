@@ -60,6 +60,10 @@ import {
   isPostIdCancelled,
 } from './pendingControl.js';
 import {
+  markPostIdsKnown,
+  checkForUnexpectedPosts,
+} from './unexpectedPostMonitor.js';
+import {
   collectTodayPublishLinks,
   syncTodayToSheet,
   getPublishedAccountIdsToday,
@@ -1968,6 +1972,10 @@ async function runPublish(ctx, scheduledAt) {
     clearPublishedTodayCache();
     clearQuotaCache();
 
+    // Catat Post ID baru sebagai "milik bot" supaya monitor "post tak terduga"
+    // tidak salah alarm.
+    markPostIdsKnown(result.postIds || []);
+
     // Kosongkan media/caption di sesi aktif supaya /random atau /republish
     // tidak bisa pakai konten batch ini lagi tanpa /publish + Drive baru.
     // Lock `publishing` SENGAJA dipertahankan sampai polling selesai supaya
@@ -2733,6 +2741,19 @@ export function createBot() {
 
   bot.command('synctoday', runSyncTodayCommand);
   bot.command('refresh', runSyncTodayCommand);
+
+  bot.command('scanpost', async (ctx) => {
+    await ctx.reply('⏳ Scan Outstand untuk post tak terduga…');
+    try {
+      await checkForUnexpectedPosts();
+      await ctx.reply(
+        '✅ Scan selesai. Kalau ada post tak terduga, notifikasi sudah dikirim di atas. ' +
+          'Kalau hening, semua post hari-hari terakhir dibuat oleh bot ini.'
+      );
+    } catch (err) {
+      await ctx.reply(`❌ Scan gagal: ${err.message}`).catch(() => {});
+    }
+  });
 
   bot.command('audit', async (ctx) => {
     const raw = String(ctx.message.text || '')
@@ -3809,6 +3830,7 @@ export async function startBot() {
       { command: 'retry', description: 'Ulangi akun yang gagal' },
       { command: 'refresh', description: 'Sync status Outstand → Sheets' },
       { command: 'stop', description: 'Lihat/batalkan antrian pending Outstand' },
+      { command: 'scanpost', description: 'Scan post tak terduga di Outstand' },
       { command: 'stuck', description: 'Akun pending >2 jam' },
       { command: 'linkshari', description: 'Link post hari ini (filter: ig/fb/yt/dll)' },
       { command: 'misi', description: 'Lihat misi hari ini' },

@@ -238,4 +238,14 @@ export const env = {
     0,
     Number(process.env.PENDING_MONITOR_MINUTES || 20)
   ),
+  /** Scan Outstand untuk Post ID tak terduga (menit). 0 = mati. */
+  unexpectedPostMonitorMinutes: Math.max(
+    0,
+    Number(process.env.UNEXPECTED_POST_MONITOR_MINUTES || 10)
+  ),
+  /** Window scan (hari) saat cari post tak terduga. Default 2 hari. */
+  unexpectedPostScanDays: Math.max(
+    1,
+    Number(process.env.UNEXPECTED_POST_SCAN_DAYS || 2)
+  ),
 };

@@ -7,6 +7,7 @@ import {
   stopTodaySheetAutoRefreshLoop,
 } from './services/sheets.js';
 import { startPendingMonitorLoop } from './services/pendingMonitor.js';
+import { startUnexpectedPostMonitorLoop } from './services/unexpectedPostMonitor.js';
 import { ensureSpreadsheetReady } from './services/spreadsheetSetup.js';
 import { probeFfmpeg } from './services/imageToVideo.js';
 import { createLogger } from './utils/logger.js';
@@ -79,6 +80,7 @@ async function main() {
     startDailySummaryLoop();
     startTodaySheetAutoRefreshLoop();
     startPendingMonitorLoop();
+    startUnexpectedPostMonitorLoop();
   } catch (err) {
     log.error({ err: err?.message, code: err?.response?.error_code }, '[Bot] Gagal start');
     if (err.response?.error_code === 409) {
