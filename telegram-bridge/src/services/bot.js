@@ -97,6 +97,11 @@ import {
   safeSendMessage,
 } from '../utils/telegramMarkdown.js';
 import {
+  buildIdempotencyKey,
+  captionsDigest,
+  shortKey,
+} from '../utils/idempotency.js';
+import {
   looksLikeRandomPick,
   parseRandomPickCommand,
   pickRandomAccounts,
@@ -1690,9 +1695,52 @@ async function handleRetryPublish(ctx, options = {}) {
 
 async function runPublish(ctx, scheduledAt) {
   const session = getSession(ctx.chat.id);
-  if (session.step !== 'ready' && session.step !== 'awaiting_schedule') {
+  if (
+    session.step !== 'ready' &&
+    session.step !== 'awaiting_schedule' &&
+    session.step !== 'publishing'
+  ) {
     await ctx.reply('Sesi tidak valid. Ketik /publish untuk mulai lagi.');
     return;
+  }
+
+  // Idempotency guard: request publish sama dalam window pendek dianggap duplikat.
+  // Ini mencegah konten hari ini ter-submit berkali-kali akibat double click / reconnect.
+  try {
+    const dayKey = session.mediaFilesDay || getWibDayKey();
+    const key = buildIdempotencyKey({
+      targets: (session.selectedAccountIds || []).map((id) => ({
+        accountId: id,
+      })),
+      media: (session.mediaFiles || []).map((m) => ({
+        filename: m.name,
+        kind: m.mimeType,
+      })),
+      scheduledAtIsoUtc: scheduledAt || '',
+      captionDigest: captionsDigest(session.captionsByNetwork || session.caption || ''),
+      chatId: String(ctx.chat.id),
+      dayKey,
+    });
+
+    const now = Date.now();
+    const lastKey = session.lastPublishKey;
+    const lastAt = Number(session.lastPublishAt || 0);
+    if (lastKey && lastKey === key && now - lastAt < 10 * 60_000) {
+      await safeReply(
+        ctx,
+        `🛑 *Duplikat terdeteksi* — request publish sama baru saja dikirim.\n\n` +
+          `Key: \`${shortKey(key)}\`\n` +
+          `Tunggu settle / cek \`/status\` atau \`/synctoday\`.\n` +
+          `Kalau ada antrian lama: \`/stop 3d ya\``,
+        { parse_mode: 'Markdown' }
+      );
+      updateSession(ctx.chat.id, { step: 'idle' });
+      return;
+    }
+
+    updateSession(ctx.chat.id, { lastPublishKey: key, lastPublishAt: now });
+  } catch {
+    /* ignore */
   }
 
   if (!session.mediaFiles?.length) {
@@ -1977,6 +2025,8 @@ async function runPublish(ctx, scheduledAt) {
     await ctx.reply(
       `❌ Publish gagal: ${err.message}${extra ? `\n${extra}` : ''}`
     );
+    // Pastikan lock dilepas jika publish gagal, supaya user bisa coba ulang.
+    updateSession(ctx.chat.id, { step: 'idle' });
   }
 }
 
@@ -2112,6 +2162,12 @@ async function handleAction(ctx) {
       await showTargetPicker(ctx);
       return;
     }
+    // Guard: cegah double click / callback replay yang bisa submit publish berkali-kali.
+    if (session.step === 'publishing') {
+      await ctx.reply('⏳ Masih mempublish batch sebelumnya…').catch(() => {});
+      return;
+    }
+    updateSession(ctx.chat.id, { step: 'publishing' });
     await runPublish(ctx);
     return;
   }
