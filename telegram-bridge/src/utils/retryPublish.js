@@ -75,6 +75,15 @@ export function classifyRetryError(error) {
     };
   }
 
+  // Threads / IG: "User access is restricted", "Account is restricted", dll.
+  // Tetap masuk FIX_ACCOUNT supaya pengganti bisa ditawarkan.
+  if (/user access|access is restricted|account.*restrict|restricted/i.test(raw)) {
+    return {
+      action: RETRY_ACTION.FIX_ACCOUNT,
+      hint: 'Akun ke-restrict di platform — perlu verifikasi/banding di app, atau pakai akun lain.',
+    };
+  }
+
   if (/permission|business|page not|not linked/i.test(raw)) {
     return {
       action: RETRY_ACTION.FIX_ACCOUNT,
