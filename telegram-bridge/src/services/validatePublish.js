@@ -2,11 +2,82 @@ import { env } from '../config/env.js';
 import { isFfmpegAvailable } from './imageToVideo.js';
 import { networksNeedingImageToVideo } from './imageToVideo.js';
 import { listSocialAccounts } from './outstand.js';
+import { buildContentLabel } from '../utils/contentLabel.js';
+import { accountLooksLiveOnPlatform } from '../utils/accountDayUsage.js';
+import { collectTodayPublishLinks } from './todayPublish.js';
+
+function normalizeContentKey(label) {
+  return String(label || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
 
 /**
- * @param {{ mediaFiles: Array<{ name: string, mimeType: string }>, selectedAccountIds: string[] }} input
+ * Akun yang sudah live hari ini dengan konten yang sama (hindari dobel George Soros dll.).
+ * @param {string[]} selectedAccountIds
+ * @param {string} contentLabel
  */
-export async function validateBeforePublish({ mediaFiles, selectedAccountIds }) {
+export async function findAccountsWithDuplicateContentToday(
+  selectedAccountIds,
+  contentLabel
+) {
+  const key = normalizeContentKey(contentLabel);
+  if (!key || key.length < 12) return [];
+
+  let todayAccounts = [];
+  try {
+    const data = await collectTodayPublishLinks();
+    todayAccounts = data.accounts || [];
+  } catch {
+    return [];
+  }
+
+  const idSet = new Set(selectedAccountIds || []);
+  const byId = new Map(
+    (await listSocialAccounts()).map((a) => [a.id, a])
+  );
+  /** @type {Array<{ username: string, network: string }>} */
+  const dupes = [];
+
+  for (const id of idSet) {
+    const acc = byId.get(id);
+    if (!acc) continue;
+    const net = (acc.network || '').toLowerCase();
+    const user = (acc.username || '').replace(/^@/, '').toLowerCase();
+    const pair = `${net}:${user}`;
+
+    for (const row of todayAccounts) {
+      const rowUser = (row.username || '').replace(/^@/, '').toLowerCase();
+      const rowNet = (row.network || '').toLowerCase();
+      if (`${rowNet}:${rowUser}` !== pair) continue;
+      if (!accountLooksLiveOnPlatform(row)) continue;
+      const rowKey = normalizeContentKey(row.contentLabel || '');
+      if (!rowKey) continue;
+      if (rowKey === key || rowKey.includes(key) || key.includes(rowKey)) {
+        dupes.push({
+          username: acc.username || user,
+          network: net,
+        });
+        break;
+      }
+    }
+  }
+
+  return dupes;
+}
+
+/**
+ * @param {{ mediaFiles: Array<{ name: string, mimeType: string }>, selectedAccountIds: string[], caption?: string, folderName?: string, targetLabel?: string }} input
+ */
+export async function validateBeforePublish({
+  mediaFiles,
+  selectedAccountIds,
+  caption,
+  folderName,
+  targetLabel,
+}) {
   const warnings = [];
   const errors = [];
 
@@ -63,6 +134,28 @@ export async function validateBeforePublish({ mediaFiles, selectedAccountIds }) 
 
   if (!selected.length) {
     errors.push('Tidak ada akun target valid.');
+  }
+
+  const contentLabel = buildContentLabel({
+    caption,
+    folderName,
+    mediaFiles,
+    targetLabel,
+  });
+  const dupes = await findAccountsWithDuplicateContentToday(
+    uniqueIds,
+    contentLabel
+  );
+  if (dupes.length) {
+    const sample = dupes
+      .slice(0, 8)
+      .map((d) => `@${d.username} (${d.network})`)
+      .join(', ');
+    errors.push(
+      `Konten ini sudah live hari ini di: ${sample}` +
+        (dupes.length > 8 ? ` …+${dupes.length - 8}` : '') +
+        '. Pilih konten baru (/publish) atau akun lain.'
+    );
   }
 
   return { ok: errors.length === 0, errors, warnings, convertNets };

@@ -5,6 +5,38 @@ function isHttpUrl(s) {
   return /^https?:\/\//i.test(String(s || '').trim());
 }
 
+/** Canonical domain Threads (threads.net redirect ke threads.com). */
+export function normalizeThreadsUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  return s.replace(/threads\.net/gi, 'threads.com');
+}
+
+/** URL profil saja, tanpa `/post/{code}` — bukan link posting. */
+export function isThreadsProfileOnlyUrl(url) {
+  const s = String(url || '').trim();
+  if (!/^https?:\/\//i.test(s)) return false;
+  if (!/threads\.(net|com)/i.test(s)) return false;
+  return !/\/post\//i.test(s);
+}
+
+/** URL posting Threads yang valid. */
+export function isThreadsPostUrl(url) {
+  const s = String(url || '').trim();
+  return (
+    /^https?:\/\//i.test(s) &&
+    /threads\.(net|com)/i.test(s) &&
+    /\/post\/[A-Za-z0-9_-]+/i.test(s)
+  );
+}
+
+/** Instagram profil saja (bukan /p/ /reel/). */
+function isInstagramProfileOnlyUrl(url) {
+  const s = String(url || '').trim();
+  if (!/instagram\.com/i.test(s)) return false;
+  return !/(?:\/p\/|\/reel\/|\/tv\/)/i.test(s);
+}
+
 /**
  * Alphabet base64-url yang dipakai Instagram untuk derive shortcode dari
  * numeric media_id. URL public Instagram (`/p/{shortcode}/`) HARUS pakai
@@ -182,6 +214,11 @@ export function buildLivePostUrl(
       const share = facebookShareRUrl(fromApi);
       if (share) return share;
       if (/facebook\.com/i.test(fromApi)) return fromApi;
+    } else if (net === 'threads') {
+      if (isThreadsPostUrl(fromApi)) return normalizeThreadsUrl(fromApi);
+      // Profil saja — jangan pakai; lanjut derive dari platformPostId.
+    } else if (net === 'instagram') {
+      if (!isInstagramProfileOnlyUrl(fromApi)) return fromApi;
     } else {
       return fromApi;
     }
@@ -219,25 +256,18 @@ export function buildLivePostUrl(
       return handle ? `https://www.instagram.com/${handle}/` : '';
     }
     case 'threads': {
-      // Threads URL public memakai "code" (mis. DY2Kg7Llgzq) yang TIDAK punya
-      // mapping deterministik ke `platformPostId` numerik yang dikirim
-      // Outstand (mis. 17865291177567878 — itu media pk internal, namespace
-      // berbeda). Membangun URL dari numeric ID akan menghasilkan link mati.
-      //
-      // Strategi:
-      //   1. Kalau ID sudah berbentuk shortcode (huruf+angka), pakai langsung.
-      //   2. Kalau numeric, fallback ke profile URL (lebih baik daripada link
-      //      mati). User bisa cari post terbaru via profil.
-      //   3. Domain canonical: threads.com (lama threads.net redirect).
       if (looksLikeInstagramShortcode(id)) {
         return handle
           ? `https://www.threads.com/@${encodeURIComponent(handle)}/post/${id}`
           : `https://www.threads.com/post/${id}`;
       }
-      // Numeric → tidak ada mapping aman → fallback profile / blank.
-      return handle
-        ? `https://www.threads.com/@${encodeURIComponent(handle)}`
-        : '';
+      const derived = instagramMediaIdToShortcode(id);
+      if (derived && looksLikeInstagramShortcode(derived)) {
+        return handle
+          ? `https://www.threads.com/@${encodeURIComponent(handle)}/post/${derived}`
+          : `https://www.threads.com/post/${derived}`;
+      }
+      return '';
     }
     case 'tiktok':
       return handle

@@ -377,17 +377,14 @@ function normalizeSocialAccount(a) {
     null;
   const username = a.username ?? a.nickname ?? a.name ?? '';
   const directUrl = pickSocialAccountUrl(a);
-  const url =
-    directUrl ||
-    (network === 'facebook' && platformPostId
-      ? buildLivePostUrl(
-          network,
-          username,
-          platformPostId,
-          directUrl,
-          pageId
-        )
-      : null);
+  const built = buildLivePostUrl(
+    network,
+    username,
+    platformPostId,
+    directUrl,
+    pageId
+  );
+  const url = built || directUrl || null;
 
   return {
     id: a.id,
@@ -487,14 +484,22 @@ async function enrichPostWithAccountDirectory(post) {
     const dir = byId.get(acct.id);
     if (!acct.pageId && dir?.pageId) acct.pageId = dir.pageId;
 
-    if (!acct.url && acct.network === 'facebook' && acct.platformPostId) {
-      acct.url = buildLivePostUrl(
+    if (acct.platformPostId) {
+      const rebuilt = buildLivePostUrl(
         acct.network,
         acct.username,
         acct.platformPostId,
         acct.url,
         acct.pageId || dir?.pageId
       );
+      if (rebuilt) acct.url = rebuilt;
+      else if (
+        acct.network === 'threads' &&
+        acct.url &&
+        !/\/post\//i.test(String(acct.url))
+      ) {
+        acct.url = undefined;
+      }
     }
   }
 
