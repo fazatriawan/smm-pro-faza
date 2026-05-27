@@ -135,6 +135,11 @@ import {
   formatPollWaitHint,
   formatLargeBatchFollowUp,
 } from '../utils/publishPoll.js';
+import {
+  countTargetsByNetwork,
+  analyzeInstructionCompletion,
+  formatInstructionResultLines,
+} from '../utils/publishInstruction.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('bot');
@@ -1925,6 +1930,12 @@ async function runPublish(ctx, scheduledAt) {
     // dari pemakaian → expectedAccountIds undefined → Sheets tidak ter-record
     // dengan benar dan markAccountsUsedForToday tidak mengisi exclude list
     // sehingga /random berikutnya bisa memilih akun yang sama lagi.
+    const poolAccounts = await listSocialAccounts();
+    const instructionTargets = countTargetsByNetwork(
+      session.selectedAccountIds || [],
+      poolAccounts
+    );
+
     const snapshot = {
       selectedAccountIds: [...(session.selectedAccountIds || [])],
       mediaFiles: session.mediaFiles ? [...session.mediaFiles] : [],
@@ -1934,6 +1945,7 @@ async function runPublish(ctx, scheduledAt) {
       targetLabel: session.targetLabel || targetInfo,
       mediaFilesDay: session.mediaFilesDay || getWibDayKey(),
       idempotencyKey: session.lastPublishKey || '',
+      instructionTargets,
     };
 
     const {
@@ -1967,6 +1979,7 @@ async function runPublish(ctx, scheduledAt) {
       postIds: result.postIds,
       selectedAccountIds: snapshot.selectedAccountIds,
       mediaFilesDay: snapshot.mediaFilesDay,
+      instructionTargets: snapshot.instructionTargets,
       savedAt: nowIsoUtc(),
     };
 
@@ -2114,6 +2127,7 @@ async function runPublish(ctx, scheduledAt) {
         expectedAccountIds: snapshot.selectedAccountIds,
         baseCaption: snapshot.caption,
         initialSummary: summary,
+        snapshot,
       });
     }
 
@@ -2156,68 +2170,110 @@ async function runPublish(ctx, scheduledAt) {
 const FOLLOW_UP_DELAYS_MS = [90_000, 240_000, 480_000];
 
 /**
- * Tawarkan akun pengganti untuk yang gagal karena masalah AKUN (token/restricted).
- * - Tidak mencakup error rate-limit (post bisa jadi tetap live di platform).
- * - User harus klik tombol untuk konfirmasi.
+ * Setelah instruksi publish settled: laporkan kekurangan vs target (ig 44 → harus 44 live)
+ * dan tawarkan akun pengganti — hanya publish setelah user klik tombol.
  *
  * @param {import('telegraf').Context} ctx
- * @param {{ summary: any, snapshot: any, result: any }} input
+ * @param {{ summary: any, snapshot?: any, result?: any, source?: string }} input
  */
 async function offerReplacementAccountsIfAny(ctx, input) {
-  const { summary, snapshot, result } = input;
-  const accounts = summary?.sheetAccounts || [];
+  const { summary, snapshot = {}, result = {}, source = 'publish' } = input;
+  const session = getSession(ctx.chat.id);
+  const last = session.lastPublish || {};
+  const instructionTargets =
+    snapshot.instructionTargets || last.instructionTargets || null;
+  if (!instructionTargets || !Object.keys(instructionTargets).length) return;
 
-  // Hanya gagal karena masalah akun (FIX_ACCOUNT). Skip rate-limit & quota.
-  const fixAccountFailed = accounts.filter((a) => {
-    if ((a.status || '').toLowerCase() !== 'failed') return false;
-    const c = classifyRetryError(a.error);
-    return c.action === RETRY_ACTION.FIX_ACCOUNT;
-  });
+  const expectedAccountIds =
+    snapshot.selectedAccountIds || last.selectedAccountIds || [];
+  const postIds = result.postIds || last.postIds || [];
+  const postKey = [...postIds].sort().join('|');
+  if (!postKey) return;
 
-  if (!fixAccountFailed.length) return;
-
-  /** @type {Record<string, number>} */
-  const byNetwork = {};
-  for (const a of fixAccountFailed) {
-    const net = (a.network || 'unknown').toLowerCase();
-    byNetwork[net] = (byNetwork[net] || 0) + 1;
+  if (session.replacementOfferedKey === postKey && session.pendingReplacement) {
+    return;
   }
 
-  const lines = Object.entries(byNetwork).map(
-    ([net, count]) => `• *${getNetworkShortLabel(net)}*: ${count} akun gagal akses`
+  const accounts = summary?.sheetAccounts || [];
+  const analysis = analyzeInstructionCompletion(
+    accounts,
+    instructionTargets,
+    expectedAccountIds
   );
 
-  // Simpan konteks utk action handler.
+  if (!analysis.settled) {
+    return;
+  }
+
+  if (!analysis.totalShortage) return;
+
+  const resultLines = formatInstructionResultLines(
+    analysis,
+    getNetworkShortLabel
+  );
+  const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+  const failedSample = analysis.failedAccounts
+    .slice(0, 10)
+    .map((a) => `❌ ${getNetworkShortLabel(a.network)} @${escUser(a.username)}`)
+    .join('\n');
+
+  const mediaFiles =
+    snapshot.mediaFiles?.length ? snapshot.mediaFiles : last.mediaFiles;
+  if (!mediaFiles?.length) return;
+
   updateSession(ctx.chat.id, {
+    replacementOfferedKey: postKey,
     pendingReplacement: {
-      byNetwork,
-      mediaFiles: snapshot.mediaFiles,
-      caption: snapshot.caption,
-      captionsByNetwork: undefined,
-      folderName: snapshot.folderName,
-      folderId: snapshot.folderId,
-      mediaFilesDay: snapshot.mediaFilesDay,
-      originalPostIds: result?.postIds || [],
+      byNetwork: analysis.shortageByNetwork,
+      instructionTargets,
+      mediaFiles,
+      caption: snapshot.caption || last.caption || '',
+      folderName: snapshot.folderName || last.folderName || '',
+      folderId: snapshot.folderId || last.folderId || '',
+      mediaFilesDay: snapshot.mediaFilesDay || last.mediaFilesDay || getWibDayKey(),
+      originalPostIds: postIds,
+      targetLabel: snapshot.targetLabel || last.targetLabel || '',
       at: Date.now(),
     },
   });
 
-  const buttons = Object.keys(byNetwork).map((net) => [
-    Markup.button.callback(
-      `🔁 Suggest pengganti ${getNetworkShortLabel(net)} (${byNetwork[net]})`,
-      `replace:yes:${net}`
-    ),
-  ]);
-  buttons.push([Markup.button.callback('Batal', 'replace:skip')]);
+  /** @type {import('telegraf').InlineKeyboardButton[][]} */
+  const buttons = [];
+  const totalShort = analysis.totalShortage;
+  if (Object.keys(analysis.shortageByNetwork).length > 1) {
+    buttons.push([
+      Markup.button.callback(
+        `✅ Lengkapi semua (+${totalShort} akun)`,
+        'replace:yes:all'
+      ),
+    ]);
+  }
+  for (const [net, count] of Object.entries(analysis.shortageByNetwork)) {
+    buttons.push([
+      Markup.button.callback(
+        `✅ ${getNetworkShortLabel(net)} +${count}`,
+        `replace:yes:${net}`
+      ),
+    ]);
+  }
+  buttons.push([Markup.button.callback('Lewati', 'replace:skip')]);
+
+  const header =
+    source === 'refresh'
+      ? '📋 *Instruksi selesai (setelah /refresh)*'
+      : source === 'followup'
+        ? '📋 *Instruksi selesai — perlu dilengkapi*'
+        : '📋 *Instruksi selesai — perlu dilengkapi*';
 
   await safeReply(
     ctx,
-    `📌 *Saran akun pengganti*\n` +
-      lines.join('\n') +
-      `\n\nAkun gagal karena masalah token/akses (bukan rate-limit). ` +
-      `Mau aku pilih akun pengganti dari pool yang sudah pernah post hari ini?\n` +
-      `_Bot tidak auto-publish — pilih dulu di bawah._\n` +
-      `Catatan: akun pengganti akan posting 2× hari ini.`,
+    `${header}\n\n` +
+      `${resultLines.join('\n')}\n\n` +
+      (failedSample ? `*Akun gagal:*\n${failedSample}\n\n` : '') +
+      `Bot bisa posting *media yang sama* ke akun lain (sudah pernah post hari ini) ` +
+      `supaya jumlah live = target instruksi.\n` +
+      `_Tidak auto-publish — pilih tombol di bawah untuk setuju._\n` +
+      `Hasil pengganti tercatat di Sheets sebagai instruksi baru.`,
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard(buttons),
@@ -2225,8 +2281,133 @@ async function offerReplacementAccountsIfAny(ctx, input) {
   );
 }
 
+/**
+ * @param {import('telegraf').Context} ctx
+ * @param {NonNullable<import('../utils/session.js').PublishSession['pendingReplacement']>} pending
+ * @param {string} networkFilter satu network atau `all`
+ */
+async function startReplacementPublish(ctx, pending, networkFilter) {
+  const shortages =
+    networkFilter === 'all'
+      ? Object.entries(pending.byNetwork || {}).map(([network, missing]) => ({
+          network,
+          missing,
+        }))
+      : [
+          {
+            network: networkFilter,
+            missing: pending.byNetwork?.[networkFilter] || 0,
+          },
+        ];
+
+  const needTotal = shortages.reduce((s, x) => s + (x.missing || 0), 0);
+  if (!needTotal) {
+    await ctx.reply('Tidak ada kekurangan untuk platform ini.');
+    return;
+  }
+
+  if (!pending.mediaFiles?.length) {
+    await ctx.reply(
+      '❌ Media batch instruksi tidak tersimpan. Ulangi /publish dengan media baru.'
+    );
+    updateSession(ctx.chat.id, { pendingReplacement: undefined });
+    return;
+  }
+
+  const session = getSession(ctx.chat.id);
+  if (session.publishingSince && Date.now() - session.publishingSince < 15 * 60_000) {
+    await ctx.reply('⏳ Tunggu publish lain selesai dulu.');
+    return;
+  }
+
+  const accounts = await listSocialAccounts();
+  const excludeIds = await getExcludeIdsForRandomPick(ctx.chat.id);
+  const { added, summary: fillSummary } = fillShortageFromExcludedPool(
+    accounts,
+    shortages.filter((s) => s.missing > 0),
+    {
+      excludeAccountIds: excludeIds,
+      maxReusePerAccount: Math.max(2, env.maxReusePerAccount),
+    }
+  );
+
+  if (!added.length) {
+    await ctx.reply(
+      `❌ Tidak ada akun pengganti di pool untuk: ${shortages.map((s) => getNetworkShortLabel(s.network)).join(', ')}`
+    );
+    return;
+  }
+
+  const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+  const sample = added
+    .slice(0, 8)
+    .map((a) => `@${escUser((a.username || a.id).replace(/^@/, ''))}`)
+    .join(', ');
+  const fillLines = fillSummary
+    .map(
+      (s) =>
+        `${getNetworkShortLabel(s.network)}: ${s.filled}/${s.requested}`
+    )
+    .join(', ');
+
+  await safeReply(
+    ctx,
+    `🔁 *Pengganti disetujui*\n` +
+      `Isi: ${fillLines}\n` +
+      `Akun: ${sample}${added.length > 8 ? '…' : ''}\n\n` +
+      `⏳ Publish melengkapi instruksi…`,
+    { parse_mode: 'Markdown' }
+  );
+
+  const newByNetwork = { ...pending.byNetwork };
+  for (const s of fillSummary) {
+    const left = (newByNetwork[s.network] || 0) - s.filled;
+    if (left <= 0) delete newByNetwork[s.network];
+    else newByNetwork[s.network] = left;
+  }
+
+  const label =
+    networkFilter === 'all'
+      ? `Lengkapi instruksi (+${added.length})`
+      : `Pengganti ${getNetworkShortLabel(networkFilter)} (+${added.length})`;
+
+  updateSession(ctx.chat.id, {
+    mediaFiles: pending.mediaFiles,
+    mediaFilesSetAt: nowIsoUtc(),
+    mediaFilesDay: pending.mediaFilesDay,
+    mediaSourceLabel: label,
+    caption: pending.caption,
+    captionsByNetwork: undefined,
+    youtubeFields: undefined,
+    folderName: pending.folderName,
+    folderId: pending.folderId,
+    selectedAccountIds: added.map((a) => a.id),
+    targetLabel: label,
+    instructionTargets: countTargetsByNetwork(
+      added.map((a) => a.id),
+      accounts
+    ),
+    step: 'ready',
+    lastPublishKey: undefined,
+    lastPublishAt: undefined,
+    replacementOfferedKey: undefined,
+    pendingReplacement: Object.keys(newByNetwork).length
+      ? { ...pending, byNetwork: newByNetwork, at: Date.now() }
+      : undefined,
+  });
+
+  await runPublish(ctx);
+}
+
 function schedulePublishStatusFollowUp(ctx, input) {
-  const { chatId, postIds, expectedAccountIds, baseCaption, initialSummary } = input;
+  const {
+    chatId,
+    postIds,
+    expectedAccountIds,
+    baseCaption,
+    initialSummary,
+    snapshot,
+  } = input;
   if (!postIds?.length) return;
 
   /** @type {Map<string, string>} */
@@ -2236,6 +2417,7 @@ function schedulePublishStatusFollowUp(ctx, input) {
   }
 
   let stopped = false;
+  let replacementOffered = false;
 
   for (const delayMs of FOLLOW_UP_DELAYS_MS) {
     setTimeout(async () => {
@@ -2309,6 +2491,22 @@ function schedulePublishStatusFollowUp(ctx, input) {
 
         if (!stillPending) {
           stopped = true;
+          if (!replacementOffered && snapshot?.instructionTargets) {
+            replacementOffered = true;
+            try {
+              await offerReplacementAccountsIfAny(ctx, {
+                summary: { sheetAccounts: accounts },
+                snapshot,
+                result: { postIds },
+                source: 'followup',
+              });
+            } catch (err) {
+              log.warn(
+                { err: err.message },
+                `[FollowUp] replacement offer: ${err.message}`
+              );
+            }
+          }
         }
       } catch (err) {
         log.warn(
@@ -2735,6 +2933,23 @@ export function createBot() {
         `${result.spreadsheetUrl}`,
       { parse_mode: 'Markdown' }
     );
+
+    const session = getSession(ctx.chat.id);
+    const last = session.lastPublish;
+    if (last?.instructionTargets && last?.mediaFiles?.length) {
+      const expected = new Set(last.selectedAccountIds || []);
+      const batchAccounts = (result.accounts || []).filter((a) =>
+        expected.has(a.accountId)
+      );
+      await offerReplacementAccountsIfAny(ctx, {
+        summary: { sheetAccounts: batchAccounts },
+        snapshot: last,
+        result: { postIds: last.postIds || [] },
+        source: 'refresh',
+      }).catch((err) =>
+        log.warn({ err: err.message }, `[Refresh] replacement: ${err.message}`)
+      );
+    }
   }
 
   async function runSyncTodayCommand(ctx) {
@@ -3587,88 +3802,12 @@ export function createBot() {
     const session = getSession(ctx.chat.id);
     const pending = session.pendingReplacement;
     if (!pending || Date.now() - pending.at > 30 * 60_000) {
-      await ctx.reply('⌛ Saran pengganti kadaluarsa. Ulangi /publish kalau perlu.');
+      await ctx.reply('⌛ Saran pengganti kadaluarsa. Ulangi /publish atau /refresh.');
       updateSession(ctx.chat.id, { pendingReplacement: undefined });
       return;
     }
 
-    const needCount = pending.byNetwork?.[network] || 0;
-    if (!needCount) {
-      await ctx.reply('Tidak ada akun gagal untuk platform ini.');
-      return;
-    }
-
-    if (!pending.mediaFiles?.length) {
-      await ctx.reply(
-        '❌ Media batch sebelumnya tidak tersimpan. Kirim ulang via /publish.'
-      );
-      updateSession(ctx.chat.id, { pendingReplacement: undefined });
-      return;
-    }
-
-    if (session.publishingSince && Date.now() - session.publishingSince < 15 * 60_000) {
-      await ctx.reply('⏳ Tunggu publish sebelumnya selesai dulu.');
-      return;
-    }
-
-    const accounts = await listSocialAccounts();
-    const excludeIds = await getExcludeIdsForRandomPick(ctx.chat.id);
-    const { added, summary: fillSummary } = fillShortageFromExcludedPool(
-      accounts,
-      [{ network, missing: needCount }],
-      {
-        excludeAccountIds: excludeIds,
-        maxReusePerAccount: env.maxReusePerAccount,
-      }
-    );
-
-    if (!added.length) {
-      await ctx.reply(
-        `❌ Pool akun ${getNetworkShortLabel(network)} kosong — tidak ada pengganti yang bisa dipakai.`
-      );
-      return;
-    }
-
-    const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
-    const sample = added
-      .slice(0, 6)
-      .map((a) => `@${escUser((a.username || a.id).replace(/^@/, ''))}`)
-      .join(', ');
-    await safeReply(
-      ctx,
-      `🔁 *Pengganti ${getNetworkShortLabel(network)}* (${added.length} akun):\n` +
-        (sample ? `${sample}${added.length > 6 ? '…' : ''}` : '') +
-        `\n\nMenyiapkan publish ulang dengan media yang sama…`,
-      { parse_mode: 'Markdown' }
-    );
-
-    // Kurangi quota untuk network ini di pendingReplacement supaya
-    // klik tombol kedua untuk network sama tidak men-trigger lagi.
-    const newByNetwork = { ...pending.byNetwork };
-    delete newByNetwork[network];
-
-    // Set up session untuk publish ulang ke akun pengganti.
-    updateSession(ctx.chat.id, {
-      mediaFiles: pending.mediaFiles,
-      mediaFilesSetAt: nowIsoUtc(),
-      mediaFilesDay: pending.mediaFilesDay,
-      mediaSourceLabel: `Pengganti ${network}`,
-      caption: pending.caption,
-      captionsByNetwork: undefined,
-      youtubeFields: undefined,
-      folderName: pending.folderName,
-      folderId: pending.folderId,
-      selectedAccountIds: added.map((a) => a.id),
-      targetLabel: `Pengganti ${network} (${added.length})`,
-      step: 'ready',
-      lastPublishKey: undefined,
-      lastPublishAt: undefined,
-      pendingReplacement: Object.keys(newByNetwork).length
-        ? { ...pending, byNetwork: newByNetwork, at: Date.now() }
-        : undefined,
-    });
-
-    await runPublish(ctx);
+    await startReplacementPublish(ctx, pending, network);
   });
 
   bot.action('replace:skip', async (ctx) => {

@@ -45,7 +45,9 @@ import { getWibDayKey, nowIsoUtc } from './wibTime.js';
  * @property {string} [usedAccountsTab] tab YYYY-MM-DD untuk usedAccountIdsToday
  * @property {string[]} [usedAccountIdsToday] akun sudah dipakai publish hari ini (sesi bot)
  * @property {{ baseAccountIds: string[], shortages: Array<{ network: string, missing: number, skippedUsed: number }>, label: string, at: number }} [pendingFillShortage]
- * @property {{ byNetwork: Record<string, number>, mediaFiles: MediaFile[], caption: string, folderName: string, folderId: string, mediaFilesDay: string, originalPostIds: string[], at: number }} [pendingReplacement]
+ * @property {{ byNetwork: Record<string, number>, instructionTargets?: Record<string, number>, mediaFiles: MediaFile[], caption: string, folderName: string, folderId: string, mediaFilesDay: string, originalPostIds: string[], targetLabel?: string, at: number }} [pendingReplacement]
+ * @property {string} [replacementOfferedKey] postIds batch yang sudah ditawari pengganti
+ * @property {Record<string, number>} [instructionTargets] target per platform instruksi aktif
  * @property {number} [publishingSince] timestamp ms — lock anti double-submit
  * @property {string} [lastPublishKey] idempotency key publish terakhir
  * @property {number} [lastPublishAt] timestamp ms publish terakhir di-submit
