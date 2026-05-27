@@ -622,16 +622,22 @@ async function handleRandomAccountPick(ctx, text) {
   await safeReply(
     ctx,
     force
-      ? '⏳ Memilih akun acak (mode *force* — termasuk yang sudah post hari ini)…'
+      ? '⏳ Memilih akun acak (mode *force* — termasuk yang sudah post hari ini, boleh dobel)…'
       : '⏳ Memilih akun acak (lewati yang sudah post hari ini)…',
     { parse_mode: 'Markdown' }
   );
 
   const accounts = await listSocialAccounts();
   const exclude = force ? [] : await getExcludeIdsForRandomPick(ctx.chat.id);
+  // Saat mode force: buka cap reuse agar pool terbatas tetap bisa memenuhi
+  // jumlah yang user minta (mis. minta 44 Threads tapi stok 39 → 5 akun
+  // dipakai 2×). Saat mode normal, hormati cap default dari env.
+  const maxReusePerAccount = force
+    ? Math.max(2, env.maxReusePerAccount)
+    : env.maxReusePerAccount;
   const result = pickRandomAccounts(accounts, parsed.counts, {
     excludeAccountIds: exclude,
-    maxReusePerAccount: env.maxReusePerAccount,
+    maxReusePerAccount,
   });
 
   if (!result.accountIds.length) {
@@ -661,10 +667,10 @@ async function handleRandomAccountPick(ctx, text) {
     `${result.label}\n` +
     `Unik: ${uniqueCount} akun` +
     (result.accountIds.length > uniqueCount
-      ? ` · ${result.accountIds.length - uniqueCount} pengulangan (maks 2×/akun)`
+      ? ` · ${result.accountIds.length - uniqueCount} pengulangan (maks ${maxReusePerAccount}×/akun)`
       : '') +
     (force
-      ? `\n⚡ _Mode *force* — termasuk akun yang sudah post hari ini._`
+      ? `\n⚡ _Mode *force* — termasuk akun yang sudah post hari ini, boleh dobel sampai ${maxReusePerAccount}×/akun._`
       : exclude.length
         ? `\n_Lewati ${exclude.length} akun yang sudah dipakai / sudah live hari ini._`
         : '') +

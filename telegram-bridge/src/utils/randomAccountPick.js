@@ -367,8 +367,8 @@ export function formatRandomPickHelp() {
     'Singkatan: ig, fb, threads/th, yt, x, tiktok/tt, linkedin, pinterest/pin\n\n' +
     '• Akun yang sudah post / antrian hari ini *tidak* ikut acak lagi\n' +
     '• Satu akun maks *1×* per hari (atur `MAX_RANDOM_REUSE_PER_ACCOUNT` di .env)\n\n' +
-    '🔥 *Mode force* (post 2× ke akun yang sama hari ini):\n' +
-    '• `ig 3 threads 5 force` — paksa pilih semua akun (termasuk yang sudah post)\n' +
+    '🔥 *Mode force* (boleh dobel sampai 2×/akun, termasuk akun yang sudah post):\n' +
+    '• `ig 44 threads 22 fb 22 force` — kalau pool kurang, bot otomatis isi sisa dengan dobel\n' +
     '• Pakai juga: `ulang` / `paksa` / `all`\n\n' +
     'Atau: `/random ig 22 fb 22`'
   );
