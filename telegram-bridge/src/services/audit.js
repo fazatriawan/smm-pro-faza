@@ -110,7 +110,7 @@ export async function buildAuditFromSheets(input) {
   const toDayKey = parseDayKey(input.toDayKey) || fromDayKey; // if not provided, caller should pass today
 
   const spreadsheetId = await getSpreadsheetId();
-  const url = await getSpreadsheetUrl();
+  const url = getSpreadsheetUrl(spreadsheetId);
   const tabs = await listDailyTabsBetween(spreadsheetId, fromDayKey, toDayKey);
   if (!tabs.length) {
     throw new Error(`Tidak ada tab harian antara ${fromDayKey}..${toDayKey}`);
