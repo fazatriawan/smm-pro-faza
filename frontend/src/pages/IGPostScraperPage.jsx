@@ -87,9 +87,13 @@ export default function IGPostScraperPage() {
 
   const runScraper = async () => {
     const raw = usernamesText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!raw.length) {
+      toast.error('Isi daftar username di kotak teks (satu per baris) — contoh abrorsoeka');
+      return;
+    }
     const usernames = normalizeScraperLines(raw, platform);
     if (!usernames.length) {
-      toast.error('Masukkan username valid (bukan URL posting /p/ atau /reel/)');
+      toast.error('Username tidak valid. Gunakan nama akun saja, bukan link posting /p/ atau /reel/');
       return;
     }
     if (usernames.length < raw.length) {
@@ -268,7 +272,7 @@ export default function IGPostScraperPage() {
                 <textarea
                   className="input"
                   rows={10}
-                  placeholder={'username1\n@username2\nhttps://www.instagram.com/username3/'}
+                  placeholder={'Contoh — ganti dengan username asli:\nabrorsoeka\nriskasiskasari\nachlisyog'}
                   value={usernamesText}
                   onChange={(e) => setUsernamesText(e.target.value)}
                   disabled={running}
