@@ -16,6 +16,7 @@ import NotificationsPage from './pages/NotificationsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import AIPage from './pages/AIPage';
 import PostBrowserPage from './pages/PostBrowserPage';
+import IGPostScraperPage from './pages/IGPostScraperPage';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30000 } } });
 
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="analytics"      element={<AnalyticsPage />} />
             <Route path="ai"             element={<AIPage />} />
             <Route path="post-browser"   element={<PostBrowserPage />} />
+            <Route path="ig-scraper"     element={<IGPostScraperPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

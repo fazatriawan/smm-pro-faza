@@ -17,6 +17,7 @@ const NAV = [
   { to: '/amplify',       icon: TrendingUp, label: 'Amplifikasi' },
   { to: '/warmup',        icon: Flame, label: 'Warm Up' },
   { to: '/post-browser',  icon: Link2, label: 'Browser Post' },
+  { to: '/ig-scraper',    icon: Link2, label: 'Post Link Scraper' },
   { to: '/notifications', icon: Bell, label: 'Notifikasi' },
   { to: '/analytics',     icon: BarChart3, label: 'Analytics' },
   { to: '/ai',            icon: Sparkles, label: 'AI Tools' },
