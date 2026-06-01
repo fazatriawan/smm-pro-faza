@@ -1,0 +1,36 @@
+{
+  "name": "smm-telegram-bridge",
+  "version": "1.0.0",
+  "description": "Telegram bot bridge: Google Drive → Gemini → Outstand → Sheets webhook reporting",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "worker": "node src/worker/index.js",
+    "worker:dev": "node --watch src/worker/index.js",
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
+    "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma",
+    "prisma:migrate:deploy": "prisma migrate deploy --schema=prisma/schema.prisma",
+    "prisma:studio": "prisma studio --schema=prisma/schema.prisma"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@prisma/client": "^5.22.0",
+    "axios": "^1.7.9",
+    "bullmq": "^5.34.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "ioredis": "^5.4.1",
+    "pino": "^9.5.0",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.3.0",
+    "prisma": "^5.22.0"
+  }
+}

@@ -80,6 +80,18 @@ export const postBrowserAPI = {
   getPosts: (accountId, limit = 20) => api.get(`/accounts/${accountId}/posts`, { params: { limit } }),
 };
 
+// ─── Post Link Scraper (Instagram & Threads) ───────────────────────────────────
+export const scraperAPI = {
+  runInstagram: (data) =>
+    api.post('/scraper/instagram', data, { timeout: 300000 }),
+  runThreads: (data) =>
+    api.post('/scraper/threads', data, { timeout: 300000 }),
+  exportInstagram: (results) =>
+    api.post('/scraper/instagram/export', { results }, { responseType: 'blob' }),
+  exportThreads: (results) =>
+    api.post('/scraper/threads/export', { results }, { responseType: 'blob' }),
+};
+
 // ─── Amplify ─────────────────────────────────────────────────────────────────
 export const amplifyAPI = {
   getAll: () => api.get('/amplify'),

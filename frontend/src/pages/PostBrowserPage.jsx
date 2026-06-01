@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { accountsAPI, postBrowserAPI } from '../api';
 import {
   Link2, Copy, Check, ExternalLink, Image, Video, FileText, Loader2,
-  Instagram, Youtube, Globe, MessageCircle, RefreshCw, Search, Filter
+  Globe, MessageCircle, Hash, RefreshCw, Search, Filter
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import dayjs from 'dayjs';
@@ -19,9 +19,9 @@ const PLATFORM_META = {
 };
 
 function PlatformIcon({ platform, size = 14 }) {
-  if (platform === 'instagram') return <Instagram size={size} />;
-  if (platform === 'youtube')   return <Youtube size={size} />;
-  if (platform === 'threads')   return <MessageCircle size={size} />;
+  if (platform === 'instagram') return <MessageCircle size={size} />;
+  if (platform === 'youtube')   return <Video size={size} />;
+  if (platform === 'threads')   return <Hash size={size} />;
   return <Globe size={size} />;
 }
 

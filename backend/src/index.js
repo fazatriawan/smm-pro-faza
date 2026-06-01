@@ -29,6 +29,7 @@ const captionRoutes = require('./routes/caption');
 const scheduleStrategyRoutes = require('./routes/scheduleStrategy');
 const authTiktokDesktopRoutes = require('./routes/authTiktokDesktop');
 const authTiktokRoutes = require('./routes/authTiktok');
+const scraperRoutes = require('./routes/scraper');
 const { startTokenScheduler } = require('./cron/tokenScheduler');
 const { startScheduler } = require('./services/schedulerService');
 const { initSocket } = require('./services/socketService');
@@ -94,6 +95,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/caption', captionRoutes);
 app.use('/api/schedule-strategy', scheduleStrategyRoutes);
+app.use('/api/scraper', scraperRoutes);
 app.use('/', authTiktokDesktopRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date(), v: 5 }));
