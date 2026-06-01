@@ -2,6 +2,11 @@
   "name": "smm-pro-frontend",
   "version": "1.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fazatriawan/smm-pro-faza.git",
+    "directory": "frontend"
+  },
   "dependencies": {
     "@tanstack/react-query": "^5.24.1",
     "axios": "^1.6.7",

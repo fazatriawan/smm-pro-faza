@@ -19,6 +19,18 @@
 
 ---
 
+## GitHub & Deploy Web
+
+| | |
+|---|---|
+| **Repository** | https://github.com/fazatriawan/smm-pro-faza |
+| **Production (Vercel)** | https://smm-pro-faza.vercel.app |
+| **Post Link Scraper** | `/ig-scraper` (setelah deploy dari branch `main`) |
+
+Frontend di-deploy otomatis dari GitHub (`main`) via Vercel. Setiap push/merge ke `main` memicu build baru. Backend API di-host terpisah — set `REACT_APP_API_URL` di Vercel → Environment Variables.
+
+---
+
 ## Tech Stack
 
 | Layer | Teknologi |
