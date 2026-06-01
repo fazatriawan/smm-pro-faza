@@ -1,5 +1,7 @@
 const router = require('express').Router();
 const { protect } = require('../middleware/auth');
+const { SocialAccount } = require('../models');
+const { refreshTokenIfNeeded } = require('../services/tokenRefreshService');
 const {
   instagramPostScraper,
   resultsToCsv: instagramResultsToCsv,
@@ -36,11 +38,34 @@ router.post('/instagram', protect, async (req, res) => {
       return res.status(400).json({ message: `Maksimal ${MAX_USERNAMES} username per request` });
     }
 
+    let igAccount = null;
+    const accountId = req.body.accountId || null;
+    if (accountId && req.body.profileOnly !== true) {
+      const account = await SocialAccount.findOne({
+        _id: accountId,
+        isActive: true,
+        platform: 'instagram',
+      });
+      if (!account) {
+        return res.status(404).json({ message: 'Akun Instagram tidak ditemukan' });
+      }
+      if (req.user.role !== 'admin' && String(account.owner) !== String(req.user._id)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+      await refreshTokenIfNeeded(account).catch(() => {});
+      igAccount = {
+        platformUserId: account.platformUserId,
+        platformUsername: account.platformUsername,
+        label: account.label,
+        accessToken: account.accessToken,
+      };
+    }
+
     const logs = [];
     const onLog = (log) => logs.push({ ...log, at: new Date().toISOString() });
 
     const result = await instagramPostScraper(
-      { usernames, profileOnly: req.body.profileOnly === true },
+      { usernames, profileOnly: req.body.profileOnly === true, igAccount },
       onLog
     );
 

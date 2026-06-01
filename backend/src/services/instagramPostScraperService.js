@@ -112,9 +112,57 @@ async function fetchLatestPostViaHtml(username) {
 }
 
 /**
- * @param {string} username
+ * Meta Graph API — butuh akun IG Business/Creator terhubung di SMM Pro.
+ * @param {{ platformUserId: string, accessToken: string }} igAccount
+ * @param {string} targetUsername
  */
-async function resolveInstagramLatestPost(username) {
+async function fetchLatestPostViaGraph(igAccount, targetUsername) {
+  const token = igAccount?.accessToken;
+  const igUserId = igAccount?.platformUserId;
+  if (!token || !igUserId) return null;
+
+  const handle = String(targetUsername).replace(/[^a-zA-Z0-9._]/g, '');
+  const fields = `business_discovery.username(${handle}){username,media_count,media.limit(1){permalink,timestamp,media_type}}`;
+
+  const res = await axios.get(`https://graph.facebook.com/v18.0/${igUserId}`, {
+    params: { fields, access_token: token },
+    validateStatus: () => true,
+    timeout: 25_000,
+  });
+
+  if (res.status !== 200) {
+    const msg = res.data?.error?.message || `Graph HTTP ${res.status}`;
+    return { graphError: msg };
+  }
+
+  const bd = res.data?.business_discovery;
+  if (!bd) return { graphError: 'business_discovery tidak tersedia' };
+
+  const media = bd.media?.data?.[0];
+  if (media?.permalink) return { url: media.permalink, via: 'graph' };
+
+  if ((bd.media_count ?? 0) === 0) return { empty: true };
+
+  return { needHtmlFallback: true };
+}
+
+/**
+ * @param {string} username
+ * @param {{ platformUserId: string, accessToken: string } | null} [igAccount]
+ */
+async function resolveInstagramLatestPost(username, igAccount = null) {
+  if (igAccount) {
+    try {
+      const graph = await fetchLatestPostViaGraph(igAccount, username);
+      if (graph?.url || graph?.private || graph?.notFound || graph?.empty) return graph;
+      if (graph?.graphError) {
+        /* lanjut ke metode publik */
+      }
+    } catch {
+      /* fallback */
+    }
+  }
+
   let api = {};
   try {
     api = await fetchLatestPostViaApi(username);
@@ -128,13 +176,13 @@ async function resolveInstagramLatestPost(username) {
     try {
       const html = await fetchLatestPostViaHtml(username);
       if (html.url || html.private || html.notFound || html.empty) return html;
-      return { blocked: true };
+      return { blocked: true, needAccount: !igAccount };
     } catch (err) {
       return { error: err.message };
     }
   }
 
-  return api;
+  return { ...api, needAccount: !igAccount && api.empty };
 }
 
 function profileOnlyResult(username) {
@@ -167,7 +215,19 @@ async function instagramPostScraper(config, onLog = () => {}) {
     };
   }
 
-  onLog({ type: 'info', message: `🚀 Scrape link postingan terbaru — ${usernames.length} akun` });
+  const igAccount = config.igAccount || null;
+  if (igAccount) {
+    onLog({
+      type: 'info',
+      message: `🚀 Scrape via akun terhubung @${igAccount.platformUsername || igAccount.label} — ${usernames.length} target`,
+    });
+  } else {
+    onLog({
+      type: 'warn',
+      message: `⚠️ Tanpa akun IG terhubung — hasil bisa kosong. Pilih akun Business/Creator di dropdown.`,
+    });
+    onLog({ type: 'info', message: `🚀 Scrape publik — ${usernames.length} username` });
+  }
 
   const results = [];
   let success = 0;
@@ -178,7 +238,7 @@ async function instagramPostScraper(config, onLog = () => {}) {
     const profileUrl = `https://www.instagram.com/${encodeURIComponent(username)}/`;
     onLog({ type: 'info', message: `[${i + 1}/${usernames.length}] 🔍 @${username}...` });
 
-    const hit = await resolveInstagramLatestPost(username);
+    const hit = await resolveInstagramLatestPost(username, igAccount);
 
     if (hit.notFound) {
       onLog({ type: 'warn', message: `⚠️ @${username} — profil tidak ditemukan` });
@@ -199,7 +259,8 @@ async function instagramPostScraper(config, onLog = () => {}) {
       });
       failed++;
     } else if (hit.url) {
-      onLog({ type: 'success', message: `✅ @${username} → ${hit.url}` });
+      const via = hit.via === 'graph' ? ' (Graph API)' : '';
+      onLog({ type: 'success', message: `✅ @${username} → ${hit.url}${via}` });
       results.push({
         username,
         profile_url: profileUrl,
@@ -219,8 +280,11 @@ async function instagramPostScraper(config, onLog = () => {}) {
         status: 'profile_only',
       });
       failed++;
-    } else if (hit.empty) {
-      onLog({ type: 'warn', message: `⚠️ @${username} — profil tidak punya postingan publik` });
+    } else if (hit.empty || hit.needAccount) {
+      const hint = hit.needAccount
+        ? ' — pilih akun Instagram terhubung (Business/Creator)'
+        : ' — tidak ada postingan publik';
+      onLog({ type: 'warn', message: `⚠️ @${username}${hint}` });
       results.push({
         username,
         profile_url: profileUrl,
@@ -258,6 +322,7 @@ async function instagramPostScraper(config, onLog = () => {}) {
     success: true,
     results,
     summary: { total: usernames.length, success, failed },
+    scraperVersion: 'instagram-graph-v3',
   };
 }
 

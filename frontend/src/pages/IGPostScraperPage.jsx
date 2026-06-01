@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { scraperAPI } from '../api';
+import { useQuery } from '@tanstack/react-query';
+import { accountsAPI, scraperAPI } from '../api';
 import { normalizeScraperLines } from '../utils/scraperUsername';
 import { Link2, Upload, Trash2, Download, ExternalLink, Loader2, MessageCircle, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -43,6 +44,7 @@ function isClickable(r) {
 export default function IGPostScraperPage() {
   const [platform, setPlatform] = useState('instagram');
   const [profileOnly, setProfileOnly] = useState(false);
+  const [accountId, setAccountId] = useState('');
   const [usernamesText, setUsernamesText] = useState('');
   const [logs, setLogs] = useState([]);
   const [results, setResults] = useState([]);
@@ -52,12 +54,22 @@ export default function IGPostScraperPage() {
 
   const cfg = PLATFORMS[platform];
 
+  const { data: accounts = [] } = useQuery({
+    queryKey: ['accounts'],
+    queryFn: () => accountsAPI.getAll().then((r) => r.data),
+  });
+
+  const platformAccounts = accounts.filter(
+    (a) => a.platform === cfg.accountPlatform && a.isActive !== false && a.loginType !== 'automation'
+  );
+
   const usernameCount = usernamesText.split('\n').map((l) => l.trim()).filter(Boolean).length;
 
   const switchPlatform = (next) => {
     if (next === platform || running) return;
     setPlatform(next);
     setProfileOnly(false);
+    setAccountId('');
     setLogs([]);
     setResults([]);
     setSummary(null);
@@ -84,6 +96,11 @@ export default function IGPostScraperPage() {
       toast(`Dinormalisasi: ${usernames.length} username dari ${raw.length} baris`, { icon: 'ℹ️' });
     }
 
+    if (platform === 'instagram' && !profileOnly && !accountId) {
+      toast.error('Pilih akun Instagram terhubung (Business/Creator) untuk link postingan terbaru');
+      return;
+    }
+
     setRunning(true);
     setLogs([]);
     setResults([]);
@@ -93,6 +110,7 @@ export default function IGPostScraperPage() {
       const res = await cfg.run({
         usernames,
         profileOnly,
+        accountId: accountId || undefined,
       });
       const data = res.data;
       if (data.logs?.length) appendLogs(data.logs);
@@ -195,6 +213,31 @@ export default function IGPostScraperPage() {
                 {cfg.label} Post Scraper
               </div>
 
+              {platform === 'instagram' && !profileOnly && (
+                <div className="form-group">
+                  <label>
+                    Akun Instagram Anda (terhubung){' '}
+                    <span style={{ color: 'var(--error)', fontWeight: 600 }}>*</span>
+                  </label>
+                  <select
+                    className="input"
+                    value={accountId}
+                    onChange={(e) => setAccountId(e.target.value)}
+                    disabled={running}
+                  >
+                    <option value="">— Pilih akun Business/Creator —</option>
+                    {platformAccounts.map((a) => (
+                      <option key={a._id} value={a._id}>
+                        {a.label || a.platformUsername}
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+                    Wajib untuk ambil <b>link postingan terbaru</b> target (via Meta API). Hubungkan dulu di menu Akun &amp; User jika kosong.
+                  </p>
+                </div>
+              )}
+
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input
@@ -206,12 +249,12 @@ export default function IGPostScraperPage() {
                   <span>
                     Hanya link profil{' '}
                     <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
-                      (centang ini jika tidak perlu link postingan terbaru)
+                      (tanpa link postingan)
                     </span>
                   </span>
                 </label>
                 <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-                  Default: ambil <b>link postingan terbaru</b> per akun. Bisa paste username, @user, atau URL profil ({cfg.profileExample}).
+                  Username saja per baris (bukan URL posting). Contoh: <code>riskasiskasari</code>
                 </p>
               </div>
 
@@ -279,10 +322,10 @@ export default function IGPostScraperPage() {
             <div className="card">
               <div className="card-title" style={{ fontSize: 12 }}>📖 Cara Penggunaan</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                <div>1️⃣ Masukkan username atau URL profil (satu per baris)</div>
-                <div>2️⃣ Klik <b>Mulai Scraping</b> → dapat link <b>postingan terbaru</b> (`/p/` atau `/post/`)</div>
-                <div>3️⃣ Centang &quot;Hanya link profil&quot; jika cukup butuh halaman profil saja</div>
-                <div>4️⃣ <b>Export CSV</b> untuk simpan hasil</div>
+                <div>1️⃣ Hubungkan akun IG Business/Creator di <b>Akun &amp; User</b></div>
+                <div>2️⃣ Pilih akun tersebut di dropdown, isi username target</div>
+                <div>3️⃣ <b>Mulai Scraping</b> → link postingan terbaru (`/p/` atau `/reel/`)</div>
+                <div>4️⃣ <b>Export CSV</b></div>
               </div>
             </div>
           </div>
