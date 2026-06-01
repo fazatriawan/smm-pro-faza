@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeScraperUsernames } = require('../utils/scraperUsername');
 
 const client = axios.create({
   timeout: 25_000,
@@ -55,18 +56,16 @@ function profileOnlyResult(username) {
  * @param {(log: { type: string, message: string }) => void} onLog
  */
 async function threadsPostScraper(config, onLog = () => {}) {
-  const usernames = (config.usernames || [])
-    .map((u) => String(u).replace(/^@/, '').trim())
-    .filter(Boolean);
+  const usernames = normalizeScraperUsernames(config.usernames || [], 'threads');
 
   if (!usernames.length) {
-    throw new Error('Daftar username kosong');
+    throw new Error('Daftar username kosong (gunakan username atau URL profil Threads)');
   }
 
-  const scrapePosts = config.scrapePosts !== false && Boolean(config.accountId);
+  const scrapePosts = config.profileOnly !== true && config.scrapePosts !== false;
 
   if (!scrapePosts) {
-    onLog({ type: 'info', message: `📋 Mode tanpa login — generate ${usernames.length} link profil Threads` });
+    onLog({ type: 'info', message: `📋 Mode link profil — generate ${usernames.length} link Threads` });
     const results = usernames.map(profileOnlyResult);
     onLog({ type: 'success', message: `✅ Selesai — ${results.length} link profil digenerate` });
     return {

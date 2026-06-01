@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { normalizeScraperUsernames } = require('../utils/scraperUsername');
 
 const client = axios.create({
   timeout: 25_000,
@@ -48,7 +49,7 @@ function extractLatestPostUrl(html) {
 }
 
 function profileOnlyResult(username) {
-  const profileUrl = `https://www.instagram.com/${username}/`;
+  const profileUrl = `https://www.instagram.com/${encodeURIComponent(username)}/`;
   return {
     username,
     profile_url: profileUrl,
@@ -63,18 +64,16 @@ function profileOnlyResult(username) {
  * @param {(log: { type: string, message: string }) => void} onLog
  */
 async function instagramPostScraper(config, onLog = () => {}) {
-  const usernames = (config.usernames || [])
-    .map((u) => String(u).replace(/^@/, '').trim())
-    .filter(Boolean);
+  const usernames = normalizeScraperUsernames(config.usernames || [], 'instagram');
 
   if (!usernames.length) {
-    throw new Error('Daftar username kosong');
+    throw new Error('Daftar username kosong (gunakan username atau URL profil Instagram)');
   }
 
-  const scrapePosts = config.scrapePosts !== false && Boolean(config.accountId);
+  const scrapePosts = config.profileOnly !== true && config.scrapePosts !== false;
 
   if (!scrapePosts) {
-    onLog({ type: 'info', message: `📋 Mode tanpa login — generate ${usernames.length} link profil` });
+    onLog({ type: 'info', message: `📋 Mode link profil — generate ${usernames.length} link` });
     const results = usernames.map(profileOnlyResult);
     onLog({ type: 'success', message: `✅ Selesai — ${results.length} link profil digenerate` });
     return {
@@ -92,7 +91,7 @@ async function instagramPostScraper(config, onLog = () => {}) {
 
   for (let i = 0; i < usernames.length; i++) {
     const username = usernames[i];
-    const profileUrl = `https://www.instagram.com/${username}/`;
+    const profileUrl = `https://www.instagram.com/${encodeURIComponent(username)}/`;
     onLog({ type: 'info', message: `[${i + 1}/${usernames.length}] 🔍 Mengunjungi @${username}...` });
 
     try {

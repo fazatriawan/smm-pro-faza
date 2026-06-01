@@ -1,6 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { accountsAPI, scraperAPI } from '../api';
+import { scraperAPI } from '../api';
 import { Link2, Upload, Trash2, Download, ExternalLink, Loader2, MessageCircle, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -42,7 +41,7 @@ function isClickable(r) {
 
 export default function IGPostScraperPage() {
   const [platform, setPlatform] = useState('instagram');
-  const [accountId, setAccountId] = useState('');
+  const [profileOnly, setProfileOnly] = useState(false);
   const [usernamesText, setUsernamesText] = useState('');
   const [logs, setLogs] = useState([]);
   const [results, setResults] = useState([]);
@@ -52,20 +51,12 @@ export default function IGPostScraperPage() {
 
   const cfg = PLATFORMS[platform];
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ['accounts'],
-    queryFn: () => accountsAPI.getAll().then((r) => r.data),
-  });
-
-  const platformAccounts = accounts.filter(
-    (a) => a.platform === cfg.accountPlatform && a.isActive !== false
-  );
   const usernameCount = usernamesText.split('\n').map((l) => l.trim()).filter(Boolean).length;
 
   const switchPlatform = (next) => {
     if (next === platform || running) return;
     setPlatform(next);
-    setAccountId('');
+    setProfileOnly(false);
     setLogs([]);
     setResults([]);
     setSummary(null);
@@ -96,7 +87,7 @@ export default function IGPostScraperPage() {
     try {
       const res = await cfg.run({
         usernames,
-        accountId: accountId || undefined,
+        profileOnly,
       });
       const data = res.data;
       if (data.logs?.length) appendLogs(data.logs);
@@ -200,27 +191,22 @@ export default function IGPostScraperPage() {
               </div>
 
               <div className="form-group">
-                <label>
-                  Pilih Akun {cfg.label}{' '}
-                  <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
-                    (opsional — untuk ambil link postingan terbaru)
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={profileOnly}
+                    onChange={(e) => setProfileOnly(e.target.checked)}
+                    disabled={running}
+                  />
+                  <span>
+                    Hanya link profil{' '}
+                    <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>
+                      (centang ini jika tidak perlu link postingan terbaru)
+                    </span>
                   </span>
                 </label>
-                <select
-                  className="input"
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                  disabled={running}
-                >
-                  <option value="">— Tanpa login (hanya link profil) —</option>
-                  {platformAccounts.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {a.label || a.platformUsername}
-                    </option>
-                  ))}
-                </select>
                 <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-                  Tanpa akun → link profil ({cfg.profileExample}). Dengan akun → scrape link postingan terbaru.
+                  Default: ambil <b>link postingan terbaru</b> per akun. Bisa paste username, @user, atau URL profil ({cfg.profileExample}).
                 </p>
               </div>
 
@@ -234,7 +220,7 @@ export default function IGPostScraperPage() {
                 <textarea
                   className="input"
                   rows={10}
-                  placeholder={'username1\nusername2\n@username3'}
+                  placeholder={'username1\n@username2\nhttps://www.instagram.com/username3/'}
                   value={usernamesText}
                   onChange={(e) => setUsernamesText(e.target.value)}
                   disabled={running}
@@ -288,10 +274,10 @@ export default function IGPostScraperPage() {
             <div className="card">
               <div className="card-title" style={{ fontSize: 12 }}>📖 Cara Penggunaan</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
-                <div>1️⃣ Pilih platform <b>{cfg.label}</b>, masukkan daftar username</div>
-                <div>2️⃣ <b>Tanpa akun</b> → generate link profil</div>
-                <div>3️⃣ <b>Dengan akun</b> → scrape link postingan terbaru tiap profil</div>
-                <div>4️⃣ Hasil di tabel → <b>Export CSV</b></div>
+                <div>1️⃣ Masukkan username atau URL profil (satu per baris)</div>
+                <div>2️⃣ Klik <b>Mulai Scraping</b> → dapat link <b>postingan terbaru</b> (`/p/` atau `/post/`)</div>
+                <div>3️⃣ Centang &quot;Hanya link profil&quot; jika cukup butuh halaman profil saja</div>
+                <div>4️⃣ <b>Export CSV</b> untuk simpan hasil</div>
               </div>
             </div>
           </div>

@@ -1,6 +1,5 @@
 const router = require('express').Router();
 const { protect } = require('../middleware/auth');
-const { SocialAccount } = require('../models');
 const {
   instagramPostScraper,
   resultsToCsv: instagramResultsToCsv,
@@ -10,9 +9,11 @@ const {
   resultsToCsv: threadsResultsToCsv,
 } = require('../services/threadsPostScraperService');
 
+const { normalizeScraperUsernames } = require('../utils/scraperUsername');
+
 const MAX_USERNAMES = 200;
 
-function parseUsernames(raw) {
+function parseLines(raw) {
   return Array.isArray(raw)
     ? raw
     : String(raw || '')
@@ -21,40 +22,25 @@ function parseUsernames(raw) {
         .filter(Boolean);
 }
 
-async function validateAccount(req, accountId, platform) {
-  if (!accountId) return null;
-  const account = await SocialAccount.findOne({
-    _id: accountId,
-    isActive: true,
-    platform,
-  });
-  if (!account) return { error: 404, message: `Akun ${platform} tidak ditemukan` };
-  if (req.user.role !== 'admin' && String(account.owner) !== String(req.user._id)) {
-    return { error: 403, message: 'Forbidden' };
-  }
-  return account;
-}
-
 // POST /api/scraper/instagram — ambil link profil / postingan terbaru
 router.post('/instagram', protect, async (req, res) => {
   try {
-    const usernames = parseUsernames(req.body.usernames);
+    const lines = parseLines(req.body.usernames);
+    const usernames = normalizeScraperUsernames(lines, 'instagram');
     if (!usernames.length) {
-      return res.status(400).json({ message: 'Masukkan minimal 1 username' });
+      return res.status(400).json({
+        message: 'Masukkan minimal 1 username atau URL profil Instagram yang valid',
+      });
     }
     if (usernames.length > MAX_USERNAMES) {
       return res.status(400).json({ message: `Maksimal ${MAX_USERNAMES} username per request` });
     }
 
-    const accountId = req.body.accountId || null;
-    const check = await validateAccount(req, accountId, 'instagram');
-    if (check?.error) return res.status(check.error).json({ message: check.message });
-
     const logs = [];
     const onLog = (log) => logs.push({ ...log, at: new Date().toISOString() });
 
     const result = await instagramPostScraper(
-      { usernames, accountId, scrapePosts: Boolean(accountId) },
+      { usernames, profileOnly: req.body.profileOnly === true },
       onLog
     );
 
@@ -67,23 +53,22 @@ router.post('/instagram', protect, async (req, res) => {
 // POST /api/scraper/threads — ambil link profil / postingan terbaru Threads
 router.post('/threads', protect, async (req, res) => {
   try {
-    const usernames = parseUsernames(req.body.usernames);
+    const lines = parseLines(req.body.usernames);
+    const usernames = normalizeScraperUsernames(lines, 'threads');
     if (!usernames.length) {
-      return res.status(400).json({ message: 'Masukkan minimal 1 username' });
+      return res.status(400).json({
+        message: 'Masukkan minimal 1 username atau URL profil Threads yang valid',
+      });
     }
     if (usernames.length > MAX_USERNAMES) {
       return res.status(400).json({ message: `Maksimal ${MAX_USERNAMES} username per request` });
     }
 
-    const accountId = req.body.accountId || null;
-    const check = await validateAccount(req, accountId, 'threads');
-    if (check?.error) return res.status(check.error).json({ message: check.message });
-
     const logs = [];
     const onLog = (log) => logs.push({ ...log, at: new Date().toISOString() });
 
     const result = await threadsPostScraper(
-      { usernames, accountId, scrapePosts: Boolean(accountId) },
+      { usernames, profileOnly: req.body.profileOnly === true },
       onLog
     );
 
