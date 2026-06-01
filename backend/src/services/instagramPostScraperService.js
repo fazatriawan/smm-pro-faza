@@ -111,6 +111,40 @@ async function fetchLatestPostViaHtml(username) {
   return { empty: true };
 }
 
+function isSameIgUser(igAccount, username) {
+  const a = String(igAccount?.platformUsername || '').replace(/^@/, '').toLowerCase();
+  const b = String(username || '').replace(/^@/, '').toLowerCase();
+  return Boolean(a && b && a === b);
+}
+
+/**
+ * Post terbaru akun sendiri (target = akun yang dipilih di dropdown).
+ */
+async function fetchLatestPostViaOwnMedia(igAccount) {
+  const token = igAccount?.accessToken;
+  const igUserId = igAccount?.platformUserId;
+  if (!token || !igUserId) return { graphError: 'Token akun tidak ada' };
+
+  const res = await axios.get(`https://graph.instagram.com/${igUserId}/media`, {
+    params: {
+      fields: 'permalink,timestamp,media_type',
+      access_token: token,
+      limit: 1,
+    },
+    validateStatus: () => true,
+    timeout: 25_000,
+  });
+
+  if (res.status !== 200) {
+    const msg = res.data?.error?.message || `Media API HTTP ${res.status}`;
+    return { graphError: msg };
+  }
+
+  const item = res.data?.data?.[0];
+  if (item?.permalink) return { url: item.permalink, via: 'graph-media' };
+  return { empty: true };
+}
+
 /**
  * Meta Graph API — butuh akun IG Business/Creator terhubung di SMM Pro.
  * @param {{ platformUserId: string, accessToken: string }} igAccount
@@ -151,15 +185,28 @@ async function fetchLatestPostViaGraph(igAccount, targetUsername) {
  * @param {{ platformUserId: string, accessToken: string } | null} [igAccount]
  */
 async function resolveInstagramLatestPost(username, igAccount = null) {
+  let lastGraphError = '';
+
+  if (igAccount && isSameIgUser(igAccount, username)) {
+    try {
+      const own = await fetchLatestPostViaOwnMedia(igAccount);
+      if (own?.url) return own;
+      if (own?.graphError) lastGraphError = own.graphError;
+      if (own?.empty) return { ...own, graphError: lastGraphError };
+    } catch (err) {
+      lastGraphError = err.message;
+    }
+  }
+
   if (igAccount) {
     try {
       const graph = await fetchLatestPostViaGraph(igAccount, username);
-      if (graph?.url || graph?.private || graph?.notFound || graph?.empty) return graph;
-      if (graph?.graphError) {
-        /* lanjut ke metode publik */
-      }
-    } catch {
-      /* fallback */
+      if (graph?.url) return graph;
+      if (graph?.graphError) lastGraphError = graph.graphError;
+      if (graph?.private || graph?.notFound) return graph;
+      if (graph?.empty) return { ...graph, graphError: lastGraphError };
+    } catch (err) {
+      lastGraphError = err.message;
     }
   }
 
@@ -182,7 +229,11 @@ async function resolveInstagramLatestPost(username, igAccount = null) {
     }
   }
 
-  return { ...api, needAccount: !igAccount && api.empty };
+  return {
+    ...api,
+    needAccount: !igAccount && api.empty,
+    graphError: lastGraphError || undefined,
+  };
 }
 
 function profileOnlyResult(username) {
@@ -283,7 +334,9 @@ async function instagramPostScraper(config, onLog = () => {}) {
     } else if (hit.empty || hit.needAccount) {
       const hint = hit.needAccount
         ? ' — pilih akun Instagram terhubung (Business/Creator)'
-        : ' — tidak ada postingan publik';
+        : hit.graphError
+          ? ` — ${hit.graphError}`
+          : ' — tidak ada postingan / cek ejaan username';
       onLog({ type: 'warn', message: `⚠️ @${username}${hint}` });
       results.push({
         username,
@@ -322,7 +375,7 @@ async function instagramPostScraper(config, onLog = () => {}) {
     success: true,
     results,
     summary: { total: usernames.length, success, failed },
-    scraperVersion: 'instagram-graph-v3',
+    scraperVersion: 'instagram-graph-v4',
   };
 }
 

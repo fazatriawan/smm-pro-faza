@@ -237,7 +237,7 @@ export default function IGPostScraperPage() {
                     ))}
                   </select>
                   <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-                    Wajib untuk ambil <b>link postingan terbaru</b> target (via Meta API). Hubungkan dulu di menu Akun &amp; User jika kosong.
+                    Akun di atas = <b>akun Anda</b> (untuk akses API). Kotak bawah = <b>username orang lain</b> yang mau di-scrape (bisa beda dari akun Anda).
                   </p>
                 </div>
               )}
