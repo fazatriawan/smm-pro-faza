@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { accountsAPI, scraperAPI } from '../api';
-import { Link2, Upload, Trash2, Download, ExternalLink, Loader2, Instagram, MessageCircle } from 'lucide-react';
+import { Link2, Upload, Trash2, Download, ExternalLink, Loader2, MessageCircle, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const STATUS_BADGE = {
@@ -17,7 +17,7 @@ const PLATFORMS = {
   instagram: {
     key: 'instagram',
     label: 'Instagram',
-    icon: Instagram,
+    icon: MessageCircle,
     accountPlatform: 'instagram',
     run: (data) => scraperAPI.runInstagram(data),
     export: (results) => scraperAPI.exportInstagram(results),
@@ -27,7 +27,7 @@ const PLATFORMS = {
   threads: {
     key: 'threads',
     label: 'Threads',
-    icon: MessageCircle,
+    icon: Hash,
     accountPlatform: 'threads',
     run: (data) => scraperAPI.runThreads(data),
     export: (results) => scraperAPI.exportThreads(results),
