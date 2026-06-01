@@ -69,10 +69,12 @@ async function fetchLatestPostViaApi(username) {
   const url = pickFirstShortcodeFromJson(user);
   if (url) return { url };
 
-  const count = user.edge_owner_to_timeline_media?.count ?? 0;
-  if (count === 0) return { empty: true };
+  const timeline = user.edge_owner_to_timeline_media;
+  const count = timeline?.count ?? 0;
+  const edgeLen = timeline?.edges?.length ?? 0;
+  if (count > 0 || edgeLen > 0) return { needHtmlFallback: true };
 
-  return { blocked: true };
+  return { empty: true };
 }
 
 function extractLatestPostUrlFromHtml(html) {
@@ -113,17 +115,26 @@ async function fetchLatestPostViaHtml(username) {
  * @param {string} username
  */
 async function resolveInstagramLatestPost(username) {
+  let api = {};
   try {
-    const api = await fetchLatestPostViaApi(username);
-    if (api.url || api.private || api.notFound || api.empty) return api;
+    api = await fetchLatestPostViaApi(username);
+    if (api.url || api.private || api.notFound) return api;
+    if (api.empty && !api.needHtmlFallback) return api;
   } catch {
-    /* fallback HTML */
+    api = { needHtmlFallback: true };
   }
-  try {
-    return await fetchLatestPostViaHtml(username);
-  } catch (err) {
-    return { error: err.message };
+
+  if (api.needHtmlFallback || api.blocked) {
+    try {
+      const html = await fetchLatestPostViaHtml(username);
+      if (html.url || html.private || html.notFound || html.empty) return html;
+      return { blocked: true };
+    } catch (err) {
+      return { error: err.message };
+    }
   }
+
+  return api;
 }
 
 function profileOnlyResult(username) {
@@ -196,8 +207,20 @@ async function instagramPostScraper(config, onLog = () => {}) {
         status: 'success',
       });
       success++;
+    } else if (hit.blocked) {
+      onLog({
+        type: 'warn',
+        message: `⚠️ @${username} — Instagram membatasi server (coba username saja / deploy backend terbaru)`,
+      });
+      results.push({
+        username,
+        profile_url: profileUrl,
+        latest_post: profileUrl,
+        status: 'profile_only',
+      });
+      failed++;
     } else if (hit.empty) {
-      onLog({ type: 'warn', message: `⚠️ @${username} — belum ada postingan` });
+      onLog({ type: 'warn', message: `⚠️ @${username} — profil tidak punya postingan publik` });
       results.push({
         username,
         profile_url: profileUrl,

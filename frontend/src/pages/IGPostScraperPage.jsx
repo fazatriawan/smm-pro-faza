@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { scraperAPI } from '../api';
+import { normalizeScraperLines } from '../utils/scraperUsername';
 import { Link2, Upload, Trash2, Download, ExternalLink, Loader2, MessageCircle, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -73,10 +74,14 @@ export default function IGPostScraperPage() {
   };
 
   const runScraper = async () => {
-    const usernames = usernamesText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const raw = usernamesText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const usernames = normalizeScraperLines(raw, platform);
     if (!usernames.length) {
-      toast.error('Masukkan minimal 1 username target');
+      toast.error('Masukkan username valid (bukan URL posting /p/ atau /reel/)');
       return;
+    }
+    if (usernames.length < raw.length) {
+      toast(`Dinormalisasi: ${usernames.length} username dari ${raw.length} baris`, { icon: 'ℹ️' });
     }
 
     setRunning(true);
