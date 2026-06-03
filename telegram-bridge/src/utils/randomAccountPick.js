@@ -150,7 +150,9 @@ export function parseRandomPickCommand(text) {
  */
 export function looksLikeRandomPick(text) {
   if (!text || text.length > 400) return false;
-  if (/^random\b/i.test(text.trim()) || /^🎲/u.test(text.trim())) return true;
+  const raw = text.trim();
+  if (/@\w/.test(raw)) return false;
+  if (/^random\b/i.test(raw) || /^🎲/u.test(raw)) return true;
   return parseRandomPickCommand(text) !== null;
 }
 

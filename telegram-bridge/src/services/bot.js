@@ -57,8 +57,12 @@ import {
   groupPendingByPostId,
   cancelPendingPostIds,
   formatPendingReport,
-  formatCancelResults,
+  replyCancelResults,
+  buildOutstandCancelSupportDraft,
   isPostIdCancelled,
+  parseStopCommandArgs,
+  markPostIdsStoppedLocally,
+  formatLocalStopMarkResults,
 } from './pendingControl.js';
 import {
   markPostIdsKnown,
@@ -117,6 +121,14 @@ import {
   getNetworkShortLabel,
   fillShortageFromExcludedPool,
 } from '../utils/randomAccountPick.js';
+import {
+  looksLikeNamedPick,
+  parseNamedPickCommand,
+  resolveNamedPick,
+  buildNamedPickLabel,
+  formatNamedPickSummary,
+  formatNamedPickHelp,
+} from '../utils/namedAccountPick.js';
 import {
   annotateAccountsWithDayAttempts,
   buildDuplicateAccountSummary,
@@ -359,17 +371,103 @@ function scheduleKeyboard() {
 }
 
 function tonePickerKeyboard() {
-  const rows = Object.entries(CAPTION_TONES).map(([key, t]) => [
-    Markup.button.callback(t.label, `tone:${key}`),
-  ]);
-  rows.push([Markup.button.callback('⏭ Lewati (default)', 'tone:skip')]);
+  const rows = [
+    [Markup.button.callback('✍️ Caption sendiri (tanpa AI)', 'tone:manual')],
+    ...Object.entries(CAPTION_TONES).map(([key, t]) => [
+      Markup.button.callback(t.label, `tone:${key}`),
+    ]),
+    [Markup.button.callback('⏭ Judul folder saja (tanpa AI)', 'tone:skip')],
+  ];
   return Markup.inlineKeyboard(rows);
+}
+
+/**
+ * @param {Error | { message?: string }} err
+ */
+function isGeminiUnavailableError(err) {
+  const raw = String(err?.message || err || '').toLowerCase();
+  return (
+    /403|401|forbidden|dunning|api key|gemini|generativelanguage|quota|resource_exhausted/i.test(
+      raw
+    )
+  );
+}
+
+/**
+ * @param {import('telegraf').Context} ctx
+ * @param {string} [reason]
+ */
+async function promptManualCaption(ctx, reason) {
+  updateSession(ctx.chat.id, { step: 'awaiting_manual_caption', captionTone: undefined });
+  let msg =
+    '✍️ *Caption manual* (tanpa Gemini)\n\n' +
+    'Kirim *satu pesan* teks caption. Bot akan menyesuaikan panjang per platform (IG/Threads/FB/YT).\n\n' +
+    '_Setelah preview, masih bisa *Edit Caption* sebelum Send Now._';
+  if (reason) {
+    msg = `${reason}\n\n${msg}`;
+  }
+  await safeReply(ctx, msg, { parse_mode: 'Markdown' });
+}
+
+/**
+ * @param {import('telegraf').Context} ctx
+ * @param {string} text
+ * @param {string[]} accountIds
+ * @param {string} label
+ * @param {string[]} networks
+ */
+async function applyManualCaptionAndShowPreview(ctx, text, accountIds, label, networks) {
+  const session = getSession(ctx.chat.id);
+  const caption = String(text || '').trim();
+  if (!caption) {
+    await promptManualCaption(ctx, '❌ Caption kosong.');
+    return;
+  }
+
+  const required = session.missionBriefing?.requiredHashtags || [];
+  const captionsByNetwork = buildCaptionsByNetwork(caption, networks, required);
+  const hasYoutube = networks.includes('youtube');
+  const youtubeFields = hasYoutube
+    ? buildYoutubePostFields(captionsByNetwork.youtube || caption)
+    : undefined;
+
+  updateSession(ctx.chat.id, {
+    caption,
+    captionsByNetwork,
+    youtubeFields: youtubeFields || undefined,
+    captionTone: undefined,
+    step: 'ready',
+  });
+  await showReadyPreview(ctx, accountIds, label, networks);
+}
+
+/**
+ * Caption sederhana tanpa panggilan Gemini (folder / misi).
+ * @param {import('telegraf').Context} ctx
+ * @param {string[]} accountIds
+ * @param {string} label
+ * @param {string[]} networks
+ */
+async function applyDefaultCaptionWithoutAi(ctx, accountIds, label, networks) {
+  const session = getSession(ctx.chat.id);
+  const theme =
+    [session.folderName, session.driveRootName].filter(Boolean).join(' — ') ||
+    'Konten';
+  let base = `Update — ${theme}`;
+  const hook = session.missionBriefing?.openingHook;
+  if (hook && String(hook).trim()) {
+    base = String(hook).trim().slice(0, 400);
+  }
+  await applyManualCaptionAndShowPreview(ctx, base, accountIds, label, networks);
 }
 
 async function showTonePicker(ctx, label) {
   await safeReply(
     ctx,
-    `🎨 *Gaya caption* untuk *${escapeMarkdown(label)}*\n\nPilih tone AI (bisa diubah lagi nanti):`,
+    `🎨 *Caption* untuk *${escapeMarkdown(label)}*\n\n` +
+      `• *Caption sendiri* — ketik teks (Gemini tidak dipakai)\n` +
+      `• *Judul folder saja* — caption singkat otomatis tanpa AI\n` +
+      `• Tombol lain — buat caption pakai Gemini (butuh API aktif)`,
     { parse_mode: 'Markdown', ...tonePickerKeyboard() }
   );
 }
@@ -392,7 +490,9 @@ async function showReadyPreview(ctx, accountIds, label, networks) {
   let preview =
     `✅ *${escapeMarkdown(label)}* — ${accountIds.length} akun · ${networks.length} platform\n`;
   if (session.captionTone) {
-    preview += `Gaya: ${escapeMarkdown(getToneLabel(session.captionTone))}\n`;
+    preview += `Gaya AI: ${escapeMarkdown(getToneLabel(session.captionTone))}\n`;
+  } else {
+    preview += `_Caption manual / tanpa AI_\n`;
   }
 
   // Daftar konten yang akan ter-publish — biar user bisa lihat dan
@@ -450,37 +550,45 @@ async function generateCaptionAndShowPreview(ctx, accountIds, label, networks) {
     .filter((n, i, arr) => arr.indexOf(n) === i)
     .join(' — ') || 'Konten';
 
-  const { baseCaption, captionsByNetwork, youtubeFields } =
-    await generateCaptionsByNetwork({
-      folderName: themeLabel,
-      mediaFiles: session.mediaFiles,
-      targetNetworks: networks,
-      tone: session.captionTone,
-      missionBriefing: session.missionBriefing,
-    });
+  try {
+    const { baseCaption, captionsByNetwork, youtubeFields } =
+      await generateCaptionsByNetwork({
+        folderName: themeLabel,
+        mediaFiles: session.mediaFiles,
+        targetNetworks: networks,
+        tone: session.captionTone,
+        missionBriefing: session.missionBriefing,
+      });
 
-  const caption = baseCaption;
+    const caption = baseCaption;
 
-  const onlyImages = session.mediaFiles.every((f) =>
-    f.mimeType?.startsWith('image/')
-  );
-  const reelTargets = networks.filter((n) => isImageToVideoNetwork(n));
-  if (reelTargets.length && onlyImages && !env.imageToVideoAudioPath) {
-    await ctx.reply(
-      env.imageToVideoAllowSilent
-        ? `ℹ️ ${reelTargets.map((n) => NETWORK_LABELS[n] || n).join(', ')}: gambar→video *tanpa musik*.`
-        : `⚠️ Gambar→video butuh MP3 di \`assets/audio/\`.`,
-      { parse_mode: 'Markdown' }
+    const onlyImages = session.mediaFiles.every((f) =>
+      f.mimeType?.startsWith('image/')
     );
-  }
+    const reelTargets = networks.filter((n) => isImageToVideoNetwork(n));
+    if (reelTargets.length && onlyImages && !env.imageToVideoAudioPath) {
+      await ctx.reply(
+        env.imageToVideoAllowSilent
+          ? `ℹ️ ${reelTargets.map((n) => NETWORK_LABELS[n] || n).join(', ')}: gambar→video *tanpa musik*.`
+          : `⚠️ Gambar→video butuh MP3 di \`assets/audio/\`.`,
+        { parse_mode: 'Markdown' }
+      );
+    }
 
-  updateSession(ctx.chat.id, {
-    caption,
-    captionsByNetwork,
-    youtubeFields: youtubeFields || undefined,
-    step: 'ready',
-  });
-  await showReadyPreview(ctx, accountIds, label, networks);
+    updateSession(ctx.chat.id, {
+      caption,
+      captionsByNetwork,
+      youtubeFields: youtubeFields || undefined,
+      step: 'ready',
+    });
+    await showReadyPreview(ctx, accountIds, label, networks);
+  } catch (err) {
+    log.warn({ err: err.message }, `[Bot] Gemini caption: ${err.message}`);
+    const hint = isGeminiUnavailableError(err)
+      ? '⚠️ *Gemini tidak bisa dipakai* (API/billing).'
+      : `⚠️ Caption AI gagal: ${escapeMarkdown(String(err.message || err).slice(0, 120))}`;
+    await promptManualCaption(ctx, hint);
+  }
 }
 
 function groupAccountsByNetwork(accounts) {
@@ -728,6 +836,64 @@ async function handleRandomAccountPick(ctx, text) {
 
   updateSession(ctx.chat.id, { step: 'selecting_targets' });
   await finalizeTargetSelection(ctx, result.accountIds, result.label);
+}
+
+async function handleNamedAccountPick(ctx, text) {
+  const parsed = parseNamedPickCommand(text);
+  if (!parsed) {
+    await safeReply(ctx, formatNamedPickHelp(), { parse_mode: 'Markdown' });
+    return;
+  }
+
+  const session = getSession(ctx.chat.id);
+  const stale = getStaleMediaReason(session);
+  if (stale && stale.reason !== 'no-media') {
+    await safeReply(ctx, formatStaleMediaNotice(stale, session), {
+      parse_mode: 'Markdown',
+    });
+    clearSessionContent(ctx.chat.id);
+    updateSession(ctx.chat.id, { step: 'awaiting_media' });
+    return;
+  }
+
+  if (!session.mediaFiles?.length) {
+    await safeReply(
+      ctx,
+      '❌ Belum ada media di sesi.\n\n' +
+        'Ketik */publish* dulu, lalu kirim link folder Drive *hari ini* (atau foto/video langsung).',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  await safeReply(ctx, '⏳ Mencocokkan akun by name…', { parse_mode: 'Markdown' });
+
+  const accounts = await listSocialAccounts();
+  const result = resolveNamedPick(accounts, parsed);
+  const label = buildNamedPickLabel(result.picked);
+
+  if (!result.accountIds.length) {
+    let msg =
+      '❌ Tidak ada akun yang cocok.\n\n' +
+      formatNamedPickSummary(result, label, { force: parsed.force });
+    if (!result.notFound.length && !result.ambiguous.length) {
+      msg += '\n\n' + formatNamedPickHelp();
+    }
+    await safeReply(ctx, msg, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  await safeReply(
+    ctx,
+    formatNamedPickSummary(result, label, { force: parsed.force }),
+    { parse_mode: 'Markdown' }
+  );
+
+  updateSession(ctx.chat.id, {
+    step: 'selecting_targets',
+    pickForce: parsed.force || undefined,
+  });
+  await finalizeTargetSelection(ctx, result.accountIds, label);
 }
 
 /**
@@ -2671,25 +2837,69 @@ async function handleTextMessage(ctx) {
     (session.step === 'selecting_targets' ||
       session.step === 'awaiting_random_counts') &&
     session.mediaFiles?.length &&
+    looksLikeNamedPick(text)
+  ) {
+    await handleNamedAccountPick(ctx, text);
+    return;
+  }
+
+  if (
+    (session.step === 'selecting_targets' ||
+      session.step === 'awaiting_random_counts') &&
+    session.mediaFiles?.length &&
     looksLikeRandomPick(text)
   ) {
     await handleRandomAccountPick(ctx, text);
     return;
   }
 
+  if (session.step === 'awaiting_manual_caption') {
+    if (!session.selectedAccountIds?.length) {
+      await ctx.reply('Sesi kadaluarsa. Ketik /publish lagi.');
+      return;
+    }
+    const accounts = await listSocialAccounts();
+    const selected = accounts.filter((a) =>
+      session.selectedAccountIds.includes(a.id)
+    );
+    const networks = [
+      ...new Set(
+        selected.map((a) => (a.network || '').toLowerCase()).filter(Boolean)
+      ),
+    ];
+    await applyManualCaptionAndShowPreview(
+      ctx,
+      text,
+      session.selectedAccountIds,
+      session.targetLabel || 'Target',
+      networks
+    );
+    return;
+  }
+
   if (session.step === 'awaiting_caption_edit') {
-    updateSession(ctx.chat.id, { caption: text, captionsByNetwork: undefined });
-    if (session.selectedAccountIds?.length) {
-      await finalizeTargetSelection(
-        ctx,
-        session.selectedAccountIds,
-        session.targetLabel || 'Target'
-      );
-    } else {
+    if (!session.selectedAccountIds?.length) {
       updateSession(ctx.chat.id, { step: 'selecting_targets', caption: text });
       await ctx.reply('Caption disimpan. Pilih target platform:');
       await showTargetPicker(ctx);
+      return;
     }
+    const accounts = await listSocialAccounts();
+    const selected = accounts.filter((a) =>
+      session.selectedAccountIds.includes(a.id)
+    );
+    const networks = [
+      ...new Set(
+        selected.map((a) => (a.network || '').toLowerCase()).filter(Boolean)
+      ),
+    ];
+    await applyManualCaptionAndShowPreview(
+      ctx,
+      text,
+      session.selectedAccountIds,
+      session.targetLabel || 'Target',
+      networks
+    );
     return;
   }
 
@@ -2784,9 +2994,28 @@ export function createBot() {
 
   bot.command('status', async (ctx) => {
     try {
+      const args = (ctx.message.text || '')
+        .replace(/^\/status(@\w+)?\s*/i, '')
+        .trim();
+
+      if (args) {
+        const postId = args.split(/[\s,]+/)[0];
+        await ctx.reply('⏳ Mengecek status post…');
+        try {
+          const post = await getPost(postId);
+          const summary = summarizePublishResults([post]);
+          updateSession(ctx.chat.id, { step: 'idle' });
+          await replyTelegramLong(ctx, formatTelegramPublishReport(summary, postId));
+        } catch (err) {
+          await ctx.reply(`❌ ${err.message}`);
+        }
+        return;
+      }
+
       updateSession(ctx.chat.id, { step: 'awaiting_status_id' });
       await ctx.reply(
         '🔍 Kirim *Post ID* Outstand (satu ID per pesan).\n' +
+          'Bisa juga langsung: `/status ghy7x`.\n' +
           'ID ada di pesan setelah publish.',
         { parse_mode: 'Markdown', ...mainMenuKeyboard() }
       );
@@ -2796,7 +3025,13 @@ export function createBot() {
   });
 
   bot.command('ping', async (ctx) => {
-    await ctx.reply(`🏓 Bot online · tab ${getDailyTabName()} · WIB`);
+    const hasStopMark =
+      typeof parseStopCommandArgs === 'function' &&
+      typeof markPostIdsStoppedLocally === 'function';
+    await ctx.reply(
+      `🏓 Bot online · tab ${getDailyTabName()} · WIB` +
+        (hasStopMark ? '\n✅ stop v2 (ID case-sensitive + /stop mark)' : '')
+    );
   });
 
   bot.command('kuota', async (ctx) => {
@@ -3115,26 +3350,19 @@ export function createBot() {
   });
 
   bot.command('stop', async (ctx) => {
-    // Telegram kadang kirim multi-baris (user paste 2 command sekaligus).
-    // Ambil baris pertama saja supaya token `/stop` di baris berikutnya
-    // tidak dianggap "platform".
     const firstLine = String(ctx.message.text || '').split(/\r?\n/)[0] || '';
-    const args = firstLine
-      .replace(/^\/stop(@\w+)?\s*/i, '')
-      .trim()
-      .toLowerCase();
-
-    const stuckOnly = /\bstuck\b/.test(args);
-    const doCancel = /\b(yes|ya|kirim|confirm|batalkan)\b/.test(args);
-    const daysMatch = args.match(/\b(\d+)\s*d\b/);
-    const daysBack = daysMatch ? Math.min(14, Math.max(1, Number(daysMatch[1]) || 0)) : 0;
+    const rawArgs = firstLine.replace(/^\/stop(@\w+)?\s*/i, '').trim();
+    const parsed = parseStopCommandArgs(rawArgs);
+    const daysBack = parsed.daysMatch
+      ? Math.min(14, Math.max(1, Number(parsed.daysMatch[1]) || 0))
+      : 0;
 
     let network = null;
-    if (!stuckOnly) {
-      const cleaned = args
+    if (!parsed.stuckOnly) {
+      const cleaned = parsed.rest
         .replace(/\b(\d+)\s*d\b/g, ' ')
-        .replace(/\b(yes|ya|kirim|confirm|batalkan|stuck)\b/g, ' ')
-        .replace(/(^|\s)\/\w+(\s|$)/g, ' ') // abaikan token command lain (/stop, /start, dll)
+        .replace(/\b(yes|ya|kirim|confirm|batalkan|stuck|mark)\b/g, ' ')
+        .replace(/(^|\s)\/\w+(\s|$)/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       const { networks, invalid } = parseNetworkFilter(cleaned);
@@ -3142,17 +3370,34 @@ export function createBot() {
         await ctx.reply(
           `Platform tidak dikenal: ${invalid.join(', ')}\n\n` +
             'Contoh:\n' +
-            '• `/stop` — lihat antrian + cara batalkan\n' +
-            '• `/stop ig` — antrian Instagram saja\n' +
-            '• `/stop stuck` — pending >2 jam\n' +
-            '• `/stop ig ya` — batalkan batch IG pending\n' +
-            '• `/stop 4d ig` — scan 4 hari terakhir (IG)\n' +
-            '• `/stop 4d ig ya` — cancel pending 4 hari terakhir (IG)',
+            '• `/stop` — lihat antrian\n' +
+            '• `/stop ghy7x ya` — cancel Post ID (huruf besar/kecil ikuti asli)\n' +
+            '• `/stop mark ghy7x O39Av` — blok retry di bot (kalau API 500)\n' +
+            '• `/stop ig ya` · `/stop stuck ya`',
           { parse_mode: 'Markdown' }
         );
         return;
       }
       if (networks.length === 1) network = networks[0];
+    }
+
+    if (parsed.localMark && parsed.postIds.length) {
+      await safeReply(ctx, formatLocalStopMarkResults(parsed.postIds), {
+        parse_mode: 'Markdown',
+      });
+      clearPublishedTodayCache();
+      return;
+    }
+
+    if (parsed.doCancel && parsed.postIds.length) {
+      await ctx.reply(
+        `⏳ Membatalkan ${parsed.postIds.length} Post ID di Outstand…`
+      );
+      const results = await cancelPendingPostIds(parsed.postIds);
+      clearPublishedTodayCache();
+      await replyCancelResults(ctx, results);
+      await runSyncTodayCommand(ctx).catch(() => {});
+      return;
     }
 
     await ctx.reply('⏳ Mengecek antrian pending di Outstand…');
@@ -3162,11 +3407,11 @@ export function createBot() {
         ? await listPendingRecent({
             daysBack,
             network: network || undefined,
-            stuckOnly,
+            stuckOnly: parsed.stuckOnly,
           })
         : await listPendingToday({
             network: network || undefined,
-            stuckOnly,
+            stuckOnly: parsed.stuckOnly,
           });
 
       if (!data.pending.length) {
@@ -3174,19 +3419,22 @@ export function createBot() {
         return;
       }
 
-      if (!doCancel) {
-        const byPost = groupPendingByPostId(data);
-        const postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
-        updateSession(ctx.chat.id, { pendingStopPostIds: postIds });
+      const byPost = groupPendingByPostId(data);
+      const postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
+      updateSession(ctx.chat.id, { pendingStopPostIds: postIds });
 
+      if (!parsed.doCancel) {
         await safeReply(
           ctx,
           formatPendingReport(data) +
             (daysBack ? `\n\n🔎 Mode scan: *${daysBack} hari terakhir*` : '') +
             '\n\n⚠️ *Batalkan semua batch di atas?*\n' +
-            'Ketik `/stop ya` atau `/stop ig ya` (sesuai filter).\n' +
-            (daysBack ? `Atau: \`/stop ${daysBack}d ya\`` : '') +
-            '_Ini menghentikan antrian Outstand — post yang sudah live di IG tidak terhapus._',
+            '• Tombol di bawah, atau `/stop ya`\n' +
+            (postIds.length <= 4
+              ? `• Langsung: \`/stop ${postIds.join(' ')} ya\`\n`
+              : '') +
+            '• Kalau API 500: `/stop mark POST_ID` (blok retry di bot)\n' +
+            '_Post yang sudah live tidak terhapus dari profil._',
           {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
@@ -3198,14 +3446,9 @@ export function createBot() {
         return;
       }
 
-      const byPost = groupPendingByPostId(data);
-      const postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
       const results = await cancelPendingPostIds(postIds);
       clearPublishedTodayCache();
-
-      await safeReply(ctx, formatCancelResults(results), {
-        parse_mode: 'Markdown',
-      });
+      await replyCancelResults(ctx, results);
       await runSyncTodayCommand(ctx).catch(() => {});
     } catch (err) {
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
@@ -3215,15 +3458,27 @@ export function createBot() {
   bot.action('stop:confirm', async (ctx) => {
     await ack(ctx, 'Membatalkan…');
     const session = getSession(ctx.chat.id);
-    const postIds = session.pendingStopPostIds || [];
+    let postIds = session.pendingStopPostIds || [];
     if (!postIds.length) {
-      await ctx.reply('Daftar kosong. Ketik `/stop` dulu.');
+      try {
+        const data = await listPendingToday({});
+        const byPost = groupPendingByPostId(data);
+        postIds = [...byPost.keys()].filter((id) => id !== '(tanpa-id)');
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!postIds.length) {
+      await ctx.reply(
+        'Daftar kosong. Ketik `/stop` dulu, atau:\n`/stop ghy7x O39Av ya`',
+        { parse_mode: 'Markdown' }
+      );
       return;
     }
     const results = await cancelPendingPostIds(postIds);
     clearPublishedTodayCache();
     updateSession(ctx.chat.id, { pendingStopPostIds: undefined });
-    await safeReply(ctx, formatCancelResults(results), { parse_mode: 'Markdown' });
+    await replyCancelResults(ctx, results);
     await runSyncTodayCommand(ctx).catch(() => {});
   });
 
@@ -3231,6 +3486,34 @@ export function createBot() {
     await ack(ctx);
     updateSession(ctx.chat.id, { pendingStopPostIds: undefined });
     await ctx.reply('Dibatalkan. Antrian Outstand tidak diubah.');
+  });
+
+  bot.command('stopsupport', async (ctx) => {
+    const session = getSession(ctx.chat.id);
+    const args = (ctx.message.text || '')
+      .replace(/^\/stopsupport(@\w+)?\s*/i, '')
+      .trim();
+    const postIds = args
+      ? args.split(/[\s,]+/).filter(Boolean)
+      : session.pendingStopPostIds || [];
+    if (!postIds.length) {
+      await ctx.reply(
+        'Kirim Post ID:\n`/stopsupport ghy7x, O39Av`\n\n' +
+          'Atau jalankan `/stop` dulu lalu `/stopsupport` tanpa argumen.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+    await ctx.reply('⏳ Menyusun draft email support…');
+    try {
+      const draft = await buildOutstandCancelSupportDraft(postIds);
+      await replyTelegramLong(
+        ctx,
+        `📧 *Salin ke support@outstand.so:*\n\n\`\`\`\n${draft}\n\`\`\``
+      );
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`);
+    }
   });
 
   bot.command('antrian', async (ctx) => {
@@ -3608,6 +3891,29 @@ export function createBot() {
     await handleRandomAccountPick(ctx, args);
   });
 
+  bot.command('pick', async (ctx) => {
+    const session = getSession(ctx.chat.id);
+    const args = (ctx.message.text || '').replace(/^\/pick(?:@\w+)?\s*/i, '').trim();
+
+    if (!session.mediaFiles?.length) {
+      await ctx.reply(
+        'Kirim *media* dulu (link Drive / foto / broadcast misi), lalu tempel daftar akun:\n' +
+          '`/pick ig: user1, user2`\n' +
+          'atau multi-baris `fb: @Nama Lengkap` …',
+        { parse_mode: 'Markdown', ...mainMenuKeyboard() }
+      );
+      return;
+    }
+
+    if (!args) {
+      updateSession(ctx.chat.id, { step: 'selecting_targets' });
+      await ctx.reply(formatNamedPickHelp(), { parse_mode: 'Markdown' });
+      return;
+    }
+
+    await handleNamedAccountPick(ctx, args);
+  });
+
   bot.command('republish', async (ctx) => {
     const session = getSession(ctx.chat.id);
     const last = session.lastPublish || loadPublishArchive(ctx.chat.id);
@@ -3917,15 +4223,6 @@ export function createBot() {
       return;
     }
 
-    if (toneKey !== 'skip' && toneKey !== 'change') {
-      updateSession(ctx.chat.id, { captionTone: toneKey, caption: undefined });
-    } else if (toneKey === 'change') {
-      await showTonePicker(ctx, session.targetLabel || 'Target');
-      return;
-    } else {
-      updateSession(ctx.chat.id, { captionTone: undefined });
-    }
-
     const accounts = await listSocialAccounts();
     const selected = accounts.filter((a) =>
       session.selectedAccountIds.includes(a.id)
@@ -3935,12 +4232,26 @@ export function createBot() {
         selected.map((a) => (a.network || '').toLowerCase()).filter(Boolean)
       ),
     ];
-    await generateCaptionAndShowPreview(
-      ctx,
-      session.selectedAccountIds,
-      session.targetLabel || 'Target',
-      networks
-    );
+    const label = session.targetLabel || 'Target';
+    const ids = session.selectedAccountIds;
+
+    if (toneKey === 'change') {
+      await showTonePicker(ctx, label);
+      return;
+    }
+
+    if (toneKey === 'manual') {
+      await promptManualCaption(ctx);
+      return;
+    }
+
+    if (toneKey === 'skip') {
+      await applyDefaultCaptionWithoutAi(ctx, ids, label, networks);
+      return;
+    }
+
+    updateSession(ctx.chat.id, { captionTone: toneKey, caption: undefined });
+    await generateCaptionAndShowPreview(ctx, ids, label, networks);
   });
 
   bot.action(/^sched:(.+)$/, async (ctx) => {

@@ -520,15 +520,59 @@ export async function getPost(postId) {
  * DELETE /v1/posts/{id} — seluruh akun dalam batch ikut dibatalkan.
  * @param {string} postId
  */
-export async function cancelOutstandPost(postId) {
+/**
+ * @param {import('axios').AxiosError} err
+ * @param {string} id
+ */
+function throwCancelPostError(err, id) {
+  const status = err.response?.status;
+  const detail = formatOutstandError(err);
+  if (status === 500) {
+    throw new Error(`HTTP 500 — ${detail}`);
+  }
+  if (status === 404) {
+    throw new Error(`Post ID tidak ditemukan (\`${id}\`).`);
+  }
+  if (status === 403) {
+    throw new Error(`Tidak diizinkan (\`${id}\`) — cek API key.`);
+  }
+  throw new Error(detail);
+}
+
+/**
+ * @param {string} postId
+ * @param {{ maxAttempts?: number }} [options]
+ */
+export async function cancelOutstandPost(postId, options = {}) {
   const id = String(postId || '').trim();
   if (!id) throw new Error('Post ID kosong');
-  const res = await client.delete(`/v1/posts/${id}`);
-  const body = parseResponseBody(res);
-  return {
-    success: body.success !== false,
-    message: body.message || 'Post cancelled',
-  };
+
+  const maxAttempts = Math.min(4, Math.max(1, options.maxAttempts ?? 3));
+  /** @type {Error | null} */
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await client.delete(`/v1/posts/${id}`);
+      const body = parseResponseBody(res);
+      return {
+        success: body.success !== false,
+        message: body.message || 'Post cancelled',
+        attempts: attempt,
+      };
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      if (status === 500 && attempt < maxAttempts) {
+        await sleep(1500 * attempt);
+        continue;
+      }
+      throwCancelPostError(err, id);
+    }
+  }
+
+  if (lastErr) throwCancelPostError(lastErr, id);
+  throw new Error(`Gagal membatalkan \`${id}\``);
 }
 
 function dailyTabForIso(iso) {

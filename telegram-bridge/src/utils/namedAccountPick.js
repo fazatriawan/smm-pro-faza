@@ -494,6 +494,33 @@ export function formatAccountListReport(accounts, opts = {}) {
 }
 
 /**
+ * @param {Array<{ network?: string }>} picked
+ */
+export function buildNamedPickLabel(picked) {
+  const list = picked || [];
+  if (!list.length) return 'By name (0 akun)';
+
+  /** @type {Record<string, number>} */
+  const counts = {};
+  for (const a of list) {
+    const net = (a.network || 'unknown').toLowerCase();
+    counts[net] = (counts[net] || 0) + 1;
+  }
+
+  const nets = Object.keys(counts).sort((a, b) => {
+    const ia = NETWORK_ORDER.indexOf(a);
+    const ib = NETWORK_ORDER.indexOf(b);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return a.localeCompare(b);
+  });
+
+  const breakdown = nets.map((n) => `${getNetworkShortLabel(n)}×${counts[n]}`);
+  return `By name ${breakdown.join(', ')} (${list.length} akun)`;
+}
+
+/**
  * @param {{ picked: Array<{ username?: string }>, notFound: string[], ambiguous: object[], duplicateInput: string[] }} result
  * @param {string} label
  * @param {{ force?: boolean }} [opts]
@@ -562,6 +589,6 @@ export function formatNamedPickHelp() {
     '• `/pick ig user1, user2 force`\n' +
     '• atau taruh `force` di baris terakhir multi-baris\n\n' +
     '📋 Daftar: `/akun` · `/akun ig check` · `/cekakun`\n\n' +
-    'Setelah terpilih → preview → *Send Now* sekali.'
+    'Setelah terpilih → caption (manual atau AI) → *Send Now* sekali.'
   );
 }
