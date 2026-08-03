@@ -11,12 +11,15 @@ import { extractDriveLinkFromText } from '../utils/driveId.js';
 import { generateCaption, generateCaptionsByNetwork } from './ai.js';
 import {
   listSocialAccounts,
+  getCachedAccounts,
   publishBulk,
   uploadMediaForTargets,
   waitForPostsSettled,
   getPost,
   fetchCaptionFromPostIds,
-} from './outstand.js';
+  listRecentPostIds,
+  cancelOutstandPost,
+} from './publisher.js';
 import { isImageToVideoNetwork, getDurationForNetwork } from './imageToVideo.js';
 import {
   buildCaptionsByNetwork,
@@ -44,6 +47,10 @@ import {
   getDailyTabName,
   readLatestPostIdsFromDailyTab,
   readPostIdsFromDailyTab,
+  rewriteDailyTabFromAccounts,
+  deleteOldDailyTabs,
+  upsertPublishEventRow,
+  registerPublishContext,
 } from './sheets.js';
 import {
   savePublishArchive,
@@ -60,6 +67,7 @@ import {
   replyCancelResults,
   buildOutstandCancelSupportDraft,
   isPostIdCancelled,
+  markPostIdCancelled,
   parseStopCommandArgs,
   markPostIdsStoppedLocally,
   formatLocalStopMarkResults,
@@ -154,6 +162,34 @@ import {
   analyzeInstructionCompletion,
   formatInstructionResultLines,
 } from '../utils/publishInstruction.js';
+import {
+  parseAkunCommandArgs,
+  buildAccountIssueMap,
+  buildTodayFailureMap,
+  formatCekAkunReport,
+  issueBadge,
+} from '../utils/accountHealth.js';
+import {
+  loadSkipList,
+  addToSkipList,
+  removeFromSkipList,
+  clearSkipList,
+  resolveSkipIds,
+} from '../utils/skipList.js';
+import {
+  loadGroups,
+  createGroup,
+  removeFromGroup,
+  deleteGroup,
+  resolveGroupAccountIds,
+  getGroup,
+} from '../utils/accountGroups.js';
+import {
+  saveCaption,
+  getCaption,
+  deleteCaption,
+  listCaptions,
+} from '../utils/captionLibrary.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('bot');
@@ -384,14 +420,16 @@ function tonePickerKeyboard() {
 /**
  * @param {Error | { message?: string }} err
  */
-function isGeminiUnavailableError(err) {
+function isAIUnavailableError(err) {
   const raw = String(err?.message || err || '').toLowerCase();
   return (
-    /403|401|forbidden|dunning|api key|gemini|generativelanguage|quota|resource_exhausted/i.test(
+    /403|401|forbidden|dunning|api key|gemini|generativelanguage|quota|resource_exhausted|anthropic|overloaded|rate.?limit|billing/i.test(
       raw
     )
   );
 }
+/** @deprecated alias lama */
+const isGeminiUnavailableError = isAIUnavailableError;
 
 /**
  * @param {import('telegraf').Context} ctx
@@ -400,7 +438,7 @@ function isGeminiUnavailableError(err) {
 async function promptManualCaption(ctx, reason) {
   updateSession(ctx.chat.id, { step: 'awaiting_manual_caption', captionTone: undefined });
   let msg =
-    '✍️ *Caption manual* (tanpa Gemini)\n\n' +
+    '✍️ *Caption manual* (tanpa AI)\n\n' +
     'Kirim *satu pesan* teks caption. Bot akan menyesuaikan panjang per platform (IG/Threads/FB/YT).\n\n' +
     '_Setelah preview, masih bisa *Edit Caption* sebelum Send Now._';
   if (reason) {
@@ -583,9 +621,9 @@ async function generateCaptionAndShowPreview(ctx, accountIds, label, networks) {
     });
     await showReadyPreview(ctx, accountIds, label, networks);
   } catch (err) {
-    log.warn({ err: err.message }, `[Bot] Gemini caption: ${err.message}`);
-    const hint = isGeminiUnavailableError(err)
-      ? '⚠️ *Gemini tidak bisa dipakai* (API/billing).'
+    log.warn({ err: err.message }, `[Bot] AI caption: ${err.message}`);
+    const hint = isAIUnavailableError(err)
+      ? '⚠️ *Caption AI tidak bisa dipakai* (API/billing/quota).'
       : `⚠️ Caption AI gagal: ${escapeMarkdown(String(err.message || err).slice(0, 120))}`;
     await promptManualCaption(ctx, hint);
   }
@@ -618,10 +656,18 @@ async function getImageToVideoTargets(socialAccountIds) {
 }
 
 async function showTargetPicker(ctx) {
-  const accounts = await listSocialAccounts();
+  let accounts;
+  try {
+    accounts = await getCachedAccounts();
+  } catch (err) {
+    log.error({ err: err.message }, `[Bot] showTargetPicker: gagal muat akun: ${err.message}`);
+    await safeReply(ctx, `❌ Gagal memuat daftar akun: ${err.message}`);
+    return;
+  }
+
   if (!accounts.length) {
     await ctx.reply(
-      'Belum ada akun di Outstand.\nHubungkan dulu di dashboard → Social Accounts.'
+      'Belum ada akun di Woopsocial.\nHubungkan dulu di dashboard → Social Accounts.'
     );
     return;
   }
@@ -655,13 +701,21 @@ async function showTargetPicker(ctx) {
     ]);
   }
 
-  await ctx.reply(
-    '🎯 Pilih target publish:\n' +
-      '• *Semua akun* — satu tombol\n' +
-      '• *Pilih beberapa* — centang manual\n' +
-      '• *Acak* — ketik mis. `ig 22 fb 22` (22 IG + 22 FB acak)',
-    { parse_mode: 'Markdown', ...Markup.inlineKeyboard(rows) }
-  );
+  try {
+    await ctx.reply(
+      '🎯 Pilih target publish:\n' +
+        '• *Semua akun* — satu tombol\n' +
+        '• *Pilih beberapa* — centang manual\n' +
+        '• *Acak* — ketik mis. `ig 22 fb 22` (22 IG + 22 FB acak)',
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard(rows) }
+    );
+  } catch (err) {
+    log.warn({ err: err.message }, `[Bot] showTargetPicker Markdown gagal, coba plain`);
+    await ctx.reply(
+      'Pilih target publish:',
+      Markup.inlineKeyboard(rows)
+    );
+  }
 }
 
 /**
@@ -695,13 +749,45 @@ async function getExcludeIdsForRandomPick(chatId) {
   } catch (err) {
     log.warn({ err: err.message }, `[Bot] exclude published today: ${err.message}`);
   }
+  try {
+    const skipUsernames = loadSkipList();
+    if (skipUsernames.length) {
+      const allAccounts = await listSocialAccounts();
+      const skipIds = resolveSkipIds(skipUsernames, allAccounts);
+      exclude = [...new Set([...exclude, ...skipIds])];
+    }
+  } catch (err) {
+    log.warn({ err: err.message }, `[Bot] exclude skip list: ${err.message}`);
+  }
   return exclude;
 }
 
 async function handleRandomAccountPick(ctx, text) {
   const forceRe = /\b(force|ulang|paksa|all)\b/i;
   const force = forceRe.test(text);
-  const cleanText = text.replace(forceRe, '').trim();
+  let cleanText = text.replace(forceRe, '').trim();
+
+  // Dukungan dari:namagrup — ganti akun pool dengan grup tertentu
+  let groupFilter = null;
+  const grupMatch = cleanText.match(/\bdari:(\S+)/i);
+  if (grupMatch) {
+    groupFilter = grupMatch[1];
+    cleanText = cleanText.replace(grupMatch[0], '').trim();
+  }
+
+  // Stagger delay: delay 5m / delay 10menit / delay 30s
+  let staggerMs = 0;
+  const delayMatch = cleanText.match(/\bdelay\s+(\d+)\s*(m|mnt|menit|min|s|detik|sec|jam|h|hour)?\b/i);
+  if (delayMatch) {
+    const val = Number(delayMatch[1]);
+    const unit = (delayMatch[2] || 'm').toLowerCase();
+    staggerMs = unit.startsWith('s') || unit.startsWith('d')
+      ? val * 1000
+      : unit.startsWith('j') || unit.startsWith('h')
+        ? val * 3_600_000
+        : val * 60_000;
+    cleanText = cleanText.replace(delayMatch[0], '').trim();
+  }
 
   const parsed = parseRandomPickCommand(cleanText);
   if (!parsed?.counts || !Object.keys(parsed.counts).length) {
@@ -742,7 +828,19 @@ async function handleRandomAccountPick(ctx, text) {
     { parse_mode: 'Markdown' }
   );
 
-  const accounts = await listSocialAccounts();
+  let accounts = await listSocialAccounts();
+
+  // Filter ke grup jika dari:namagrup dipakai
+  if (groupFilter) {
+    const groupIds = resolveGroupAccountIds(groupFilter, accounts);
+    if (!groupIds.length) {
+      await safeReply(ctx, `❌ Grup *${groupFilter}* tidak ditemukan atau kosong.\nBuat: \`/grup buat ${groupFilter} @acc1 @acc2\``, { parse_mode: 'Markdown' });
+      return;
+    }
+    accounts = accounts.filter((a) => groupIds.includes(a.id));
+    await safeReply(ctx, `📁 Pool dari grup *${groupFilter}*: ${accounts.length} akun`, { parse_mode: 'Markdown' });
+  }
+
   const exclude = force ? [] : await getExcludeIdsForRandomPick(ctx.chat.id);
   // Saat mode force: buka cap reuse agar pool terbatas tetap bisa memenuhi
   // jumlah yang user minta (mis. minta 44 Threads tapi stok 39 → 5 akun
@@ -834,13 +932,57 @@ async function handleRandomAccountPick(ctx, text) {
     return;
   }
 
-  updateSession(ctx.chat.id, { step: 'selecting_targets' });
+  updateSession(ctx.chat.id, {
+    step: 'selecting_targets',
+    publishStaggerMs: staggerMs > 0 ? staggerMs : undefined,
+  });
+  if (staggerMs > 0) {
+    const minLabel = staggerMs >= 3_600_000
+      ? `${Math.round(staggerMs / 3_600_000)} jam`
+      : staggerMs >= 60_000
+        ? `${Math.round(staggerMs / 60_000)} menit`
+        : `${Math.round(staggerMs / 1000)} detik`;
+    await safeReply(ctx, `⏱ Stagger aktif: delay *${minLabel}* antar platform.`, { parse_mode: 'Markdown' });
+  }
   await finalizeTargetSelection(ctx, result.accountIds, result.label);
 }
 
+/**
+ * Pisahkan bagian manual (/pick) dan random (+ random ig 1 threads 1).
+ * @param {string} text
+ * @returns {{ manualPart: string, randomCounts: Record<string, number> }}
+ */
+function splitPickAndRandom(text) {
+  const lines = text.split('\n');
+  let splitIdx = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (/^\+/.test(line) || /^\/random\b/i.test(line)) {
+      splitIdx = i;
+      break;
+    }
+  }
+
+  if (splitIdx < 0) return { manualPart: text, randomCounts: {} };
+
+  const manualPart = lines.slice(0, splitIdx).join('\n').trim();
+  // Kumpulkan semua baris setelah "+", plus teks inline pada baris "+"
+  const plusLineInline = lines[splitIdx].trim().replace(/^\+\s*/, '').replace(/^random\s*/i, '').replace(/^\/random\s*/i, '').trim();
+  const afterLines = lines.slice(splitIdx + 1).join(' ').replace(/^\/random\s*/i, '').replace(/^random\s*/i, '').trim();
+  const combinedRandom = [plusLineInline, afterLines].filter(Boolean).join(' ').trim();
+
+  const parsed = combinedRandom ? parseRandomPickCommand(combinedRandom) : null;
+  return { manualPart, randomCounts: parsed?.counts || {} };
+}
+
 async function handleNamedAccountPick(ctx, text) {
-  const parsed = parseNamedPickCommand(text);
-  if (!parsed) {
+  // Pisah bagian manual dan "+ random ..."
+  const { manualPart, randomCounts } = splitPickAndRandom(text);
+  const hasRandom = Object.keys(randomCounts).length > 0;
+
+  const parsed = parseNamedPickCommand(manualPart);
+  if (!parsed && !hasRandom) {
     await safeReply(ctx, formatNamedPickHelp(), { parse_mode: 'Markdown' });
     return;
   }
@@ -869,31 +1011,74 @@ async function handleNamedAccountPick(ctx, text) {
   await safeReply(ctx, '⏳ Mencocokkan akun by name…', { parse_mode: 'Markdown' });
 
   const accounts = await listSocialAccounts();
-  const result = resolveNamedPick(accounts, parsed);
-  const label = buildNamedPickLabel(result.picked);
 
-  if (!result.accountIds.length) {
-    let msg =
-      '❌ Tidak ada akun yang cocok.\n\n' +
-      formatNamedPickSummary(result, label, { force: parsed.force });
-    if (!result.notFound.length && !result.ambiguous.length) {
-      msg += '\n\n' + formatNamedPickHelp();
-    }
+  // Resolve akun manual (jika ada)
+  const manualResult = parsed ? resolveNamedPick(accounts, parsed) : { accountIds: [], picked: [], notFound: [], ambiguous: [] };
+  const manualIds = new Set(manualResult.accountIds);
+
+  // Tambah akun random (jika ada bagian "+")
+  let randomResult = { accountIds: [], warnings: [] };
+  if (hasRandom) {
+    const excludeIds = await getExcludeIdsForRandomPick(ctx.chat.id);
+    // Exclude akun manual yang sudah dipilih agar random tidak tumpang tindih
+    const randomExclude = [...new Set([...excludeIds, ...manualResult.accountIds])];
+    randomResult = pickRandomAccounts(accounts, randomCounts, {
+      excludeAccountIds: randomExclude,
+      maxReusePerAccount: env.maxReusePerAccount,
+    });
+  }
+
+  const combinedIds = [...new Set([...manualResult.accountIds, ...randomResult.accountIds])];
+
+  if (!combinedIds.length) {
+    let msg = '❌ Tidak ada akun yang valid.\n\n';
+    if (parsed) msg += formatNamedPickSummary(manualResult, buildNamedPickLabel(manualResult.picked), { force: parsed.force });
+    if (hasRandom && randomResult.warnings.length) msg += '\n\n*Random:*\n' + randomResult.warnings.join('\n');
+    if (!manualResult.notFound.length && !manualResult.ambiguous.length && !hasRandom) msg += '\n\n' + formatNamedPickHelp();
     await safeReply(ctx, msg, { parse_mode: 'Markdown' });
     return;
   }
 
-  await safeReply(
-    ctx,
-    formatNamedPickSummary(result, label, { force: parsed.force }),
-    { parse_mode: 'Markdown' }
-  );
+  // Tampilkan ringkasan
+  const manualLabel = parsed ? buildNamedPickLabel(manualResult.picked) : '';
+  if (parsed && manualResult.accountIds.length) {
+    await safeReply(
+      ctx,
+      formatNamedPickSummary(manualResult, manualLabel, { force: parsed.force }),
+      { parse_mode: 'Markdown' }
+    );
+  }
+  if (hasRandom && randomResult.accountIds.length) {
+    const escU = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+    const randAccounts = accounts.filter((a) => randomResult.accountIds.includes(a.id));
+    const sample = randAccounts.slice(0, 6).map((a) => escU((a.username || a.id).replace(/^@/, ''))).join(', ');
+    await safeReply(
+      ctx,
+      `🎲 *Random tambahan: ${randomResult.accountIds.length} akun*\n${sample}${randAccounts.length > 6 ? ', …' : ''}` +
+        (randomResult.warnings.length ? `\n\n⚠️ ${randomResult.warnings.join('\n')}` : ''),
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  // Label gabungan untuk preview publish
+  const netCounts = {};
+  for (const id of combinedIds) {
+    const a = accounts.find((x) => x.id === id);
+    if (!a) continue;
+    const net = (a.network || 'other').toLowerCase();
+    netCounts[net] = (netCounts[net] || 0) + 1;
+  }
+  const combinedLabel =
+    `Pick+Random (${combinedIds.length}): ` +
+    Object.entries(netCounts)
+      .map(([net, n]) => `${NETWORK_LABELS[net] || net} ${n}`)
+      .join(', ');
 
   updateSession(ctx.chat.id, {
     step: 'selecting_targets',
-    pickForce: parsed.force || undefined,
+    pickForce: parsed?.force || undefined,
   });
-  await finalizeTargetSelection(ctx, result.accountIds, label);
+  await finalizeTargetSelection(ctx, combinedIds, combinedLabel);
 }
 
 /**
@@ -921,6 +1106,15 @@ function buildAccountPickerKeyboard(network, accounts, selected) {
   }
 
   if (selected.size > 0) {
+    const unselectedCount = accounts.filter((a) => !selected.has(a.id)).length;
+    if (unselectedCount > 0) {
+      rows.push([
+        Markup.button.callback(
+          `🎲 Tambah sisa secara acak (${unselectedCount})`,
+          `acctrand:${network}`
+        ),
+      ]);
+    }
     rows.push([
       Markup.button.callback(
         `📤 Selesai (${selected.size} akun)`,
@@ -1070,6 +1264,15 @@ async function showGlobalAccountPicker(ctx) {
   });
 
   if (selected.size > 0) {
+    const unselectedCount = accounts.filter((a) => !selected.has(a.id)).length;
+    if (unselectedCount > 0) {
+      rows.push([
+        Markup.button.callback(
+          `🎲 Tambah sisa secara acak (${unselectedCount})`,
+          'acctrand:__multi__'
+        ),
+      ]);
+    }
     rows.push([
       Markup.button.callback(
         `📤 Selesai (${selected.size} akun)`,
@@ -1103,6 +1306,15 @@ async function refreshGlobalAccountPicker(ctx) {
     ];
   });
   if (selected.size > 0) {
+    const unselectedCount = accounts.filter((a) => !selected.has(a.id)).length;
+    if (unselectedCount > 0) {
+      rows.push([
+        Markup.button.callback(
+          `🎲 Tambah sisa secara acak (${unselectedCount})`,
+          'acctrand:__multi__'
+        ),
+      ]);
+    }
     rows.push([
       Markup.button.callback(
         `📤 Selesai (${selected.size} akun)`,
@@ -1400,7 +1612,7 @@ async function processIncomingDriveLink(ctx, linkText) {
       return;
     }
 
-    if (!hasSubs && hasMedia.length === 1) {
+    if (!hasSubs && entry.media.length === 1) {
       await loadFolderAndCaption(ctx, entry.id, entry.name, entry.media);
       return;
     }
@@ -2118,6 +2330,7 @@ async function runPublish(ctx, scheduledAt) {
       mediaFilesSetAt: session.mediaFilesSetAt || nowIsoUtc(),
       idempotencyKey: session.lastPublishKey || '',
       instructionTargets,
+      publishStaggerMs: session.publishStaggerMs || 0,
     };
 
     const {
@@ -2129,18 +2342,62 @@ async function runPublish(ctx, scheduledAt) {
       snapshot.selectedAccountIds
     );
 
+    // Buffer sudah diterima Woopsocial — bebaskan segera supaya GC bisa collect
+    for (const f of snapshot.mediaFiles) { f.buffer = undefined; }
+    const _liveSess = getSession(chatId);
+    if (_liveSess.mediaFiles) { for (const f of _liveSess.mediaFiles) { f.buffer = undefined; } }
+    if (_liveSess.pendingReplacement?.mediaFiles) { for (const f of _liveSess.pendingReplacement.mediaFiles) { f.buffer = undefined; } }
+
     const allMediaIds = Object.values(mediaByNetwork)
       .flat()
       .map((m) => m.id);
 
-    const result = await publishBulk({
-      baseCaption: snapshot.caption,
-      captionsByNetwork: session.captionsByNetwork,
-      youtubeFields: session.youtubeFields,
-      mediaByNetwork,
-      scheduledAt,
-      socialAccountIds: snapshot.selectedAccountIds,
-    });
+    // Stagger: jika delay set, publish per-network dengan scheduledAt berbeda
+    let result;
+    if (snapshot.publishStaggerMs > 0 && !scheduledAt) {
+      const netGroups = {};
+      for (const id of snapshot.selectedAccountIds) {
+        const a = poolAccounts.find((ac) => ac.id === id);
+        if (!a) continue;
+        const net = (a.network || 'unknown').toLowerCase();
+        if (!netGroups[net]) netGroups[net] = [];
+        netGroups[net].push(id);
+      }
+      const netEntries = Object.entries(netGroups);
+      const allPostIds = [];
+      let batchIdx = 0;
+      for (const [, ids] of netEntries) {
+        const batchScheduledAt = batchIdx === 0
+          ? undefined
+          : new Date(Date.now() + batchIdx * snapshot.publishStaggerMs).toISOString();
+        const batchResult = await publishBulk({
+          baseCaption: snapshot.caption,
+          captionsByNetwork: session.captionsByNetwork,
+          youtubeFields: session.youtubeFields,
+          mediaByNetwork,
+          scheduledAt: batchScheduledAt,
+          socialAccountIds: ids,
+        });
+        allPostIds.push(...(batchResult.postIds || []));
+        batchIdx++;
+      }
+      if (netEntries.length > 1) {
+        const minLabel = snapshot.publishStaggerMs >= 3_600_000
+          ? `${Math.round(snapshot.publishStaggerMs / 3_600_000)} jam`
+          : `${Math.round(snapshot.publishStaggerMs / 60_000)} menit`;
+        await ctx.reply(`⏱ Stagger: ${netEntries.length} platform dikirim dengan jeda *${minLabel}* per platform.`, { parse_mode: 'Markdown' });
+      }
+      result = { postIds: allPostIds, accountCount: snapshot.selectedAccountIds.length };
+    } else {
+      result = await publishBulk({
+        baseCaption: snapshot.caption,
+        captionsByNetwork: session.captionsByNetwork,
+        youtubeFields: session.youtubeFields,
+        mediaByNetwork,
+        scheduledAt,
+        socialAccountIds: snapshot.selectedAccountIds,
+      });
+    }
 
     const lastPublish = {
       mediaFiles: snapshot.mediaFiles,
@@ -2198,124 +2455,274 @@ async function runPublish(ctx, scheduledAt) {
           `Target: ${targetInfo}\n` +
           `Akun: ${result.accountCount} · Batch: ${result.batchCount}\n` +
           `Post ID: ${postIdLine}\n\n` +
-          `Status live akan muncul setelah waktu jadwal. Cek Outstand dashboard jika perlu.`
+          `Status live akan muncul setelah waktu jadwal. Cek Woopsocial dashboard jika perlu.`
       );
       return;
     }
 
-    await ctx.reply(
-      `📤 Request diterima Outstand\n` +
-        `Target: ${targetInfo}\n` +
-        `Post ID: ${postIdLine}` +
-        (imageToVideoNetworks?.length
-          ? `\n🎬 Video dari gambar (${env.imageToVideoDurationSec}s${imageToVideoSilent ? ', tanpa musik' : ''}): ${imageToVideoNetworks.join(', ')}`
-          : '') +
-        `\n\n⏳ Mengecek status publish (${formatPollWaitHint(
-          result.accountCount
-        )})…`
-    );
+    const baseStatusText =
+      `📤 Request diterima Woopsocial\n` +
+      `Target: ${targetInfo}\n` +
+      `Post ID: ${postIdLine}` +
+      (imageToVideoNetworks?.length
+        ? `\n🎬 Video dari gambar (${env.imageToVideoDurationSec}s${imageToVideoSilent ? ', tanpa musik' : ''}): ${imageToVideoNetworks.join(', ')}`
+        : '') +
+      `\n\n⏳ Mengecek status publish (${formatPollWaitHint(result.accountCount)})…`;
 
-    const pollPlan = computePublishPollPlan(result.accountCount);
-    const posts = await waitForPostsSettled(result.postIds, {
-      maxWaitMs: pollPlan.maxWaitMs,
-      intervalMs: 3_000,
-    });
-    const summary = summarizePublishResults(posts, snapshot.caption);
+    const statusMsg = await ctx.reply(baseStatusText);
 
-    if (result.postIds?.length) {
-      try {
-        const sheetResult = await recordPublishResultsToSheet({
-          postIds: result.postIds,
-          posts,
-          expectedAccountIds: snapshot.selectedAccountIds,
-          baseCaption: snapshot.caption,
-          folderName: snapshot.folderName,
-          targetLabel: snapshot.targetLabel,
-          mediaFiles: snapshot.mediaFiles,
-          idempotencyKey: snapshot.idempotencyKey,
-        });
-        scheduleSheetRefresh(
-          result.postIds,
-          snapshot.selectedAccountIds,
-          snapshot.caption,
-          {
-            folderName: snapshot.folderName,
-            targetLabel: snapshot.targetLabel,
-            mediaFiles: snapshot.mediaFiles,
-            mediaFilesDay: snapshot.mediaFilesDay,
-            idempotencyKey: snapshot.idempotencyKey,
+    // Capture sebelum handler Telegraf timeout — ctx.telegram tetap valid
+    // bahkan setelah handler selesai, ctx.reply tidak.
+    const chatId = ctx.chat.id;
+    const telegram = ctx.telegram;
+    const bgCtx = {
+      chat: { id: chatId },
+      reply: (text, opts) => telegram.sendMessage(chatId, text, opts),
+      telegram,
+    };
+
+    const escU = (s) => String(s || '').replace(/_/g, '\\_');
+    const fmtAccList = (accs, limit = 10) => {
+      if (!accs?.length) return '';
+      const shown = accs.slice(0, limit);
+      const extra = accs.length > limit ? `\n  _…+${accs.length - limit} lagi_` : '';
+      // Tidak pakai @ agar Telegram tidak auto-link nama yang mengandung spasi
+      return '\n' + shown.map((a) => `  ${getNetworkShortLabel(a.network) || a.network} ${escU(a.username)}`).join('\n') + extra;
+    };
+
+    // Detach — handler Telegraf selesai di sini, polling jalan di background
+    void (async () => {
+      let lastEditMs = 0;
+      let lastSheetRefreshMs = 0;
+      const SHEET_REFRESH_INTERVAL_MS = 30_000;
+
+      const pollPlan = computePublishPollPlan(result.accountCount);
+      // Konversi gambar→video butuh lebih lama — minimal 3 menit jika ada platform video
+      const hasVideoConversion = imageToVideoNetworks?.length > 0;
+      // Woopsocial memproses delivery secara async — beri waktu minimal 4 menit
+      const effectiveMaxWaitMs = Math.max(pollPlan.maxWaitMs, 4 * 60_000);
+      const posts = await waitForPostsSettled(result.postIds, {
+        maxWaitMs: effectiveMaxWaitMs,
+        intervalMs: 3_000,
+        onProgress: ({ published, failed, pending, elapsedMs, publishedAccounts, failedAccounts, pendingAccounts }) => {
+          const now = Date.now();
+
+          // Update Sheets setiap 30 detik selama polling
+          if (now - lastSheetRefreshMs >= SHEET_REFRESH_INTERVAL_MS && (published > 0 || failed > 0)) {
+            lastSheetRefreshMs = now;
+            refreshPublishResultsInSheet({
+              postIds: result.postIds,
+              expectedAccountIds: snapshot.selectedAccountIds,
+              baseCaption: snapshot.caption,
+              folderName: snapshot.folderName,
+              targetLabel: snapshot.targetLabel,
+            }).catch(() => {});
           }
-        );
-        if (sheetResult.recorded > 0) {
-          const rows = sheetResult.rowCount ?? sheetResult.recorded;
-          const instr = sheetResult.instructionCount ?? 1;
-          await ctx.reply(
-            `📊 Sheets: *${rows} baris akun* · *${instr} instruksi* (kolom terpisah per waktu publish)\n` +
-              `Tab: ${sheetResult.tabName} · ${sheetResult.summary.statusSummary}\n` +
-              `Kolom: Platform/Akun + blok #1, #2, … (Konten/Status/Link/Post ID).\n` +
-              `Status diperbarui otomatis +5…+120 menit & tiap 20 menit (/refresh).\n` +
-              `${sheetResult.spreadsheetUrl}`
-          );
-        }
-      } catch (sheetErr) {
-        log.error({ err: sheetErr?.message, stack: sheetErr?.stack }, `[Sheets] record after publish: ${sheetErr?.message || sheetErr}`);
-        await ctx.reply(
-          `⚠️ Publish selesai, gagal catat Sheets:\n${sheetErr.message}`
+
+          if (now - lastEditMs < 4_000) return;
+          lastEditMs = now;
+          const sec = Math.round(elapsedMs / 1000);
+
+          const lines = [
+            `📤 Request diterima Woopsocial`,
+            `Target: ${targetInfo}`,
+            `Post ID: ${postIdLine}`,
+            ``,
+            `⏳ *Publish berjalan…* (${sec}s)`,
+            `✅ ${published} selesai · ❌ ${failed} gagal · ⏳ ${pending} pending`,
+          ];
+          if (publishedAccounts?.length) lines.push(``, `*✅ Selesai:*${fmtAccList(publishedAccounts)}`);
+          if (failedAccounts?.length) lines.push(``, `*❌ Gagal:*${fmtAccList(failedAccounts)}`);
+          if (pendingAccounts?.length) lines.push(``, `*⏳ Pending:*${fmtAccList(pendingAccounts)}`);
+
+          telegram
+            .editMessageText(chatId, statusMsg.message_id, undefined, lines.join('\n'), { parse_mode: 'Markdown' })
+            .catch(() => {});
+        },
+      });
+      const summary = summarizePublishResults(posts, snapshot.caption);
+
+      // Update pesan segera setelah polling selesai — beri tahu user bot masih kerja
+      {
+        const allAccs = (posts || []).flatMap((p) => p?.socialAccounts ?? []);
+        const pubAccs = allAccs.filter((a) => a.status === 'published');
+        const failAccs = allAccs.filter((a) => a.status === 'failed');
+        const pendAccs = allAccs.filter((a) => a.status === 'pending');
+        const postPollLines = [
+          `📤 Request diterima Woopsocial`,
+          `Target: ${targetInfo}`,
+          `Post ID: ${postIdLine}`,
+          ``,
+          `📊 *Menyimpan ke Sheets…*`,
+          `✅ ${summary.published} selesai · ❌ ${summary.failed} gagal · ⏳ ${summary.pending} pending`,
+        ];
+        if (pubAccs.length) postPollLines.push(``, `*✅ Selesai:*${fmtAccList(pubAccs)}`);
+        if (failAccs.length) postPollLines.push(``, `*❌ Gagal:*${fmtAccList(failAccs)}`);
+        if (pendAccs.length) postPollLines.push(``, `*⏳ Pending (masih proses):*${fmtAccList(pendAccs)}`);
+        telegram.editMessageText(chatId, statusMsg.message_id, undefined, postPollLines.join('\n'), { parse_mode: 'Markdown' }).catch(() => {});
+      }
+
+      // Update pesan ke "Selesai" — tidak tunggu Sheets supaya user langsung tahu
+      telegram.editMessageText(
+        chatId, statusMsg.message_id, undefined,
+        `📤 Request diterima Woopsocial\nTarget: ${targetInfo}\nPost ID: ${postIdLine}\n\n` +
+          `✅ *Selesai* — ✅ ${summary.published} live · ❌ ${summary.failed} gagal · ⏳ ${summary.pending} pending\n` +
+          (summary.pending > 0 ? `_${summary.pending} akun masih proses — notifikasi otomatis dalam 5 mnt._` : ``),
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+
+      // Kirim laporan + kuota ke user segera (tidak tunggu Sheets)
+      const reportText =
+        formatTelegramPublishReport(summary, postIdLine) +
+        formatLargeBatchFollowUp(summary, pollPlan, postIdLine) +
+        (summary.pending > 0 ? '\n\n_Webhook akan update jika masih pending._' : '');
+      try {
+        await replyTelegramLong(bgCtx, reportText);
+      } catch (tgErr) {
+        log.error({ err: tgErr?.message, stack: tgErr?.stack }, `[Bot] telegram report: ${tgErr?.message || tgErr}`);
+        await telegram.sendMessage(
+          chatId,
+          `✅ Publish selesai (${summary.published} live · ${summary.failed} gagal · ${summary.pending} pending).\n` +
+            `Laporan detail ada di Google Sheets (pesan Telegram terlalu panjang).`
         );
       }
-    }
 
-    const reportText =
-      formatTelegramPublishReport(summary, postIdLine) +
-      formatLargeBatchFollowUp(summary, pollPlan, postIdLine) +
-      (summary.pending > 0
-        ? '\n\n_Webhook akan update jika masih pending._'
-        : '');
-    try {
-      await replyTelegramLong(ctx, reportText);
-    } catch (tgErr) {
-      log.error({ err: tgErr?.message, stack: tgErr?.stack }, `[Bot] telegram report: ${tgErr?.message || tgErr}`);
-      await ctx.reply(
-        `✅ Publish selesai (${summary.published} live · ${summary.failed} gagal · ${summary.pending} pending).\n` +
-          `Laporan detail ada di Google Sheets (pesan Telegram terlalu panjang).`
-      );
-    }
+      try {
+        const quota = await buildDailyQuotaStatus({ chatId, session: getSession(chatId), forceRefresh: true });
+        await telegram.sendMessage(chatId, formatDailyQuotaCompact(quota));
+      } catch (quotaErr) {
+        log.warn({ err: quotaErr.message }, `[Bot] quota after publish: ${quotaErr.message}`);
+      }
 
-    try {
-      const quota = await buildDailyQuotaStatus({
-        chatId: ctx.chat.id,
-        session: getSession(ctx.chat.id),
-        forceRefresh: true,
-      });
-      await ctx.reply(formatDailyQuotaCompact(quota));
-    } catch (quotaErr) {
-      log.warn({ err: quotaErr.message }, `[Bot] quota after publish: ${quotaErr.message}`);
-    }
+      if (summary.pending > 0) {
+        schedulePublishStatusFollowUp(bgCtx, {
+          chatId,
+          postIds: result.postIds,
+          expectedAccountIds: snapshot.selectedAccountIds,
+          baseCaption: snapshot.caption,
+          initialSummary: summary,
+          snapshot,
+        });
+      }
 
-    if (summary.pending > 0) {
-      schedulePublishStatusFollowUp(ctx, {
-        chatId: ctx.chat.id,
-        postIds: result.postIds,
-        expectedAccountIds: snapshot.selectedAccountIds,
-        baseCaption: snapshot.caption,
-        initialSummary: summary,
-        snapshot,
-      });
-    }
+      if (summary.failed > 0) await offerAutoRetryIfAny(bgCtx, { summary, postIds: result.postIds });
+      await offerReplacementAccountsIfAny(bgCtx, { summary, snapshot, result });
 
-    // Tawarkan akun pengganti untuk yang failed karena masalah AKUN
-    // (token/restricted/permission) — bukan rate limit.
-    // Bot tidak auto-publish; user harus klik tombol.
-    await offerReplacementAccountsIfAny(ctx, {
-      summary,
-      snapshot,
-      result,
-    });
+      updateSession(chatId, { step: 'idle', publishingSince: undefined });
 
-    // Lepaskan lock publishing setelah seluruh pipeline selesai.
-    updateSession(ctx.chat.id, {
-      step: 'idle',
-      publishingSince: undefined,
+      // Cek berkala tiap 5 menit — langsung kirim notif saat semua selesai
+      // Max 12 kali = 60 menit monitoring. Set segera, tidak tunggu Sheets.
+      if (result.postIds?.length && (summary.pending > 0 || summary.failed > 0)) {
+        const doPeriodicCheck = (attempt) => {
+          if (attempt > 12) return;
+          setTimeout(async () => {
+            try {
+              const updatedPosts = await Promise.all(
+                result.postIds.map((pid) => getPost(pid).catch(() => null))
+              );
+              const valid = updatedPosts.filter(Boolean);
+              if (!valid.length) { doPeriodicCheck(attempt + 1); return; }
+
+              const s = summarizePublishResults(valid, snapshot.caption);
+
+              const allAccs = valid.flatMap((p) => p?.socialAccounts ?? []);
+              const pubAccs = allAccs.filter((a) => a.status === 'published');
+              const failAccs = allAccs.filter((a) => a.status === 'failed');
+              const pendAccs = allAccs.filter((a) => a.status === 'pending');
+
+              if (s.pending === 0) {
+                // Semua sudah settle — kirim notif final lalu berhenti
+                const lines = [
+                  failAccs.length
+                    ? `⚠️ *Publish selesai* — ✅ ${s.published} live · ❌ ${s.failed} gagal`
+                    : `🎉 *Semua ${s.published} akun berhasil publish!*`,
+                  `Post ID: ${result.postIds.join(', ')}`,
+                ];
+                if (failAccs.length) {
+                  lines.push(``, `*❌ Gagal:*${fmtAccList(failAccs)}`);
+                  lines.push(``, `_Cek: \`/cekakun\` · Retry: \`/retry\`_`);
+                } else {
+                  lines.push(`_Cek link: \`/links ${result.postIds[0]}\`_`);
+                }
+                await telegram.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+                return; // berhenti — tidak jadwalkan lagi
+              }
+
+              // Masih pending — kirim update dan jadwalkan cek berikutnya
+              const min = attempt * 5;
+              const lines = [
+                `🔄 *Update +${min} menit* — Post ${result.postIds.join(', ')}`,
+                `✅ ${s.published} live · ❌ ${s.failed} gagal · ⏳ ${s.pending} pending`,
+              ];
+              if (pubAccs.length) lines.push(``, `*✅ Selesai:*${fmtAccList(pubAccs)}`);
+              if (failAccs.length) lines.push(``, `*❌ Gagal:*${fmtAccList(failAccs)}`);
+              if (pendAccs.length) lines.push(``, `*⏳ Pending:*${fmtAccList(pendAccs)}`);
+              lines.push(``, `_Cek link: \`/links ${result.postIds[0]}\`_`);
+              await telegram.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+              doPeriodicCheck(attempt + 1);
+            } catch { doPeriodicCheck(attempt + 1); }
+          }, 5 * 60_000);
+        };
+        doPeriodicCheck(1);
+      }
+
+      // Sheets recording jalan di background — tidak block laporan ke user
+      if (result.postIds?.length) {
+        void (async () => {
+          try {
+            const sheetResult = await recordPublishResultsToSheet({
+              postIds: result.postIds,
+              posts,
+              expectedAccountIds: snapshot.selectedAccountIds,
+              baseCaption: snapshot.caption,
+              folderName: snapshot.folderName,
+              targetLabel: snapshot.targetLabel,
+              mediaFiles: snapshot.mediaFiles,
+              idempotencyKey: snapshot.idempotencyKey,
+            });
+            scheduleSheetRefresh(result.postIds, snapshot.selectedAccountIds, snapshot.caption, {
+              folderName: snapshot.folderName,
+              targetLabel: snapshot.targetLabel,
+              mediaFiles: snapshot.mediaFiles,
+              mediaFilesDay: snapshot.mediaFilesDay,
+              idempotencyKey: snapshot.idempotencyKey,
+            });
+            if (sheetResult.recorded > 0) {
+              const rows = sheetResult.rowCount ?? sheetResult.recorded;
+              const instr = sheetResult.instructionCount ?? 1;
+              await telegram.sendMessage(
+                chatId,
+                `📊 Sheets tersimpan: *${rows} baris* · *${instr} instruksi*\n` +
+                  `Tab: ${sheetResult.tabName} · ${sheetResult.summary.statusSummary}\n` +
+                  `${sheetResult.spreadsheetUrl}`
+              );
+            } else {
+              // recorded=0: data tidak tertulis — fallback sync otomatis
+              log.warn({ postIds: result.postIds }, '[Sheets] recorded=0 setelah publish — fallback syncToday');
+              try {
+                const fallback = await syncTodayToSheet();
+                await telegram.sendMessage(
+                  chatId,
+                  `📊 Sheets disinkron ulang: *${fallback.recorded} baris* (tab ${fallback.tabName})\n${fallback.spreadsheetUrl}`
+                );
+              } catch (fbErr) {
+                log.error({ err: fbErr?.message }, `[Sheets] fallback sync: ${fbErr?.message}`);
+                await telegram.sendMessage(
+                  chatId,
+                  `⚠️ Sheets belum terisi — ketik */refresh* untuk sync manual.`
+                ).catch(() => {});
+              }
+            }
+          } catch (sheetErr) {
+            log.error({ err: sheetErr?.message }, `[Sheets] background record: ${sheetErr?.message}`);
+            telegram.sendMessage(chatId, `⚠️ Gagal catat Sheets: ${sheetErr.message}`).catch(() => {});
+          }
+        })();
+      }
+    })().catch((err) => {
+      log.error({ err: err?.message, stack: err?.stack }, `[Bot] background publish: ${err?.message || err}`);
+      telegram.sendMessage(chatId, `❌ Publish error: ${err.message}`).catch(() => {});
+      updateSession(chatId, { step: 'idle', publishingSince: undefined });
     });
   } catch (err) {
     log.error({ err: err?.message, stack: err?.stack }, `[Bot] publish error: ${err?.message || err}`);
@@ -2340,6 +2747,57 @@ async function runPublish(ctx, scheduledAt) {
  * Sheets sudah di-refresh oleh scheduleSheetRefresh; ini khusus untuk notifikasi Telegram.
  */
 const FOLLOW_UP_DELAYS_MS = [90_000, 240_000, 480_000];
+
+/**
+ * Setelah publish selesai: tawarkan retry untuk akun yang gagal (retryNow saja).
+ * Tidak auto-publish — user harus klik tombol konfirmasi.
+ */
+async function offerAutoRetryIfAny(ctx, { summary, postIds }) {
+  try {
+    const accounts = summary?.sheetAccounts || [];
+    const failed = accounts.filter((a) => a.status === 'failed');
+    if (!failed.length) return;
+
+    const plan = buildRetryPlan(failed);
+    const retryIds = collectRetryAccountIds(plan, { includeWait: false });
+    if (!retryIds.length) return;
+
+    const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+    const sample = plan.retryNow.slice(0, 8).map((a) => {
+      const net = getNetworkShortLabel(a.network) || (a.network || '?').toUpperCase();
+      return { net, username: a.username || a.accountId || '', hint: a.hint || '' };
+    });
+
+    updateSession(ctx.chat.id, {
+      pendingAutoRetry: { postIds, retryIds, failedSample: sample, at: Date.now() },
+    });
+
+    const sampleLines = sample
+      .map((s) => `• ${s.net} @${escUser(s.username)}${s.hint ? ` — ${s.hint}` : ''}`)
+      .join('\n');
+    const more = plan.retryNow.length > 8 ? `\n_…+${plan.retryNow.length - 8} lagi_` : '';
+    const fixNote =
+      plan.fix.length
+        ? `\n⚠️ ${plan.fix.length} akun perlu reconnect (tidak di-retry).`
+        : '';
+
+    await safeReply(
+      ctx,
+      `🔄 *${retryIds.length} akun gagal bisa di-retry*\n\n` +
+        `${sampleLines}${more}${fixNote}\n\n` +
+        `_Retry hanya untuk error sementara (bukan token/permission)._`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback(`🔄 Retry ${retryIds.length} akun`, 'autoretry:yes')],
+          [Markup.button.callback('Lewati', 'autoretry:skip')],
+        ]),
+      }
+    );
+  } catch (err) {
+    log.warn({ err: err?.message }, `[Bot] offerAutoRetryIfAny: ${err?.message}`);
+  }
+}
 
 /**
  * Setelah instruksi publish settled: laporkan kekurangan vs target (ig 44 → harus 44 live)
@@ -2684,7 +3142,7 @@ function schedulePublishStatusFollowUp(ctx, input) {
             const icon = c.status === 'published' ? '✅' : '❌';
             const link =
               c.url && c.status === 'published'
-                ? `\n  ${c.url}`
+                ? `\n  [lihat post](${c.url})`
                 : '';
             return `${icon} ${c.network} @${escUser(c.username)}${link}`;
           });
@@ -3243,40 +3701,72 @@ export function createBot() {
   });
 
   async function replySyncTodayResult(ctx) {
-    const result = await syncTodayToSheet();
-    const dupeLine = result.duplicateAccounts
-      ? `\n⚠️ *${result.duplicateAccounts} akun* posting >1× — lihat baris REKAP di atas tab.`
-      : '';
+    // Step 1: fetch dari Outstand saja (cepat ~5-10 detik)
+    const data = await collectTodayPublishLinks();
+
+    if (!data.postIds.length) {
+      throw new Error(
+        `Tidak ada post untuk tab ${data.tabName} (${env.timezone}). Cek Woopsocial dashboard.`
+      );
+    }
+
+    const { meta, tabName, postIds, accounts } = data;
+
+    if (!accounts.length) {
+      await ctx.reply(
+        `⚠️ *${tabName}* — ${postIds.length} post ditemukan tapi Outstand API tidak merespons.\nData lama di Sheets tidak diubah. Coba lagi nanti.`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Step 2: balas user segera — tidak tunggu Sheets
     await ctx.reply(
-      `✅ Sheets tab *${result.tabName}* diperbarui dari Outstand\n` +
-        `${result.postIds.length} Post ID · ${result.recorded} baris\n` +
-        `${result.meta.published} live · ${result.meta.failed} gagal · ${result.meta.pending} pending` +
-        dupeLine +
-        `\n\n_Gagal yang sudah live di IG akan berubah jadi Live jika Outstand sudah kirim link._\n` +
-        `${result.spreadsheetUrl}`,
+      `✅ *${tabName}* — ${postIds.length} post\n` +
+        `${meta.published} live · ${meta.failed} gagal · ${meta.pending} pending\n` +
+        `📊 Menyimpan ke Sheets…`,
       { parse_mode: 'Markdown' }
     );
 
-    const session = getSession(ctx.chat.id);
-    const last = session.lastPublish;
-    if (
-      last?.instructionTargets &&
-      last?.mediaFiles?.length &&
-      !getArchiveStaleReason(last)
-    ) {
-      const expected = new Set(last.selectedAccountIds || []);
-      const batchAccounts = (result.accounts || []).filter((a) =>
-        expected.has(a.accountId)
-      );
-      await offerReplacementAccountsIfAny(ctx, {
-        summary: { sheetAccounts: batchAccounts },
-        snapshot: last,
-        result: { postIds: last.postIds || [] },
-        source: 'refresh',
-      }).catch((err) =>
-        log.warn({ err: err.message }, `[Refresh] replacement: ${err.message}`)
-      );
-    }
+    // Step 3: tulis Sheets di background — tidak blokir user
+    void (async () => {
+      try {
+        const result = await rewriteDailyTabFromAccounts({
+          timestamp: nowIsoUtc(),
+          postId: postIds.join(', '),
+          youtubeTitle: meta.youtubeTitle,
+          accounts,
+        });
+        const dupeLine = result.duplicateAccounts
+          ? `\n⚠️ *${result.duplicateAccounts} akun* posting >1× — lihat baris REKAP di atas tab.`
+          : '';
+        await ctx.reply(
+          `📊 Sheets *${tabName}* tersimpan: ${result.recorded} baris` +
+            dupeLine +
+            `\n\n_Gagal yang sudah live di IG akan berubah jadi Live jika Outstand sudah kirim link._\n` +
+            `${result.spreadsheetUrl}`,
+          { parse_mode: 'Markdown' }
+        );
+
+        // Tawaran pengganti akun (setelah Sheets selesai)
+        const session = getSession(ctx.chat.id);
+        const last = session.lastPublish;
+        if (last?.instructionTargets && last?.mediaFiles?.length && !getArchiveStaleReason(last)) {
+          const expected = new Set(last.selectedAccountIds || []);
+          const batchAccounts = (result.accounts || accounts).filter((a) =>
+            expected.has(a.accountId)
+          );
+          await offerReplacementAccountsIfAny(ctx, {
+            summary: { sheetAccounts: batchAccounts },
+            snapshot: last,
+            result: { postIds: last.postIds || [] },
+            source: 'refresh',
+          }).catch((err) => log.warn({ err: err.message }, `[Refresh] replacement: ${err.message}`));
+        }
+      } catch (sheetErr) {
+        await ctx.reply(`⚠️ Gagal simpan Sheets: ${sheetErr.message}`).catch(() => {});
+      }
+    })();
   }
 
   async function runSyncTodayCommand(ctx) {
@@ -3285,7 +3775,15 @@ export function createBot() {
       { parse_mode: 'Markdown' }
     );
     try {
-      await replySyncTodayResult(ctx);
+      await Promise.race([
+        replySyncTodayResult(ctx),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Outstand API lambat, coba lagi dalam 1 menit.')),
+            90_000
+          )
+        ),
+      ]);
     } catch (err) {
       await ctx.reply(`❌ ${err.message}`);
     }
@@ -3293,6 +3791,68 @@ export function createBot() {
 
   bot.command('synctoday', runSyncTodayCommand);
   bot.command('refresh', runSyncTodayCommand);
+
+  bot.command('recover', async (ctx) => {
+    const raw = String(ctx.message?.text || '')
+      .replace(/^\/recover(@\w+)?\s*/i, '')
+      .trim();
+    const ids = raw
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!ids.length) {
+      await ctx.reply(
+        'Format: `/recover <postId1>, <postId2>, ...`\n\nContoh:\n`/recover 155877927924269056, 155877929518104576`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    await ctx.reply(`⏳ Mengambil data dari Woopsocial untuk ${ids.length} post ID…`);
+
+    try {
+      const allAccounts = [];
+      let firstTs = null;
+      for (const id of ids) {
+        const post = await Promise.race([
+          getPost(id),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25_000)),
+        ]).catch((err) => {
+          log.warn({ postId: id }, `[recover] getPost ${id}: ${err.message}`);
+          return null;
+        });
+        if (!post) continue;
+        if (!firstTs) firstTs = post.publishedAt || post.scheduledAt || post.createdAt;
+        const { sheetAccounts } = summarizePublishResults([post]);
+        allAccounts.push(...sheetAccounts);
+      }
+
+      if (!allAccounts.length) {
+        await ctx.reply('❌ Tidak ada data akun dari Woopsocial. Post ID mungkin sudah kedaluwarsa atau API tidak tersedia.');
+        return;
+      }
+
+      const ts = firstTs || new Date().toISOString();
+      registerPublishContext(ids, [], '', ts, { folderName: 'Recovery' });
+
+      await upsertPublishEventRow({
+        timestamp: ts,
+        postId: ids.join(', '),
+        accounts: allAccounts,
+      });
+
+      await ctx.reply(
+        `✅ Recovery selesai\n` +
+          `Post ID: ${ids.length} IDs\n` +
+          `Akun: ${allAccounts.length}\n\n` +
+          `Data sudah ditambahkan ke spreadsheet tab hari ini.`
+      );
+    } catch (err) {
+      log.error({ err: err.message }, `[recover] error: ${err.message}`);
+      await ctx.reply(`❌ Recovery gagal: ${err.message}`);
+    }
+  });
 
   bot.command('scanpost', async (ctx) => {
     await ctx.reply('⏳ Scan Outstand untuk post tak terduga…');
@@ -3349,7 +3909,7 @@ export function createBot() {
     }
   });
 
-  bot.command('stop', async (ctx) => {
+  const handleStopCommand = async (ctx) => {
     const firstLine = String(ctx.message.text || '').split(/\r?\n/)[0] || '';
     const rawArgs = firstLine.replace(/^\/stop(@\w+)?\s*/i, '').trim();
     const parsed = parseStopCommandArgs(rawArgs);
@@ -3453,7 +4013,8 @@ export function createBot() {
     } catch (err) {
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
     }
-  });
+  };
+  bot.command('stop', handleStopCommand);
 
   bot.action('stop:confirm', async (ctx) => {
     await ack(ctx, 'Membatalkan…');
@@ -3517,11 +4078,9 @@ export function createBot() {
   });
 
   bot.command('antrian', async (ctx) => {
-    ctx.message.text = `/stop ${(ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '')}`;
-    return ctx.telegram.callApi('sendMessage', ctx.message).catch(() => {
-      const args = (ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '').trim();
-      ctx.message.text = `/stop ${args}`;
-    });
+    const args = (ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '').trim();
+    ctx.message.text = `/stop${args ? ' ' + args : ''}`;
+    await handleStopCommand(ctx);
   });
 
   bot.command('stuck', async (ctx) => {
@@ -3830,6 +4389,87 @@ export function createBot() {
     }
   });
 
+  bot.command('debuglinks', async (ctx) => {
+    const session = getSession(ctx.chat.id);
+    const args = (ctx.message.text || '')
+      .replace(/^\/debuglinks(@\w+)?\s*/i, '')
+      .trim();
+    const postIds = args
+      ? args.split(/[\s,]+/).filter(Boolean)
+      : session.lastPublish?.postIds || session.outstandPostIds || [];
+
+    if (!postIds.length) {
+      await ctx.reply(
+        '🔍 Debug URL IG & Threads dari Outstand:\n`/debuglinks <postId>`\n\nContoh: `/debuglinks QFXny`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    await ctx.reply('⏳ Mengambil raw data dari Outstand…');
+    try {
+      for (const postId of postIds.slice(0, 3)) {
+        const post = await getPost(postId);
+        const accts = (post?.socialAccounts ?? []).filter(
+          (a) => ['instagram', 'threads'].includes((a.network || '').toLowerCase())
+        );
+
+        if (!accts.length) {
+          await ctx.reply(`Post \`${postId}\` — tidak ada akun IG/Threads.`, { parse_mode: 'Markdown' });
+          continue;
+        }
+
+        const lines = [`🔍 *Debug links — Post \`${postId}\`*`, ''];
+        for (const a of accts) {
+          const net = (a.network || '').toUpperCase().slice(0, 2);
+          const st = a.status === 'published' ? '✅' : a.status === 'failed' ? '❌' : '⏳';
+          const pid = a.platformPostId || '—';
+          const url = a.url || '—';
+          const isProfile =
+            (a.network === 'instagram' && !/\/p\/|\/reel\/|\/tv\//i.test(url)) ||
+            (a.network === 'threads' && !/\/post\//i.test(url));
+          const urlType = !a.url ? '🚫 kosong' : isProfile ? '👤 profil (bukan post!)' : '🔗 post';
+          lines.push(`${st} *${net}* @${a.username}`);
+          lines.push(`  platform\\_id: \`${pid}\``);
+          lines.push(`  url: ${urlType}`);
+          if (a.url) lines.push(`  ${a.url}`);
+          lines.push('');
+        }
+
+        await replyTelegramLong(ctx, lines.join('\n'), { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`);
+    }
+  });
+
+  bot.command('cleanup', async (ctx) => {
+    const args = (ctx.message.text || '').replace(/^\/cleanup(@\w+)?\s*/i, '').trim();
+    const dryRun = /^(preview|dry|cek)$/i.test(args);
+    const customDays = args && !dryRun ? parseInt(args, 10) : null;
+    const retentionDays = customDays > 0 ? customDays : (env.sheetTabRetentionDays || 30);
+
+    await ctx.reply(
+      `🧹 ${dryRun ? 'Preview' : 'Menghapus'} tab Sheets lebih lama dari ${retentionDays} hari…`,
+      { parse_mode: 'Markdown' }
+    );
+    try {
+      const result = await deleteOldDailyTabs({ retentionDays, dryRun });
+      const lines = [];
+      if (result.deleted.length) {
+        lines.push(`${dryRun ? '🗑 Akan dihapus' : '✅ Dihapus'} (${result.deleted.length}):\n${result.deleted.map((t) => `• ${t}`).join('\n')}`);
+      } else {
+        lines.push(`✅ Tidak ada tab yang perlu dihapus (retensi ${retentionDays} hari).`);
+      }
+      if (result.kept.length) {
+        lines.push(`📅 Disimpan: ${result.kept.length} tab`);
+      }
+      await ctx.reply(lines.join('\n\n'));
+    } catch (err) {
+      await ctx.reply(`❌ Cleanup gagal: ${err.message}`);
+    }
+  });
+
   bot.command('syncsheet', async (ctx) => {
     const session = getSession(ctx.chat.id);
     const args = (ctx.message.text || '')
@@ -4024,6 +4664,147 @@ export function createBot() {
     await ctx.reply('❌ Retry dibatalkan.');
   });
 
+  bot.action('autoretry:yes', async (ctx) => {
+    await ctx.answerCbQuery('Memulai retry…').catch(() => {});
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingAutoRetry;
+    if (!pending?.retryIds?.length) {
+      await ctx.reply('Sesi retry sudah kadaluarsa. Gunakan `/retry` manual.', {
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+    updateSession(ctx.chat.id, { pendingAutoRetry: undefined });
+    await handleRetryPublish(ctx, {
+      send: true,
+      postIds: pending.postIds || [],
+      forcedRetryIds: pending.retryIds,
+    });
+  });
+
+  bot.action('autoretry:skip', async (ctx) => {
+    await ctx.answerCbQuery('Dilewati').catch(() => {});
+    updateSession(ctx.chat.id, { pendingAutoRetry: undefined });
+    await ctx.reply('Oke, retry dilewati. Gunakan `/retry` kapan saja jika berubah pikiran.', {
+      parse_mode: 'Markdown',
+    });
+  });
+
+  /**
+   * Ambil Map failures hari ini langsung dari Outstand (best-effort, tidak throw).
+   * @returns {Promise<Map<string, { error: string, failedCount: number }>>}
+   */
+  async function getTodayFailuresById() {
+    try {
+      const usageCounts = await getTodayAccountUsageCounts();
+      const map = new Map();
+      for (const [accountId, counts] of Object.entries(usageCounts)) {
+        if ((counts.failed || 0) > 0) {
+          map.set(accountId, {
+            error:
+              counts.failed > 1
+                ? `Gagal ${counts.failed}× publish hari ini`
+                : 'Gagal publish hari ini',
+            failedCount: counts.failed,
+          });
+        }
+      }
+      return map;
+    } catch {
+      return new Map();
+    }
+  }
+
+  bot.command('akun', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/akun(@\w+)?\s*/i, '').trim();
+      const { filterText } = parseAkunCommandArgs(args);
+      const netFilter = filterText ? (parseNetworkFilter(filterText).networks[0] || null) : null;
+
+      await ctx.reply('⏳ Mengambil daftar akun…');
+
+      const accounts = await listSocialAccounts();
+      const filtered = netFilter
+        ? accounts.filter((a) => (a.network || '').toLowerCase() === netFilter)
+        : accounts;
+
+      const failuresById = await getTodayFailuresById();
+      const issueMap = buildAccountIssueMap(filtered, { failuresById });
+
+      const byNetwork = new Map();
+      for (const a of filtered) {
+        const net = (a.network || 'other').toLowerCase();
+        if (!byNetwork.has(net)) byNetwork.set(net, []);
+        byNetwork.get(net).push(a);
+      }
+
+      const lines = [
+        `📋 *Daftar Akun* (${filtered.length}${netFilter ? ' · ' + netFilter.toUpperCase() : ''})`,
+        '',
+      ];
+
+      if (!filtered.length) {
+        lines.push(netFilter ? `Tidak ada akun ${netFilter}.` : 'Belum ada akun terhubung di Outstand.');
+        lines.push('🟡 gagal publish hari ini · 🔴 token/nonaktif');
+        await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Tampilkan SEMUA akun per platform dalam pesan terpisah
+      const headerMsg = lines.join('\n') + '🟡 gagal publish hari ini · 🔴 token/nonaktif';
+      await ctx.reply(headerMsg, { parse_mode: 'Markdown' });
+
+      for (const [net, accs] of byNetwork) {
+        const netLabel = getNetworkShortLabel(net) || net.toUpperCase();
+        const bad = accs.filter((a) => issueMap.get(a.id)?.worst);
+        const netLines = [
+          `*${netLabel}* — ${accs.length} akun${bad.length ? ` · ${bad.length} ⚠️` : ' ✅'}`,
+          '',
+        ];
+        for (const a of accs) {
+          const entry = issueMap.get(a.id);
+          const badge = issueBadge(entry?.worst);
+          const user = (a.username || a.id).replace(/^@/, '').replace(/_/g, '\\_');
+          netLines.push(`• @${user}${badge}`);
+        }
+        await ctx.reply(netLines.join('\n'), { parse_mode: 'Markdown' });
+      }
+
+      if (!netFilter) {
+        await ctx.reply('_Filter per platform: `/akun ig` · `/akun fb` · `/akun yt`_', {
+          parse_mode: 'Markdown',
+        });
+      }
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /akun: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  bot.command('cekakun', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/cekakun(@\w+)?\s*/i, '').trim();
+      const { filterText } = parseAkunCommandArgs(args);
+      const netFilter = filterText ? (parseNetworkFilter(filterText).networks[0] || null) : null;
+
+      await ctx.reply('⏳ Memeriksa kesehatan akun…');
+
+      const accounts = await listSocialAccounts();
+      const filtered = netFilter
+        ? accounts.filter((a) => (a.network || '').toLowerCase() === netFilter)
+        : accounts;
+
+      const failuresById = await getTodayFailuresById();
+      const tabName = getDailyTabName();
+
+      const report = formatCekAkunReport(filtered, { failuresById, tabName });
+      await replyTelegramLong(ctx, report, { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /cekakun: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
   bot.action('target:all', async (ctx) => {
     const accounts = await listSocialAccounts();
     await finalizeTargetSelection(
@@ -4073,6 +4854,53 @@ export function createBot() {
     else selected.add(id);
 
     updateSession(ctx.chat.id, { accountPickSelected: [...selected] });
+    if (network === '__multi__') {
+      await refreshGlobalAccountPicker(ctx);
+    } else {
+      await refreshAccountPicker(ctx);
+    }
+  });
+
+  bot.action(/^acctrand:(.+)$/, async (ctx) => {
+    const network = ctx.match[1].toLowerCase();
+    await ack(ctx);
+    const session = getSession(ctx.chat.id);
+    if (!session.accountPickNetwork) {
+      await ctx.reply('Sesi kadaluarsa. Ulangi dari target picker.');
+      return;
+    }
+
+    const selected = new Set(session.accountPickSelected || []);
+    const [allAccounts, excludeIds] = await Promise.all([
+      listSocialAccounts(),
+      getExcludeIdsForRandomPick(ctx.chat.id),
+    ]);
+
+    const excludeSet = new Set(excludeIds);
+    const pool =
+      network === '__multi__'
+        ? allAccounts.filter((a) => !selected.has(a.id) && !excludeSet.has(a.id))
+        : allAccounts.filter(
+            (a) =>
+              (a.network || '').toLowerCase() === network &&
+              !selected.has(a.id) &&
+              !excludeSet.has(a.id)
+          );
+
+    if (!pool.length) {
+      await ctx.reply(
+        '⚠️ Tidak ada akun tersisa yang bisa ditambahkan\n' +
+          '(semua sudah tercentang, sudah dipakai hari ini, atau ada di skip-list).'
+      );
+      return;
+    }
+
+    // Shuffle dan tambahkan semua ke selection
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    for (const a of shuffled) selected.add(a.id);
+
+    updateSession(ctx.chat.id, { accountPickSelected: [...selected] });
+
     if (network === '__multi__') {
       await refreshGlobalAccountPicker(ctx);
     } else {
@@ -4297,7 +5125,7 @@ export function createBot() {
   bot.action(/^folder:(.+)$/, handleFolderSelect);
   bot.action(/^pack:(.+)$/, handlePackSelect);
   bot.action(/^file:(.+)$/, handleFileSelect);
-  bot.action(/^action:(send|schedule|edit)$/, handleAction);
+  bot.action(/^action:(preview|send|schedule|edit)$/, handleAction);
 
   bot.on(['photo', 'video', 'document'], async (ctx) => {
     if (!extractTelegramMedia(ctx)) return;
@@ -4359,6 +5187,721 @@ export function createBot() {
       .catch(() => {});
   });
 
+  // ── /laporan ──────────────────────────────────────────────────────────────
+  bot.command('laporan', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/laporan(@\w+)?\s*/i, '').trim();
+      const { networks: filterNets } = parseNetworkFilter(args);
+
+      await ctx.reply('⏳ Mengambil data performa hari ini dari Outstand…');
+
+      const usageCounts = await getTodayAccountUsageCounts();
+      const tabName = getDailyTabName();
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+
+      /** @type {Record<string, { published: number, pending: number, failed: number, failedAccounts: Array<{ username: string, failed: number }> }>} */
+      const byNetwork = {};
+      for (const counts of Object.values(usageCounts)) {
+        const net = (counts.network || 'unknown').toLowerCase();
+        if (filterNets.length && !filterNets.includes(net)) continue;
+        if (!byNetwork[net]) byNetwork[net] = { published: 0, pending: 0, failed: 0, failedAccounts: [] };
+        byNetwork[net].published += counts.published || 0;
+        byNetwork[net].pending += counts.pending || 0;
+        byNetwork[net].failed += counts.failed || 0;
+        if ((counts.failed || 0) > 0) {
+          byNetwork[net].failedAccounts.push({ username: counts.username || '?', failed: counts.failed });
+        }
+      }
+
+      const lines = [`📊 *Laporan ${tabName}*${filterNets.length ? ' · ' + filterNets.map((n) => n.toUpperCase()).join(', ') : ''}`, ''];
+
+      let totalPub = 0, totalPend = 0, totalFail = 0;
+      const sortedNets = Object.entries(byNetwork).sort(([a], [b]) => a.localeCompare(b));
+
+      if (!sortedNets.length) {
+        lines.push('_Belum ada data publish hari ini._');
+      } else {
+        for (const [net, stats] of sortedNets) {
+          const label = getNetworkShortLabel(net) || net.toUpperCase();
+          const total = stats.published + stats.pending + stats.failed;
+          const pct = total > 0 ? Math.round((stats.published / total) * 100) : 0;
+          lines.push(`*${label}* — ✅ ${stats.published} · ⏳ ${stats.pending} · ❌ ${stats.failed} _(${pct}% live)_`);
+          totalPub += stats.published;
+          totalPend += stats.pending;
+          totalFail += stats.failed;
+        }
+
+        lines.push('');
+        const grandTotal = totalPub + totalPend + totalFail;
+        const grandPct = grandTotal > 0 ? Math.round((totalPub / grandTotal) * 100) : 0;
+        lines.push(`*Total* — ✅ ${totalPub} · ⏳ ${totalPend} · ❌ ${totalFail} _(${grandPct}% live)_`);
+      }
+
+      // Akun gagal terbanyak
+      const allFailed = Object.values(usageCounts)
+        .filter((c) => (c.failed || 0) > 0 && (!filterNets.length || filterNets.includes((c.network || '').toLowerCase())))
+        .sort((a, b) => b.failed - a.failed)
+        .slice(0, 12);
+
+      if (allFailed.length) {
+        lines.push('', '*Akun gagal:*');
+        for (const c of allFailed) {
+          const net = getNetworkShortLabel(c.network) || (c.network || '?').toUpperCase();
+          lines.push(`• ${net} @${escUser(c.username)} — ❌ ${c.failed}×`);
+        }
+      }
+
+      if (totalFail > 0) {
+        lines.push('', '_Gunakan `/cekakun` untuk analisis masalah akun._');
+      }
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /laporan: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /skip ─────────────────────────────────────────────────────────────────
+  bot.command('skip', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/skip(@\w+)?\s*/i, '').trim();
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+
+      // /skip reset | /skip clear
+      if (/^(reset|clear|hapus)$/i.test(args)) {
+        clearSkipList();
+        await ctx.reply('✅ Daftar skip dikosongkan. Semua akun kembali bisa dipilih.').catch(() => {});
+        return;
+      }
+
+      // /skip del @user | /skip remove @user
+      const delMatch = args.match(/^(del|remove|hapus)\s+(.+)/i);
+      if (delMatch) {
+        const tokens = delMatch[2].split(/[\s,]+/).filter(Boolean);
+        const { removed, notFound } = removeFromSkipList(tokens);
+        const lines = [];
+        if (removed.length) lines.push(`✅ Dihapus dari skip: ${removed.map((u) => `@${escUser(u)}`).join(', ')}`);
+        if (notFound.length) lines.push(`⚠️ Tidak ada di daftar: ${notFound.map((u) => `@${escUser(u)}`).join(', ')}`);
+        await ctx.reply(lines.join('\n') || 'Tidak ada yang dihapus.').catch(() => {});
+        return;
+      }
+
+      // /skip (tanpa arg) → tampilkan daftar
+      if (!args) {
+        const list = loadSkipList();
+        if (!list.length) {
+          await ctx.reply(
+            '📋 *Daftar skip kosong.*\n\n' +
+              'Tambah akun: `/skip @username1 @username2`\n' +
+              'Hapus satu: `/skip del @username`\n' +
+              'Kosongkan: `/skip reset`\n\n' +
+              '_Akun di daftar ini tidak akan terpilih saat `/random`._',
+            { parse_mode: 'Markdown' }
+          );
+        } else {
+          const userLines = list.map((u) => `• @${escUser(u)}`).join('\n');
+          await ctx.reply(
+            `📋 *Akun di-skip (${list.length})*:\n\n${userLines}\n\n` +
+              '_Akun ini tidak dipilih saat `/random` atau `/publish` otomatis._\n' +
+              'Hapus: `/skip del @username` · Reset: `/skip reset`',
+            { parse_mode: 'Markdown' }
+          );
+        }
+        return;
+      }
+
+      // /skip @user1 @user2 → tambah ke daftar
+      const tokens = args.split(/[\s,]+/).filter(Boolean);
+      const { added, existing, list } = addToSkipList(tokens);
+
+      const lines = [];
+      if (added.length) lines.push(`✅ Ditambah ke skip: ${added.map((u) => `@${escUser(u)}`).join(', ')}`);
+      if (existing.length) lines.push(`ℹ️ Sudah ada di daftar: ${existing.map((u) => `@${escUser(u)}`).join(', ')}`);
+      lines.push(`\n📋 Total di-skip: *${list.length} akun*`);
+      lines.push('_Akun ini tidak akan dipilih saat `/random`._');
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' }).catch(() => {});
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /skip: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /simulasi ─────────────────────────────────────────────────────────────
+  bot.command('simulasi', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/simulasi(@\w+)?\s*/i, '').trim();
+      if (!args) {
+        await ctx.reply(
+          '🔍 *Simulasi random pick* — preview akun yang akan dipilih tanpa publish.\n\n' +
+            'Contoh: `/simulasi ig 22 fb 30`\n' +
+            'Sama persis dengan `/random` tapi tidak ada konfirmasi kirim.',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      const parsed = parseRandomPickCommand(args);
+      if (!parsed?.counts || !Object.keys(parsed.counts).length) {
+        await ctx.reply('Format tidak dikenal. Contoh: `/simulasi ig 22 fb 30`', { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await ctx.reply('⏳ Mensimulasikan pemilihan akun…');
+
+      const accounts = await listSocialAccounts();
+      const exclude = await getExcludeIdsForRandomPick(ctx.chat.id);
+      const result = pickRandomAccounts(accounts, parsed.counts, {
+        excludeAccountIds: exclude,
+        maxReusePerAccount: env.maxReusePerAccount,
+      });
+
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+      const byNet = {};
+      for (const a of result.accountIds.map((id) => accounts.find((ac) => ac.id === id)).filter(Boolean)) {
+        const net = (a.network || 'other').toLowerCase();
+        if (!byNet[net]) byNet[net] = [];
+        byNet[net].push(a);
+      }
+
+      const lines = [
+        `🔍 *Simulasi — ${result.accountIds.length} akun terpilih*`,
+        `_(exclude: ${exclude.length} akun sudah dipakai hari ini + skip list)_`,
+        '',
+      ];
+
+      for (const [net, accs] of Object.entries(byNet)) {
+        const label = getNetworkShortLabel(net) || net.toUpperCase();
+        lines.push(`*${label}* (${accs.length}):`);
+        for (const a of accs) {
+          lines.push(`• @${escUser(a.username || a.id)}`);
+        }
+        lines.push('');
+      }
+
+      if (result.warnings?.length) {
+        lines.push('⚠️ ' + result.warnings.join('\n⚠️ '));
+      }
+
+      lines.push('_Ini hanya simulasi — tidak ada yang dikirim._');
+      await replyTelegramLong(ctx, lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /simulasi: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /jadwal list ──────────────────────────────────────────────────────────
+  bot.command('jadwal', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/jadwal(@\w+)?\s*/i, '').trim();
+
+      if (args !== 'list' && args !== 'daftar') {
+        await ctx.reply(
+          '📅 *Jadwal*\n\n' +
+            '`/jadwal list` — lihat semua post terjadwal\n\n' +
+            '_Untuk jadwalkan publish baru: `/publish` → pilih akun → tekan tombol "📅 Schedule"._',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      await ctx.reply('⏳ Mengambil daftar post terjadwal dari Outstand…');
+
+      const postIds = await listRecentPostIds({ daysBack: 7 });
+      const now = Date.now();
+      const scheduled = [];
+
+      for (const id of postIds.slice(0, 30)) {
+        try {
+          const post = await getPost(id);
+          if (!post?.scheduledAt) continue;
+          const schedMs = new Date(post.scheduledAt).getTime();
+          if (schedMs > now) {
+            scheduled.push({ id, scheduledAt: post.scheduledAt, post });
+          }
+        } catch { /* skip */ }
+      }
+
+      if (!scheduled.length) {
+        await ctx.reply('📅 Tidak ada post terjadwal yang belum tayang.');
+        return;
+      }
+
+      scheduled.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+
+      const lines = [`📅 *${scheduled.length} post terjadwal*`, ''];
+      for (const { id, scheduledAt, post } of scheduled) {
+        const wib = formatWibDateTime(scheduledAt);
+        const accs = post.socialAccounts || [];
+        const nets = [...new Set(accs.map((a) => getNetworkShortLabel(a.network) || a.network))].join(', ');
+        lines.push(`• \`${id}\` — ${wib}`);
+        lines.push(`  ${nets} · ${accs.length} akun`);
+        lines.push(`  _Batalkan: \`/stop ${id}\`_`);
+        lines.push('');
+      }
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /jadwal: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /riwayat ──────────────────────────────────────────────────────────────
+  bot.command('riwayat', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/riwayat(@\w+)?\s*/i, '').trim();
+      const days = Math.min(30, Math.max(1, Number(args) || 7));
+
+      await ctx.reply(`⏳ Membaca data ${days} hari terakhir dari Sheets…`);
+
+      const { getSheetsClient } = await import('../config/google.js');
+      const { getSpreadsheetId } = await import('./spreadsheetSetup.js');
+      const { isWideSheetHeader, parseWideSheetHeader, isLegacySheetHeader } = await import('../config/sheetLayout.js');
+
+      const spreadsheetId = await getSpreadsheetId();
+      const sheets = getSheetsClient();
+      const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' });
+      const allTabs = (meta.data.sheets || []).map((s) => s.properties.title || '');
+
+      // Tab harian format YYYY-MM-DD
+      const today = getWibDayKey();
+      const dayTabs = [];
+      for (let i = 0; i < days; i++) {
+        const d = new Date(Date.now() - i * 86_400_000);
+        const key = getWibDayKey(d);
+        if (allTabs.includes(key)) dayTabs.push(key);
+      }
+
+      if (!dayTabs.length) {
+        await ctx.reply(`Tidak ada tab Sheets untuk ${days} hari terakhir.`);
+        return;
+      }
+
+      const summary = {};
+      for (const tab of dayTabs) {
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${tab.replace(/'/g, "''")}'!A:ZZ`,
+        });
+        const rows = res.data.values || [];
+        const header = rows[0] || [];
+        let pub = 0, fail = 0, pend = 0;
+
+        const tally = (cell) => {
+          const st = String(cell || '').toLowerCase();
+          if (st.includes('live') || st.includes('published')) pub++;
+          else if (st.includes('gagal') || st.includes('failed')) fail++;
+          else if (st.includes('pending')) pend++;
+        };
+
+        if (isWideSheetHeader(header)) {
+          const { instructions } = parseWideSheetHeader(header);
+          const statusCols = instructions.map((i) => i.statusIdx);
+          for (let i = 1; i < rows.length; i++) {
+            if (String(rows[i][0] || '').startsWith('REKAP')) continue;
+            for (const col of statusCols) tally(rows[i][col]);
+          }
+        } else {
+          for (let i = 1; i < rows.length; i++) {
+            if (String(rows[i][0] || '').startsWith('REKAP')) continue;
+            tally(rows[i][7]);
+          }
+        }
+        summary[tab] = { pub, fail, pend };
+      }
+
+      const lines = [`📈 *Riwayat ${days} hari terakhir*`, ''];
+      let totalPub = 0, totalFail = 0;
+
+      for (const tab of dayTabs) {
+        const s = summary[tab];
+        const total = s.pub + s.fail + s.pend;
+        const pct = total > 0 ? Math.round((s.pub / total) * 100) : 0;
+        const bar = pct >= 90 ? '🟢' : pct >= 70 ? '🟡' : '🔴';
+        const isToday = tab === today ? ' _(hari ini)_' : '';
+        lines.push(`${bar} \`${tab}\`${isToday} — ✅${s.pub} ❌${s.fail} ⏳${s.pend} _(${pct}%)_`);
+        totalPub += s.pub;
+        totalFail += s.fail;
+      }
+
+      const grandTotal = totalPub + totalFail;
+      const grandPct = grandTotal > 0 ? Math.round((totalPub / grandTotal) * 100) : 0;
+      lines.push('', `*${dayTabs.length} hari* — ✅ ${totalPub} total live · ❌ ${totalFail} gagal _(${grandPct}%)_`);
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /riwayat: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /topakun ──────────────────────────────────────────────────────────────
+  bot.command('topakun', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/topakun(@\w+)?\s*/i, '').trim();
+      const { networks: filterNets } = parseNetworkFilter(args);
+
+      await ctx.reply('⏳ Mengambil data performa akun hari ini…');
+
+      const usageCounts = await getTodayAccountUsageCounts();
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+
+      const entries = Object.entries(usageCounts)
+        .filter(([, c]) => {
+          if (filterNets.length && !filterNets.includes((c.network || '').toLowerCase())) return false;
+          return (c.published || 0) + (c.failed || 0) > 0;
+        })
+        .map(([id, c]) => ({
+          id,
+          username: c.username || id,
+          network: c.network || 'unknown',
+          published: c.published || 0,
+          failed: c.failed || 0,
+          total: (c.published || 0) + (c.failed || 0) + (c.pending || 0),
+          pct: ((c.published || 0) + (c.failed || 0) + (c.pending || 0)) > 0
+            ? Math.round(((c.published || 0) / ((c.published || 0) + (c.failed || 0) + (c.pending || 0))) * 100)
+            : 0,
+        }));
+
+      if (!entries.length) {
+        await ctx.reply('Belum ada data publish hari ini.');
+        return;
+      }
+
+      const best = [...entries].sort((a, b) => b.pct - a.pct || b.published - a.published).slice(0, 10);
+      const worst = [...entries].filter((e) => e.failed > 0).sort((a, b) => b.failed - a.failed || a.pct - b.pct).slice(0, 10);
+
+      const lines = [
+        `🏆 *Top Akun ${getDailyTabName()}*${filterNets.length ? ' · ' + filterNets.map((n) => n.toUpperCase()).join(', ') : ''}`,
+        '',
+        `*✅ Terbaik (${best.length}):*`,
+      ];
+
+      for (const e of best) {
+        const net = getNetworkShortLabel(e.network) || e.network.toUpperCase();
+        const bar = e.pct === 100 ? '🟢' : e.pct >= 80 ? '🟡' : '🔴';
+        lines.push(`${bar} ${net} @${escUser(e.username)} — ${e.pct}% (${e.published}/${e.total})`);
+      }
+
+      if (worst.length) {
+        lines.push('', `*❌ Sering gagal (${worst.length}):*`);
+        for (const e of worst) {
+          const net = getNetworkShortLabel(e.network) || e.network.toUpperCase();
+          lines.push(`🔴 ${net} @${escUser(e.username)} — ${e.failed}× gagal (${e.pct}% live)`);
+        }
+        lines.push('', '_Akun sering gagal → cek `/cekakun` · tambah ke skip: `/skip @username`_');
+      }
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /topakun: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /grup ─────────────────────────────────────────────────────────────────
+  bot.command('grup', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/grup(@\w+)?\s*/i, '').trim();
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+
+      if (!args || args === 'list' || args === 'daftar') {
+        const groups = loadGroups();
+        const keys = Object.keys(groups);
+        if (!keys.length) {
+          await ctx.reply(
+            '📁 *Belum ada grup akun.*\n\n' +
+              'Buat grup: `/grup buat fashion @acc1 @acc2`\n' +
+              'Hapus: `/grup hapus fashion`\n' +
+              'Pakai di random: `/random dari:fashion 10`',
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+        const lines = [`📁 *Grup akun (${keys.length}):*`, ''];
+        for (const key of keys) {
+          const g = groups[key];
+          lines.push(`• *${escUser(g.name)}* — ${g.usernames.length} akun`);
+          if (g.usernames.length <= 5) {
+            lines.push(`  ${g.usernames.map((u) => `@${escUser(u)}`).join(', ')}`);
+          } else {
+            lines.push(`  ${g.usernames.slice(0, 4).map((u) => `@${escUser(u)}`).join(', ')} …+${g.usernames.length - 4}`);
+          }
+        }
+        lines.push('', '_Pakai: `/random dari:namagrup 10`_');
+        await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /grup buat <nama> @acc1 @acc2
+      const buatMatch = args.match(/^buat\s+(\S+)\s+([\s\S]+)/i);
+      if (buatMatch) {
+        const name = buatMatch[1];
+        const userTokens = buatMatch[2].split(/[\s,]+/).filter((t) => t.startsWith('@') || /^\w/.test(t));
+        const group = createGroup(name, userTokens);
+        await ctx.reply(
+          `✅ Grup *${escUser(group.name)}* dibuat/diperbarui.\n${group.usernames.length} akun: ${group.usernames.slice(0, 6).map((u) => `@${escUser(u)}`).join(', ')}${group.usernames.length > 6 ? ` …+${group.usernames.length - 6}` : ''}`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // /grup hapus <nama>
+      const hapusMatch = args.match(/^(hapus|delete|del)\s+(\S+)/i);
+      if (hapusMatch) {
+        const deleted = deleteGroup(hapusMatch[2]);
+        await ctx.reply(deleted ? `✅ Grup *${escUser(hapusMatch[2])}* dihapus.` : `⚠️ Grup tidak ditemukan.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /grup <nama> — lihat isi grup
+      const group = getGroup(args.split(/\s+/)[0]);
+      if (group) {
+        const lines = [`📁 *Grup: ${escUser(group.name)}* (${group.usernames.length} akun)`, ''];
+        for (const u of group.usernames) lines.push(`• @${escUser(u)}`);
+        lines.push('', `_Hapus: \`/grup hapus ${group.name}\`_`);
+        lines.push(`_Pakai: \`/random dari:${group.name} 10\`_`);
+        await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await ctx.reply(
+        'Perintah tidak dikenal.\n\n`/grup list` · `/grup buat nama @acc1 @acc2` · `/grup hapus nama`',
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /grup: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /lib (caption library) ────────────────────────────────────────────────
+  bot.command('lib', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/lib(@\w+)?\s*/i, '').trim();
+      const session = getSession(ctx.chat.id);
+      const escUser = (s) => String(s || '').replace(/[_*`[\]]/g, '\\$&');
+
+      if (!args || args === 'list' || args === 'daftar') {
+        const captions = listCaptions();
+        if (!captions.length) {
+          await ctx.reply(
+            '📚 *Library caption kosong.*\n\n' +
+              'Simpan caption aktif: `/lib simpan nama-caption`\n' +
+              'Pakai caption tersimpan: `/lib pakai nama-caption`\n' +
+              'Hapus: `/lib hapus nama-caption`',
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+        const lines = [`📚 *Caption library (${captions.length}):*`, ''];
+        for (const c of captions) {
+          const preview = c.caption.slice(0, 60).replace(/\n/g, ' ');
+          lines.push(`• *${escUser(c.name)}* — _${escUser(preview)}${c.caption.length > 60 ? '…' : ''}_`);
+        }
+        lines.push('', '_Pakai: `/lib pakai nama-caption`_');
+        await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /lib simpan <nama>
+      const simpanMatch = args.match(/^simpan\s+(.+)/i);
+      if (simpanMatch) {
+        const name = simpanMatch[1].trim();
+        const caption = session.caption;
+        if (!caption) {
+          await ctx.reply('❌ Belum ada caption di sesi. Buat caption dulu lewat `/publish`.');
+          return;
+        }
+        saveCaption(name, caption);
+        await ctx.reply(`✅ Caption disimpan sebagai *${escUser(name)}*.\nGunakan: \`/lib pakai ${name}\``, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // /lib pakai <nama>
+      const pakaiMatch = args.match(/^pakai\s+(.+)/i);
+      if (pakaiMatch) {
+        const name = pakaiMatch[1].trim();
+        const saved = getCaption(name);
+        if (!saved) {
+          await ctx.reply(`❌ Caption *${escUser(name)}* tidak ditemukan. Lihat daftar: \`/lib\``, { parse_mode: 'Markdown' });
+          return;
+        }
+        if (!session.selectedAccountIds?.length) {
+          await ctx.reply('❌ Belum ada akun terpilih. Mulai dari `/publish` dulu.');
+          return;
+        }
+        const accounts = await listSocialAccounts();
+        const selected = accounts.filter((a) => session.selectedAccountIds.includes(a.id));
+        const networks = [...new Set(selected.map((a) => (a.network || '').toLowerCase()).filter(Boolean))];
+        const captionsByNetwork = buildCaptionsByNetwork(saved.caption, networks);
+        updateSession(ctx.chat.id, {
+          caption: saved.caption,
+          captionsByNetwork,
+          captionTone: undefined,
+          step: 'ready',
+        });
+        await ctx.reply(`✅ Caption *${escUser(name)}* dipakai.\n\n_${escUser(saved.caption.slice(0, 100))}${saved.caption.length > 100 ? '…' : ''}_`, { parse_mode: 'Markdown' });
+        const label = session.targetLabel || `${session.selectedAccountIds.length} akun`;
+        await showReadyPreview(ctx, session.selectedAccountIds, label, networks);
+        return;
+      }
+
+      // /lib hapus <nama>
+      const hapusMatch = args.match(/^(hapus|delete|del)\s+(.+)/i);
+      if (hapusMatch) {
+        const deleted = deleteCaption(hapusMatch[2].trim());
+        await ctx.reply(deleted ? `✅ Caption *${escUser(hapusMatch[2].trim())}* dihapus.` : '⚠️ Caption tidak ditemukan.', { parse_mode: 'Markdown' });
+        return;
+      }
+
+      await ctx.reply(
+        '📚 *Caption Library*\n\n' +
+          '`/lib` — lihat daftar\n' +
+          '`/lib simpan nama` — simpan caption sesi aktif\n' +
+          '`/lib pakai nama` — gunakan caption tersimpan\n' +
+          '`/lib hapus nama` — hapus caption',
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /lib: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /duplikat ─────────────────────────────────────────────────────────────
+  bot.command('duplikat', async (ctx) => {
+    try {
+      const session = getSession(ctx.chat.id);
+      const last = session.lastPublish || loadPublishArchive(ctx.chat.id);
+      if (!last?.mediaFiles?.length) {
+        await ctx.reply(
+          '❌ Tidak ada data publish tersimpan.\n\n' +
+            '`/duplikat` menggunakan media & caption dari publish terakhir ke akun baru.\n' +
+            'Selesaikan satu publish dulu, lalu `/duplikat`.',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+      // Duplikat = republish ke target baru menggunakan data publish lama
+      await ctx.reply(
+        '♻️ *Duplikat publish*\n\n' +
+          `Media: *${escapeMarkdown(last.folderName || 'Publish terakhir')}*\n` +
+          `Caption tersimpan dari sesi sebelumnya.\n\n` +
+          'Pilih target baru:',
+        { parse_mode: 'Markdown' }
+      );
+      updateSession(ctx.chat.id, {
+        mediaFiles: last.mediaFiles,
+        mediaFilesDay: last.mediaFilesDay || getWibDayKey(),
+        mediaFilesSetAt: last.savedAt || new Date().toISOString(),
+        caption: last.caption,
+        captionsByNetwork: last.captionsByNetwork,
+        youtubeFields: last.youtubeFields,
+        folderName: last.folderName,
+        folderId: last.folderId,
+        step: 'selecting_targets',
+      });
+      await showTargetPicker(ctx);
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /duplikat: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /autostop ─────────────────────────────────────────────────────────────
+  bot.command('autostop', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/autostop(@\w+)?\s*/i, '').trim();
+      const maxAgeHours = Math.max(1, Number(args) || 6);
+
+      await ctx.reply(`⏳ Mencari antrian pending lebih dari ${maxAgeHours} jam…`);
+
+      const postIds = await listRecentPostIds({ daysBack: 3 });
+      const cutoffMs = Date.now() - maxAgeHours * 3_600_000;
+      const stale = [];
+
+      for (const id of postIds.slice(0, 40)) {
+        try {
+          const post = await getPost(id);
+          if (!post) continue;
+          const createdMs = post.createdAt ? new Date(post.createdAt).getTime() : NaN;
+          if (!Number.isFinite(createdMs) || createdMs > cutoffMs) continue;
+          const pending = (post.socialAccounts || []).filter(
+            (a) => (a.status || '').toLowerCase() === 'pending'
+          );
+          if (pending.length > 0) {
+            stale.push({ id, pending: pending.length, createdAt: post.createdAt });
+          }
+        } catch { /* skip */ }
+      }
+
+      if (!stale.length) {
+        await ctx.reply(`✅ Tidak ada antrian pending lebih dari ${maxAgeHours} jam.`);
+        return;
+      }
+
+      const lines = [
+        `⚠️ *${stale.length} Post ID dengan pending > ${maxAgeHours} jam:*`,
+        '',
+      ];
+      for (const s of stale) {
+        const wib = formatWibDateTime(s.createdAt);
+        lines.push(`• \`${s.id}\` — ${s.pending} akun pending · dibuat ${wib}`);
+      }
+      lines.push('', '_Batalkan semua? Ketik `/autostop cancel` untuk konfirmasi._');
+      lines.push('_Atau batalkan satu: `/stop [PostID]`_');
+
+      updateSession(ctx.chat.id, {
+        pendingAutoStop: stale.map((s) => s.id),
+      });
+
+      await ctx.reply(lines.join('\n'), {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback(`🛑 Batalkan semua (${stale.length})`, 'autostop:cancel')],
+          [Markup.button.callback('Biarkan saja', 'autostop:skip')],
+        ]),
+      });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /autostop: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  bot.action('autostop:cancel', async (ctx) => {
+    await ctx.answerCbQuery('Membatalkan…').catch(() => {});
+    const session = getSession(ctx.chat.id);
+    const ids = session.pendingAutoStop || [];
+    if (!ids.length) {
+      await ctx.reply('Tidak ada yang perlu dibatalkan.');
+      return;
+    }
+    updateSession(ctx.chat.id, { pendingAutoStop: undefined });
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try {
+        await cancelOutstandPost(id);
+        markPostIdCancelled(id);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    await ctx.reply(
+      `🛑 Selesai: ${ok} dibatalkan${fail ? ` · ${fail} gagal (sudah live/error Outstand)` : ''}.`
+    );
+  });
+
+  bot.action('autostop:skip', async (ctx) => {
+    await ctx.answerCbQuery('Dibiarkan').catch(() => {});
+    updateSession(ctx.chat.id, { pendingAutoStop: undefined });
+    await ctx.reply('Oke, antrian dibiarkan.');
+  });
+
   botInstance = bot;
   return bot;
 }
@@ -4382,6 +5925,18 @@ export async function startBot() {
       { command: 'retry', description: 'Ulangi akun yang gagal' },
       { command: 'refresh', description: 'Sync status Outstand → Sheets' },
       { command: 'stop', description: 'Lihat/batalkan antrian pending Outstand' },
+      { command: 'akun', description: 'Daftar semua akun (filter: ig/fb/yt/dll)' },
+      { command: 'cekakun', description: 'Cek akun bermasalah hari ini' },
+      { command: 'laporan', description: 'Performa publish hari ini per platform' },
+      { command: 'riwayat', description: 'Laporan mingguan Sheets (contoh: /riwayat 7)' },
+      { command: 'topakun', description: 'Ranking akun terbaik/terburuk hari ini' },
+      { command: 'simulasi', description: 'Preview akun yg dipilih tanpa publish' },
+      { command: 'jadwal', description: 'Lihat post terjadwal (/jadwal list)' },
+      { command: 'skip', description: 'Blacklist akun dari random pick' },
+      { command: 'grup', description: 'Kelola grup akun per niche' },
+      { command: 'lib', description: 'Caption library — simpan & pakai ulang' },
+      { command: 'duplikat', description: 'Duplikat publish terakhir ke target baru' },
+      { command: 'autostop', description: 'Batalkan antrian pending lama (def: >6 jam)' },
       { command: 'scanpost', description: 'Scan post tak terduga di Outstand' },
       { command: 'stuck', description: 'Akun pending >2 jam' },
       { command: 'linkshari', description: 'Link post hari ini (filter: ig/fb/yt/dll)' },

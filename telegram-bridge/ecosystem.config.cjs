@@ -9,6 +9,8 @@ module.exports = {
       max_memory_restart: '512M',
       env: {
         NODE_ENV: 'production',
+        UNEXPECTED_POST_MONITOR_MINUTES: '0',
+        PENDING_MONITOR_MINUTES: '0',
       },
     },
   ],

@@ -48,11 +48,11 @@ export function classifyRetryError(error) {
     };
   }
 
-  if (/too many actions/i.test(raw)) {
+  if (/too many actions|reached_active_user_cap/i.test(raw)) {
     return {
       action: RETRY_ACTION.RATE_LIMIT_MAYBE_LIVE,
       hint:
-        'API menolak (rate limit) — post *sering tetap terbit* di profil. Cek dulu; jangan retry jika sudah live.',
+        'TikTok mengembalikan error tapi post *sering sudah terbit* di profil. Cek manual dulu; jangan retry jika sudah live.',
     };
   }
 
@@ -138,11 +138,11 @@ export function parseRetryCommand(text) {
   return { send, network, postIds, usernames };
 }
 
-/** Post ID Outstand biasanya pendek (mis. 1dHcG, ew0Tr). */
+/** Post ID Outstand biasanya pendek (mis. 1dHcG, ew0Tr). Konsisten dengan isValidOutstandPostId. */
 function looksLikeOutstandPostId(part) {
   return (
     part.length >= 3 &&
-    part.length <= 8 &&
+    part.length <= 16 &&
     /^[a-zA-Z0-9]+$/.test(part)
   );
 }
@@ -211,7 +211,8 @@ export function formatRetryPlanReport(plan, postIdLine = '') {
       .slice(0, 8)
       .map((a) => {
         const net = NET_SHORT[(a.network || '').toLowerCase()] || a.network || '?';
-        return `• ${net} @${(a.username || '').replace(/^@/, '')}`;
+        const user = (a.username || '').replace(/^@/, '').replace(/[_*`[\]]/g, '\\$&');
+        return `• ${net} @${user}`;
       });
     skippedPrefix =
       `ℹ️ *${plan.skippedLive.length} akun* ditandai gagal di Outstand tapi sudah ada link live — *tidak* di-retry otomatis.\n` +

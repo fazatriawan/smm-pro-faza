@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { getSheetsClient } from '../config/google.js';
 import { env } from '../config/env.js';
 import { buildLivePostUrl } from '../utils/platformUrl.js';
@@ -24,7 +26,7 @@ import {
   buildSheetAccountsFromTargets,
   summarizeSheetAccounts,
 } from './publishResult.js';
-import { getPost, listSocialAccounts } from './outstand.js';
+import { getPost, listSocialAccounts } from './publisher.js';
 import {
   annotateAccountsWithDayAttempts,
   annotateNewAccountsAgainstDayHistory,
@@ -34,6 +36,8 @@ import {
 import { formatWibDateTime, formatWibTimeShort, getWibDayKey } from '../utils/wibTime.js';
 import { buildContentLabel, shortenContentLabel } from '../utils/contentLabel.js';
 import { createLogger } from '../utils/logger.js';
+import { withSheetLock } from '../utils/sheetMutex.js';
+import { resolveConflictTabs } from './sheetConflict.js';
 
 const log = createLogger('sheets');
 import { reconcileSheetAccounts } from '../utils/accountDayUsage.js';
@@ -47,6 +51,40 @@ import {
 
 /** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, mediaFilesDay?: string, timestamp: string, instructionId?: string, instructionLabel?: string, idempotencyKey?: string }>} */
 const publishContextByPostId = new Map();
+
+const CONTEXT_FILE = join(process.cwd(), 'data', 'publish-contexts.json');
+
+function loadPublishContextsFromDisk() {
+  try {
+    const raw = readFileSync(CONTEXT_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    const today = new Date().toISOString().slice(0, 10);
+    if (data.date !== today) return;
+    let loaded = 0;
+    for (const [postId, ctx] of Object.entries(data.contexts || {})) {
+      publishContextByPostId.set(postId, ctx);
+      loaded++;
+    }
+    if (loaded) log.info({ loaded }, '[Sheets] Publish contexts loaded from disk');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      log.warn({ err: err.message }, '[Sheets] Could not load publish contexts from disk');
+    }
+  }
+}
+
+function savePublishContextsToDisk() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const contexts = Object.fromEntries(publishContextByPostId.entries());
+    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    writeFileSync(CONTEXT_FILE, JSON.stringify({ date: today, contexts }), 'utf8');
+  } catch (err) {
+    log.warn({ err: err.message }, '[Sheets] Could not save publish contexts to disk');
+  }
+}
+
+loadPublishContextsFromDisk();
 
 const SHEET_BATCH_REFRESH_DELAYS_MS = [
   5 * 60_000,
@@ -112,6 +150,7 @@ export function registerPublishContext(
   for (const id of entry.postIds) {
     publishContextByPostId.set(id, entry);
   }
+  savePublishContextsToDisk();
 }
 
 /**
@@ -349,14 +388,94 @@ function buildWideSheetFromAccounts(event) {
   return { headerRow, dataRows, instructionCount: instructions.length };
 }
 
-async function mergeTodayAccountsForWideSheet(newAccounts, newPostIds) {
+/**
+ * Baca akun instruksi sebelumnya langsung dari baris wide sheet — tanpa API Woopsocial.
+ * Ini menggantikan collectTodayPublishLinks() di dalam mergeTodayAccountsForWideSheet
+ * supaya data pagi tidak hilang ketika API tidak tersedia saat publish malam.
+ * @param {string} tabName
+ * @param {Set<string>} excludeIds  post-ID instruksi baru yg tidak perlu dibaca ulang
+ */
+async function readPriorAccountsFromWideSheet(tabName, excludeIds) {
+  const { header, rows } = await readDailyTabHeaderAndRows(tabName);
+  if (!isWideSheetHeader(header)) return [];
+
+  const { instructions } = parseWideSheetHeader(header);
+  if (!instructions.length) return [];
+
+  const labelToNetwork = Object.fromEntries(
+    Object.entries(PLATFORM_LABELS).map(([k, v]) => [v.toLowerCase(), k])
+  );
+
+  // Deduplikasi instruksi: pakai key dari prefix (mis. "#1 15:37 WIB (3463b355f9b1)")
+  // Skip instruksi tanpa key — itu ghost column dari bug duplikasi.
+  const seenKeys = new Set();
+  const validInstructions = [];
+  for (let i = 0; i < instructions.length; i++) {
+    const inst = instructions[i];
+    const keyMatch = inst.prefix.match(/\(([a-f0-9]{8,})\)/i);
+    const key = keyMatch ? keyMatch[1].toLowerCase() : null;
+    if (!key) continue; // ghost instruction, lewati
+    if (seenKeys.has(key)) continue; // duplikat, lewati
+    seenKeys.add(key);
+
+    // Ambil waktu nyata dari prefix ("#1 15:37 WIB …") untuk rowTimestamp
+    const timeMatch = inst.prefix.match(/(\d{1,2}):(\d{2})\s*WIB/i);
+    let rowTimestamp = null;
+    if (timeMatch) {
+      const d = new Date();
+      d.setHours(parseInt(timeMatch[1], 10), parseInt(timeMatch[2], 10), 0, 0);
+      rowTimestamp = d.toISOString();
+    }
+
+    validInstructions.push({ ...inst, instructionId: key, rowTimestamp });
+  }
+
+  const accounts = [];
+  for (const row of rows) {
+    if (String(row[0] || '').startsWith('REKAP')) continue;
+    const platformLabel = String(row[0] || '').trim();
+    const network = labelToNetwork[platformLabel.toLowerCase()] || '';
+    const username = String(row[1] || '').trim().replace(/^@/, '');
+    if (!network || !username) continue;
+
+    for (const inst of validInstructions) {
+      const rawPostId = String(row[inst.postIdIdx] || '').trim();
+      if (!rawPostId) continue;
+
+      const cellPostIds = splitPostIds(rawPostId);
+      if (cellPostIds.some((id) => excludeIds.has(id))) continue;
+
+      const statusCell = String(row[inst.statusIdx] || '').trim();
+      const linkCell = String(row[inst.linkIdx] || '').trim();
+      const postId = cellPostIds[0] || rawPostId;
+      const status = statusCell.includes('✅')
+        ? 'published'
+        : statusCell.includes('❌')
+          ? 'failed'
+          : 'pending';
+      const url = /^https?:\/\//i.test(linkCell) ? linkCell : '';
+
+      accounts.push({
+        network,
+        username,
+        postId,
+        instructionId: inst.instructionId,
+        instructionLabel: inst.prefix,
+        rowTimestamp: inst.rowTimestamp,
+        status,
+        url,
+      });
+    }
+  }
+  return accounts;
+}
+
+async function mergeTodayAccountsForWideSheet(newAccounts, newPostIds, tabName) {
   const ids = new Set((newPostIds || []).filter(Boolean));
+  const tab = tabName || getDailyTabName();
   try {
-    const { collectTodayPublishLinks } = await import('./todayPublish.js');
-    const today = await collectTodayPublishLinks();
-    const others = (today.accounts || []).filter(
-      (a) => !ids.has(a.postId || '')
-    );
+    const others = await readPriorAccountsFromWideSheet(tab, ids);
+    log.info({ count: others.length, tab }, '[Sheets] prior accounts read from sheet for merge');
     return reconcileSheetAccounts([...others, ...(newAccounts || [])]);
   } catch (err) {
     log.warn({ err: err.message }, `[Sheets] merge today: ${err.message}`);
@@ -479,30 +598,32 @@ async function findSheetRowsByPostIds(spreadsheetId, tabName, postIds) {
  * @param {string[]} postIds
  */
 async function deleteRowsForPostIds(spreadsheetId, tabName, postIds) {
-  const rowIndices = await findSheetRowsByPostIds(spreadsheetId, tabName, postIds);
-  if (!rowIndices.length) return 0;
+  return withSheetLock(spreadsheetId, async () => {
+    const rowIndices = await findSheetRowsByPostIds(spreadsheetId, tabName, postIds);
+    if (!rowIndices.length) return 0;
 
-  const sheetId = await getSheetIdByTitle(spreadsheetId, tabName);
-  const sheets = getSheetsClient();
-  const requests = rowIndices
-    .sort((a, b) => b - a)
-    .map((rowIndex) => ({
-      deleteDimension: {
-        range: {
-          sheetId,
-          dimension: 'ROWS',
-          startIndex: rowIndex - 1,
-          endIndex: rowIndex,
+    const sheetId = await getSheetIdByTitle(spreadsheetId, tabName);
+    const sheets = getSheetsClient();
+    const requests = rowIndices
+      .sort((a, b) => b - a)
+      .map((rowIndex) => ({
+        deleteDimension: {
+          range: {
+            sheetId,
+            dimension: 'ROWS',
+            startIndex: rowIndex - 1,
+            endIndex: rowIndex,
+          },
         },
-      },
-    }));
+      }));
 
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: { requests },
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests },
+    });
+
+    return rowIndices.length;
   });
-
-  return rowIndices.length;
 }
 
 /**
@@ -511,6 +632,16 @@ async function deleteRowsForPostIds(spreadsheetId, tabName, postIds) {
  */
 export async function upsertPublishEventRow(event) {
   const spreadsheetId = await getSpreadsheetId();
+  return withSheetLock(spreadsheetId, () =>
+    upsertPublishEventRowLocked(event, spreadsheetId)
+  );
+}
+
+/**
+ * @param {object} event
+ * @param {string} spreadsheetId
+ */
+async function upsertPublishEventRowLocked(event, spreadsheetId) {
   const tabName = getDailyTabName(event.timestamp);
 
   const postIds = [
@@ -526,7 +657,7 @@ export async function upsertPublishEventRow(event) {
     await resolveAccountsForSheetWrite(event.accounts || [], postIds),
     event
   );
-  const merged = await mergeTodayAccountsForWideSheet(resolved, postIds);
+  const merged = await mergeTodayAccountsForWideSheet(resolved, postIds, tabName);
 
   return writeWideDailyTab({
     ...event,
@@ -542,16 +673,18 @@ export async function upsertPublishEventRow(event) {
  */
 export async function rewriteDailyTabFromAccounts(event) {
   const spreadsheetId = await getSpreadsheetId();
-  const tabName = getDailyTabName(event.timestamp);
-  const annotated = attachContentLabelsToAccounts(
-    annotateAccountsWithDayAttempts(event.accounts || []),
-    event
-  );
-  return writeWideDailyTab({
-    ...event,
-    accounts: annotated,
-    tabName,
-    spreadsheetId,
+  return withSheetLock(spreadsheetId, async () => {
+    const tabName = getDailyTabName(event.timestamp);
+    const annotated = attachContentLabelsToAccounts(
+      annotateAccountsWithDayAttempts(event.accounts || []),
+      event
+    );
+    return writeWideDailyTab({
+      ...event,
+      accounts: annotated,
+      tabName,
+      spreadsheetId,
+    });
   });
 }
 
@@ -565,7 +698,7 @@ async function writeWideDailyTab(event) {
     event
   );
 
-  await ensureDailySheetTab(spreadsheetId, tabName, headerRow);
+  await ensureDailySheetTabCore(spreadsheetId, tabName, headerRow);
   await clearDailyTabDataRows(spreadsheetId, tabName, headerRow.length);
 
   const annotated = event.accounts || [];
@@ -681,27 +814,31 @@ export async function refreshPublishResultsInSheet({
   const postId = ids.join(', ');
 
   const spreadsheetId = await getSpreadsheetId();
-  const tabName = await ensureDailySheetTab(
-    spreadsheetId,
-    getDailyTabName(ts)
-  );
+  const tabName = getDailyTabName(ts);
 
-  if (replaceWholeTab) {
-    await clearDailyTabDataRows(spreadsheetId, tabName);
-  }
+  const result = await withSheetLock(spreadsheetId, async () => {
+    await ensureDailySheetTabCore(spreadsheetId, tabName);
 
-  const result = await upsertPublishEventRow({
-    timestamp: ts,
-    postId,
-    youtubeTitle: meta.youtubeTitle,
-    statusSummary: meta.statusSummary,
-    errorNotes: meta.errorNotes,
-    accounts,
-    baseCaption,
-    folderName,
-    targetLabel,
-    contentLabel,
-    skipDelete: replaceWholeTab,
+    if (replaceWholeTab) {
+      await clearDailyTabDataRows(spreadsheetId, tabName);
+    }
+
+    return upsertPublishEventRowLocked(
+      {
+        timestamp: ts,
+        postId,
+        youtubeTitle: meta.youtubeTitle,
+        statusSummary: meta.statusSummary,
+        errorNotes: meta.errorNotes,
+        accounts,
+        baseCaption,
+        folderName,
+        targetLabel,
+        contentLabel,
+        skipDelete: replaceWholeTab,
+      },
+      spreadsheetId
+    );
   });
 
   return {
@@ -768,6 +905,11 @@ export function scheduleSheetRefresh(
  * @param {string} [reason]
  */
 export async function refreshTodaySheetQuietly(reason = '') {
+  const spreadsheetId = await getSpreadsheetId();
+  await cleanupSheetConflictTabs(spreadsheetId).catch((err) => {
+    log.warn({ err: err.message }, `[Sheets] cleanup conflict: ${err.message}`);
+  });
+
   const { refreshTodaySheetFromOutstand } = await import('./todayPublish.js');
   const result = await refreshTodaySheetFromOutstand();
   log.info(
@@ -845,19 +987,33 @@ function quoteTab(tabName) {
 async function readDailyTabHeaderAndRows(tabName) {
   const tab = tabName || getDailyTabName();
   const spreadsheetId = await getSpreadsheetId();
-  await ensureDailySheetTab(spreadsheetId, tab);
+  // Jangan panggil ensureDailySheetTab di sini — fungsi itu acquire withSheetLock,
+  // yang menyebabkan deadlock saat readDailyTabHeaderAndRows dipanggil dari dalam
+  // withSheetLock (misal: mergeTodayAccountsForWideSheet → collectTodayPublishLinks).
+  // Tab sudah dijamin ada oleh ensureDailySheetTabCore sebelum write dilakukan.
   const sheets = getSheetsClient();
-  const headerRes = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${quoteTab(tab)}!A1:ZZ1`,
-  });
-  const header = headerRes.data.values?.[0] || [];
-  const lastCol = columnLetterFromIndex(Math.max(header.length, WIDE_ROW_HEADERS.length));
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${quoteTab(tab)}!A2:${lastCol}2000`,
-  });
-  return { header, rows: res.data.values || [], tab, spreadsheetId };
+  try {
+    const headerRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${quoteTab(tab)}!A1:ZZ1`,
+    });
+    const header = headerRes.data.values?.[0] || [];
+    const lastCol = columnLetterFromIndex(Math.max(header.length, WIDE_ROW_HEADERS.length));
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${quoteTab(tab)}!A2:${lastCol}2000`,
+    });
+    return { header, rows: res.data.values || [], tab, spreadsheetId };
+  } catch (err) {
+    // Tab belum ada (tab baru hari ini) → kembalikan kosong
+    if (
+      err?.code === 400 ||
+      String(err?.message || '').includes('Unable to parse range')
+    ) {
+      return { header: [], rows: [], tab, spreadsheetId };
+    }
+    throw err;
+  }
 }
 
 function collectPostIdsFromDailyRows(header, rows) {
@@ -922,7 +1078,9 @@ export async function readLatestPostIdsFromDailyTab(tabName) {
   return [];
 }
 
-export async function ensureDailySheetTab(spreadsheetId, tabName, headerRow) {
+async function ensureDailySheetTabCore(spreadsheetId, tabName, headerRow) {
+  await resolveConflictTabs(spreadsheetId, { tabName });
+
   const sheets = getSheetsClient();
   const meta = await sheets.spreadsheets.get({
     spreadsheetId,
@@ -933,13 +1091,25 @@ export async function ensureDailySheetTab(spreadsheetId, tabName, headerRow) {
   const header = headerRow?.length ? headerRow : getWideBaseHeaderRow();
 
   if (!exists) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        requests: [{ addSheet: { properties: { title: tabName } } }],
-      },
-    });
-    log.info({ tabName }, `[Sheets] Tab baru: ${tabName}`);
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: tabName } } }],
+        },
+      });
+      log.info({ tabName }, `[Sheets] Tab baru: ${tabName}`);
+    } catch (err) {
+      const retryMeta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      });
+      const nowExists = retryMeta.data.sheets?.some(
+        (s) => s.properties?.title === tabName
+      );
+      if (!nowExists) throw err;
+      await resolveConflictTabs(spreadsheetId, { tabName });
+    }
   }
 
   const lastCol = columnLetterFromIndex(header.length);
@@ -963,6 +1133,16 @@ export async function ensureDailySheetTab(spreadsheetId, tabName, headerRow) {
   }
 
   return tabName;
+}
+
+export async function ensureDailySheetTab(spreadsheetId, tabName, headerRow) {
+  return withSheetLock(spreadsheetId, () =>
+    ensureDailySheetTabCore(spreadsheetId, tabName, headerRow)
+  );
+}
+
+export async function cleanupSheetConflictTabs(spreadsheetId) {
+  return withSheetLock(spreadsheetId, () => resolveConflictTabs(spreadsheetId));
 }
 
 /** @deprecated Gunakan upsertPublishEventRow / refreshPublishResultsInSheet */
@@ -1026,6 +1206,65 @@ export async function recordPublishedPostsToSheet(input) {
  * @param {object} payload
  * @param {(text: string) => Promise<void>} [notify]
  */
+/**
+ * Hapus tab harian (format YYYY-MM-DD) yang lebih lama dari retentionDays.
+ * Tab non-tanggal (Sheet1, REKAP, dll) tidak tersentuh.
+ * @param {{ retentionDays?: number, dryRun?: boolean }} [options]
+ * @returns {Promise<{ deleted: string[], kept: string[], skipped: string[] }>}
+ */
+export async function deleteOldDailyTabs(options = {}) {
+  const retentionDays = Math.max(1, options.retentionDays ?? env.sheetTabRetentionDays ?? 30);
+  const dryRun = options.dryRun ?? false;
+
+  const spreadsheetId = await getSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+
+  const allSheets = meta.data.sheets ?? [];
+  const cutoffDate = getDailyTabName(
+    new Date(Date.now() - retentionDays * 86_400_000).toISOString()
+  );
+  const DAILY_TAB_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  const toDelete = [];
+  const kept = [];
+  const skipped = [];
+
+  for (const sheet of allSheets) {
+    const title = sheet.properties?.title ?? '';
+    if (!DAILY_TAB_RE.test(title)) { skipped.push(title); continue; }
+    if (title >= cutoffDate) { kept.push(title); continue; }
+    toDelete.push({ title, sheetId: sheet.properties.sheetId });
+  }
+
+  // Pastikan minimal 1 tab tersisa di spreadsheet
+  const totalAfter = allSheets.length - toDelete.length;
+  if (totalAfter < 1 && toDelete.length) toDelete.shift();
+
+  if (!dryRun && toDelete.length) {
+    const CHUNK = 20;
+    for (let i = 0; i < toDelete.length; i += CHUNK) {
+      const chunk = toDelete.slice(i, i + CHUNK);
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: chunk.map(({ sheetId }) => ({ deleteSheet: { sheetId } })),
+        },
+      });
+    }
+  }
+
+  return {
+    deleted: toDelete.map((s) => s.title),
+    kept,
+    skipped,
+  };
+}
+
 export async function recordWebhookToSheet(payload, notify) {
   const event = payload?.event;
   if (event !== 'post.published' && event !== 'post.error') {
