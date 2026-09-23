@@ -1,17 +1,16 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { env } from '../config/env.js';
 import { getRuntime, setRuntime } from '../utils/runtimeStore.js';
 import { createLogger } from '../utils/logger.js';
-import { getPost, listRecentPostIds } from './outstand.js';
+import { getPost, listRecentPostIds } from './publisher.js';
 import { formatWibDateTime, getWibDayKey } from '../utils/wibTime.js';
 import { safeSendMessage } from '../utils/telegramMarkdown.js';
+import { dataPath } from '../utils/dataPath.js';
 
 const log = createLogger('unexpected-post');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const archiveDir = path.resolve(__dirname, '../../data/publish-archives');
+const archiveDir = dataPath('publish-archives');
 
 /** Post ID yang sudah diketahui (dibuat oleh bot atau sudah dilaporkan). */
 const knownPostIds = new Set();
@@ -144,7 +143,7 @@ async function notifyUnexpectedPost(postId) {
   );
 
   const msg =
-    `🚨 *Post tak terduga terdeteksi di Outstand*\n\n` +
+    `🚨 *Post tak terduga terdeteksi di Woopsocial*\n\n` +
     `Post ID: \`${postId}\`\n` +
     `Dibuat: ${createdAt}\n` +
     `Akun terlibat: *${accounts.length}*\n\n` +
@@ -156,7 +155,7 @@ async function notifyUnexpectedPost(postId) {
     `• Scheduled post lama yang baru jalan\n` +
     `• Integrasi pihak ketiga menggunakan kredensial Anda\n\n` +
     `🛑 Batalkan kalau bukan Anda: \`/stop\` lalu pilih batch ini\n` +
-    `Atau cek dashboard Outstand.`;
+    `Atau cek dashboard Woopsocial.`;
 
   try {
     await safeSendMessage(bot.telegram, chatId, msg, {
@@ -233,7 +232,7 @@ export async function checkForUnexpectedPosts() {
       try {
         await bot.telegram.sendMessage(
           chatId,
-          `🚨 ${unknown.length} Post ID baru tak terduga terdeteksi (5 contoh dikirim di atas, sisanya: ${unknown.slice(cap, cap + 10).join(', ')}${unknown.length > cap + 10 ? '…' : ''}).\nCek dashboard Outstand & jalankan /stop ${daysBack}d untuk lihat batch pending.`,
+          `🚨 ${unknown.length} Post ID baru tak terduga terdeteksi (5 contoh dikirim di atas, sisanya: ${unknown.slice(cap, cap + 10).join(', ')}${unknown.length > cap + 10 ? '…' : ''}).\nCek dashboard Woopsocial & jalankan /stop ${daysBack}d untuk lihat batch pending.`,
         );
       } catch {
         /* ignore */
@@ -249,7 +248,7 @@ export async function checkForUnexpectedPosts() {
  * `UNEXPECTED_POST_MONITOR_MINUTES`). Set 0 untuk matikan.
  */
 export function startUnexpectedPostMonitorLoop() {
-  const minutes = Math.max(0, Number(env.unexpectedPostMonitorMinutes || 10) || 10);
+  const minutes = Number(env.unexpectedPostMonitorMinutes ?? 10);
   if (!minutes || monitorTimer) return;
 
   seedKnownPostIds();

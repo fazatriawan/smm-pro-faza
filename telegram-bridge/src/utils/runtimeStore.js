@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { dataPath } from './dataPath.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const storePath = path.resolve(__dirname, '../../data/runtime.json');
+const storePath = dataPath('runtime.json');
 
 function readStore() {
   try {

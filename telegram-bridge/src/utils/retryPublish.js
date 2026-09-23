@@ -56,6 +56,14 @@ export function classifyRetryError(error) {
     };
   }
 
+  if (/temporarily unavailable|publishing is temporarily/i.test(raw)) {
+    return {
+      action: RETRY_ACTION.WAIT,
+      hint:
+        'TikTok memblokir sementara akun ini — bukan masalah token. Tunggu 24 jam lalu coba lagi, atau perbanyak aktivitas organik di akun.',
+    };
+  }
+
   if (/rate limit|429|throttl|spam|try again later/i.test(raw)) {
     return {
       action: RETRY_ACTION.WAIT,

@@ -8,6 +8,7 @@ import {
 } from './services/sheets.js';
 import { startPendingMonitorLoop } from './services/pendingMonitor.js';
 import { startUnexpectedPostMonitorLoop } from './services/unexpectedPostMonitor.js';
+import { startReconnectMonitor } from './services/reconnectMonitor.js';
 import { ensureSpreadsheetReady } from './services/spreadsheetSetup.js';
 import { probeFfmpeg } from './services/imageToVideo.js';
 import { createLogger } from './utils/logger.js';
@@ -28,9 +29,15 @@ function listenServer(app, port) {
 async function main() {
   try {
     const sheet = await ensureSpreadsheetReady();
-    const { ensureDailySheetTab, getDailyTabName } = await import(
-      './services/sheets.js'
-    );
+    const { ensureDailySheetTab, getDailyTabName, cleanupSheetConflictTabs } =
+      await import('./services/sheets.js');
+    const cleaned = await cleanupSheetConflictTabs(sheet.id);
+    if (cleaned.resolved) {
+      log.info(
+        { deleted: cleaned.deleted, renamed: cleaned.renamed },
+        `[Sheets] Bersihkan ${cleaned.resolved} tab conflict`,
+      );
+    }
     const tab = await ensureDailySheetTab(sheet.id, getDailyTabName());
     log.info({ url: sheet.url, tab }, '[Sheets] Laporan siap');
   } catch (err) {
@@ -81,6 +88,7 @@ async function main() {
     startTodaySheetAutoRefreshLoop();
     startPendingMonitorLoop();
     startUnexpectedPostMonitorLoop();
+    startReconnectMonitor();
   } catch (err) {
     log.error({ err: err?.message, code: err?.response?.error_code }, '[Bot] Gagal start');
     if (err.response?.error_code === 409) {

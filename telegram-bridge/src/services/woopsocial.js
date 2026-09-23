@@ -4,9 +4,12 @@ import { env } from '../config/env.js';
 import { downloadFile } from './drive.js';
 import { buildCaptionsByNetwork } from './captionPlatforms.js';
 import { buildLivePostUrl } from '../utils/platformUrl.js';
+import { varyCaption } from '../utils/captionVariant.js';
 import {
   convertDriveImagesToSocialVideo,
   networksNeedingImageToVideo,
+  normalizeVideoForTikTok,
+  trimVideoStart,
 } from './imageToVideo.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -33,12 +36,18 @@ export async function getCachedAccounts() {
 
 async function getProjectId() {
   if (_projectId) return _projectId;
+  // Jika env WOOPSOCIAL_PROJECT_ID di-set, pakai langsung tanpa fetch API
+  if (env.woopsocialProjectId) {
+    _projectId = String(env.woopsocialProjectId);
+    log.info({ projectId: _projectId }, '[Woopsocial] Project ID dari env');
+    return _projectId;
+  }
   const res = await client.get('/v1/projects');
   const body = parseResponseBody(res);
   const projects = Array.isArray(body) ? body : body?.data ?? [];
   if (!projects.length) throw new Error('Woopsocial: tidak ada project ditemukan');
   _projectId = String(projects[0].id);
-  log.info({ projectId: _projectId }, '[Woopsocial] Project ID cached');
+  log.info({ projectId: _projectId, totalProjects: projects.length }, '[Woopsocial] Project ID cached dari API');
   return _projectId;
 }
 
@@ -147,21 +156,26 @@ function groupAccountsByNetwork(accountIds, allAccounts) {
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 export async function listSocialAccounts() {
-  // Woopsocial mengembalikan semua akun di setiap page (tidak ada pagination nyata).
-  // Satu request dengan limit besar sudah cukup.
-  const res = await client.get('/v1/social-accounts', { params: { limit: 500 } });
+  const projectId = await getProjectId();
+  const res = await client.get('/v1/social-accounts', { params: { limit: 500, projectId } });
   const body = parseResponseBody(res);
-  const accounts = Array.isArray(body?.data)
+  const allRaw = Array.isArray(body?.data)
     ? body.data
     : Array.isArray(body)
       ? body
       : body?.items ?? body?.accounts ?? [];
 
-  return accounts
-    .filter((a) => {
-      const s = (a.status || '').toUpperCase();
-      return s === 'CONNECTED' || s === 'ACTIVE';
-    })
+  const connected = allRaw.filter((a) => {
+    const s = (a.status || '').toUpperCase();
+    return s === 'CONNECTED' || s === 'ACTIVE';
+  });
+
+  log.info(
+    { total: allRaw.length, connected: connected.length },
+    '[Woopsocial] listSocialAccounts: raw dari API'
+  );
+
+  return connected
     .map((a) => ({
       id: String(a.id ?? ''),
       network: toNetwork(a.platform),
@@ -267,7 +281,33 @@ export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds) {
     uploadedMedia = [item];
     log.info({ networks: convertNetworks }, `[Image→Video] Video untuk: ${convertNetworks.join(', ')}`);
   } else if (driveMediaFiles.length) {
-    uploadedMedia = await uploadAllMediaFromDrive(driveMediaFiles);
+    // Re-encode video ke 30fps CFR jika TikTok termasuk target
+    const hasTikTok = networks.includes('tiktok');
+    let filesToUpload = driveMediaFiles;
+    let tiktokNormalizedBuffer = null;
+    let tiktokNormalizedName = null;
+    if (hasTikTok && hasVideo) {
+      filesToUpload = await Promise.all(driveMediaFiles.map(async (f) => {
+        if (!f.mimeType?.startsWith('video/')) return f;
+        log.info({ name: f.name }, '[TikTok] Download + re-encode video ke 30fps CFR');
+        // Download dari Drive dulu jika belum ada buffer
+        const resolved = f.buffer
+          ? { buffer: f.buffer, mimeType: f.mimeType, name: f.name }
+          : await downloadFile(f.id);
+        const normalized = await normalizeVideoForTikTok(resolved.buffer, resolved.name || f.name || 'video.mp4');
+        tiktokNormalizedBuffer = normalized.buffer;
+        tiktokNormalizedName = normalized.name;
+        // Set buffer agar resolveMediaBytes tidak download ulang saat upload
+        return { ...f, buffer: normalized.buffer, name: normalized.name, mimeType: normalized.mimeType };
+      }));
+    }
+    uploadedMedia = await uploadAllMediaFromDrive(filesToUpload);
+
+    // Simpan referensi buffer TikTok untuk dipakai publishBulk membuat varian
+    if (tiktokNormalizedBuffer) {
+      uploadedMedia._tiktokBuffer = tiktokNormalizedBuffer;
+      uploadedMedia._tiktokName = tiktokNormalizedName;
+    }
   }
 
   // Woopsocial satu request — semua network pakai media yang sama
@@ -282,6 +322,9 @@ export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds) {
     imageToVideoSilent,
     youtubeConverted: convertNetworks.includes('youtube'),
     youtubeSilent: imageToVideoSilent,
+    tiktokNormalized: uploadedMedia._tiktokBuffer
+      ? { buffer: uploadedMedia._tiktokBuffer, name: uploadedMedia._tiktokName }
+      : null,
   };
 }
 
@@ -291,12 +334,16 @@ export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds) {
  * Publish ke semua platform dalam SATU request Woopsocial.
  * @param {{ baseCaption: string, captionsByNetwork?: Record<string,string>, youtubeFields?: object, mediaByNetwork: Record<string,Array>, scheduledAt?: string, socialAccountIds: string[] }} options
  */
+const TIKTOK_VARIANT_BATCH = 15;
+
 export async function publishBulk({
   baseCaption,
   captionsByNetwork: captionsByNetworkIn,
   mediaByNetwork,
   scheduledAt,
   socialAccountIds,
+  tiktokVideoBuffer = null,
+  tiktokVideoName = 'video-tiktok.mp4',
 }) {
   const allAccounts = await listSocialAccounts();
   if (!allAccounts.length) throw new Error('Tidak ada akun terhubung di Woopsocial');
@@ -329,23 +376,41 @@ export async function publishBulk({
     ? allMedia.map((m) => ({ type: 'MEDIA_LIBRARY', mediaId: m.id }))
     : [];
 
-  // ─── Split request per caption unik ───────────────────────────────────────
-  // Threads limit 500 char, Instagram bisa 2200 char.
-  // Network dengan caption berbeda → API call terpisah agar masing-masing
-  // mendapat teks yang sesuai dan tidak kena validation error lintas-platform.
+  // ─── TikTok video variant: akun > TIKTOK_VARIANT_BATCH dipisah per sub-batch ─
+  // Setiap sub-batch TikTok mendapat video yang sedikit di-trim dari awal agar
+  // TikTok fingerprint berbeda, menghindari flag "unoriginal content".
+  const tiktokAccts = byNet['tiktok'] || [];
+  const hasTiktokVariants =
+    tiktokVideoBuffer != null && tiktokAccts.length > TIKTOK_VARIANT_BATCH;
+  const tiktokVariantIdSet = new Set(hasTiktokVariants ? tiktokAccts.map((a) => a.id) : []);
+  if (hasTiktokVariants) {
+    const numVariants = Math.ceil(tiktokAccts.length / TIKTOK_VARIANT_BATCH);
+    log.info(
+      { accounts: tiktokAccts.length, variants: numVariants, batchSize: TIKTOK_VARIANT_BATCH },
+      '[TikTok] Video varian aktif'
+    );
+  }
+
+  // ─── Split request per caption unik (variasi per-akun) ───────────────────
+  // Setiap akun mendapat caption yang sedikit berbeda (rotasi hashtag + swap
+  // emoji) agar tidak terdeteksi sebagai duplikat oleh platform.
+  // Akun dengan caption identik tetap digabung dalam satu API call.
   const captionGroupMap = new Map(); // caption text → { networks[], accounts[] }
+  let accountVariantIndex = 0;
   for (const [network, accts] of Object.entries(byNet)) {
     const platform = NETWORK_TO_PLATFORM[network];
     if (!platform) {
       log.warn(`[Woopsocial] Platform "${network}" tidak didukung — dilewati`);
       continue;
     }
-    const cap = captionsByNetwork[network] || baseCaption;
-    if (!captionGroupMap.has(cap)) captionGroupMap.set(cap, { networks: [], accounts: [] });
-    const group = captionGroupMap.get(cap);
-    group.networks.push(network);
+    const baseCap = captionsByNetwork[network] || baseCaption;
     const postType = getPostType(network, allMedia);
     for (const acct of accts) {
+      if (tiktokVariantIdSet.has(acct.id)) { accountVariantIndex++; continue; }
+      const cap = varyCaption(baseCap, accountVariantIndex++);
+      if (!captionGroupMap.has(cap)) captionGroupMap.set(cap, { networks: [], accounts: [] });
+      const group = captionGroupMap.get(cap);
+      if (!group.networks.includes(network)) group.networks.push(network);
       const entry = { platform, socialAccountId: acct.id };
       if (postType !== null) entry.postType = postType;
       if (network === 'tiktok') {
@@ -368,9 +433,11 @@ export async function publishBulk({
   // ─── Kirim satu API call per group ───────────────────────────────────────
   const allPostIds = [];
   const allSummaryParts = [];
+  let batchCallIdx = 0;
 
   for (const [cap, group] of captionGroupMap) {
     if (!group.accounts.length) continue;
+    if (batchCallIdx > 0) await sleep(300);
 
     const contentItem = { text: cap };
     if (mediaArray.length) contentItem.media = mediaArray;
@@ -390,26 +457,129 @@ export async function publishBulk({
       '[Woopsocial] publishBulk — kirim ke API'
     );
 
-    try {
-      const res = await client.post('/v1/posts', payload);
-      const body = parseResponseBody(res);
-      const postId = String(body.data?.id ?? body.id ?? body.post?.id ?? '').trim();
-      if (postId) allPostIds.push(postId);
-      for (const net of group.networks) {
-        allSummaryParts.push(`${net}: ${byNet[net]?.length ?? 0} akun`);
+    let posted = false;
+    for (let attempt = 0; attempt < 3 && !posted; attempt++) {
+      try {
+        if (attempt > 0) await sleep(2000 * attempt);
+        const projectId = await getProjectId();
+        const res = await client.post(`/v1/posts?projectId=${projectId}`, payload);
+        const body = parseResponseBody(res);
+        const postId = String(body.data?.id ?? body.id ?? body.post?.id ?? '').trim();
+        if (postId) allPostIds.push(postId);
+        for (const net of group.networks) {
+          allSummaryParts.push(`${net}: ${byNet[net]?.length ?? 0} akun`);
+        }
+        batchCallIdx++;
+        posted = true;
+      } catch (err) {
+        const status = err.response?.status;
+        if (status === 429 && attempt < 2) {
+          log.warn({ attempt, networks: group.networks }, `[Woopsocial] 429 rate limit — retry ${attempt + 1}`);
+          await sleep(3000 + attempt * 2000);
+          continue;
+        }
+        log.error(
+          {
+            status,
+            responseData: JSON.stringify(err.response?.data ?? {}).slice(0, 800),
+            networks: group.networks,
+            postTypes: postTypeSummary,
+            mediaIds: allMedia.map((m) => m.id),
+          },
+          '[Woopsocial] publishBulk GAGAL'
+        );
+        throw new Error(`Publish Woopsocial gagal: ${formatError(err)}`);
       }
-    } catch (err) {
-      log.error(
-        {
-          status: err.response?.status,
-          responseData: JSON.stringify(err.response?.data ?? {}).slice(0, 800),
-          networks: group.networks,
-          postTypes: postTypeSummary,
-          mediaIds: allMedia.map((m) => m.id),
-        },
-        '[Woopsocial] publishBulk GAGAL'
-      );
-      throw new Error(`Publish Woopsocial gagal: ${formatError(err)}`);
+    }
+  }
+
+  // ─── TikTok variant sub-batches ──────────────────────────────────────────
+  if (hasTiktokVariants) {
+    const baseCap = captionsByNetwork['tiktok'] || baseCaption;
+    const tiktokPostType = getPostType('tiktok', allMedia);
+
+    for (let bStart = 0; bStart < tiktokAccts.length; bStart += TIKTOK_VARIANT_BATCH) {
+      const batchAccts = tiktokAccts.slice(bStart, bStart + TIKTOK_VARIANT_BATCH);
+      const variantIdx = Math.floor(bStart / TIKTOK_VARIANT_BATCH);
+
+      // Varian 0 = media sudah terupload; varian 1+ = trim baru + upload baru
+      let variantMediaArray;
+      if (variantIdx === 0) {
+        variantMediaArray = mediaArray; // pakai mediaArray asli
+      } else {
+        const trimOffset = variantIdx * 0.1;
+        log.info({ variantIdx, trimOffset }, '[TikTok] Trim video untuk varian');
+        if (batchCallIdx > 0) await sleep(300);
+        const trimmed = await trimVideoStart(tiktokVideoBuffer, tiktokVideoName, trimOffset);
+        const uploaded = await uploadMediaBuffer({
+          buffer: trimmed.buffer,
+          filename: trimmed.name,
+          mimeType: 'video/mp4',
+        });
+        batchCallIdx++;
+        variantMediaArray = [{ type: 'MEDIA_LIBRARY', mediaId: uploaded.id }];
+      }
+
+      // Caption groups untuk batch ini
+      const batchCaptionMap = new Map();
+      for (const acct of batchAccts) {
+        const cap = varyCaption(baseCap, accountVariantIndex++);
+        if (!batchCaptionMap.has(cap)) batchCaptionMap.set(cap, []);
+        const entry = {
+          platform: 'TIKTOK',
+          socialAccountId: acct.id,
+          privacyLevel: 'PUBLIC_TO_EVERYONE',
+          allowComment: true,
+          allowDuet: true,
+          allowStitch: true,
+          isYourBrand: false,
+          isBrandedContent: false,
+          autoAddMusic: false,
+        };
+        if (tiktokPostType !== null) entry.postType = tiktokPostType;
+        batchCaptionMap.get(cap).push(entry);
+      }
+
+      for (const [cap, entries] of batchCaptionMap) {
+        if (!entries.length) continue;
+        if (batchCallIdx > 0) await sleep(300);
+
+        const contentItem = { text: cap };
+        if (variantMediaArray.length) contentItem.media = variantMediaArray;
+        const payload = { content: [contentItem], schedule, socialAccounts: entries };
+
+        log.info(
+          { variant: variantIdx + 1, accountCount: entries.length },
+          '[TikTok] Kirim varian ke Woopsocial API'
+        );
+
+        let posted = false;
+        for (let attempt = 0; attempt < 3 && !posted; attempt++) {
+          try {
+            if (attempt > 0) await sleep(2000 * attempt);
+            const projectId = await getProjectId();
+            const res = await client.post(`/v1/posts?projectId=${projectId}`, payload);
+            const body = parseResponseBody(res);
+            const postId = String(body.data?.id ?? body.id ?? body.post?.id ?? '').trim();
+            if (postId) allPostIds.push(postId);
+            allSummaryParts.push(`tiktok-v${variantIdx + 1}: ${batchAccts.length} akun`);
+            batchCallIdx++;
+            posted = true;
+          } catch (err) {
+            const status = err.response?.status;
+            if (status === 429 && attempt < 2) {
+              log.warn({ attempt, variant: variantIdx }, `[TikTok] 429 rate limit varian — retry ${attempt + 1}`);
+              await sleep(3000 + attempt * 2000);
+              continue;
+            }
+            log.error(
+              { status, variant: variantIdx, responseData: JSON.stringify(err.response?.data ?? {}).slice(0, 400) },
+              '[TikTok] Varian GAGAL'
+            );
+            throw new Error(`Publish TikTok varian ${variantIdx + 1} gagal: ${formatError(err)}`);
+          }
+        }
+      }
     }
   }
 
@@ -621,8 +791,9 @@ export function formatPostStatusReport(posts, options = {}) {
 export async function listPostIdsForDailyTab(tabName) {
   const date = tabName || new Date().toISOString().slice(0, 10);
   try {
+    const projectId = await getProjectId();
     const res = await client.get('/v1/posts', {
-      params: { startDate: date, endDate: date, limit: 500 },
+      params: { startDate: date, endDate: date, limit: 500, projectId },
     });
     const body = parseResponseBody(res);
     const posts = Array.isArray(body?.data) ? body.data
@@ -647,8 +818,9 @@ export async function listRecentPostIds({ daysBack = 2 } = {}) {
   const startDate = start.toISOString().slice(0, 10);
   const endDate = end.toISOString().slice(0, 10);
   try {
+    const projectId = await getProjectId();
     const res = await client.get('/v1/posts', {
-      params: { startDate, endDate, limit: 500 },
+      params: { startDate, endDate, limit: 500, projectId },
     });
     const body = parseResponseBody(res);
     const posts = Array.isArray(body?.data) ? body.data

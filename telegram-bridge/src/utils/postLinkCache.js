@@ -1,13 +1,11 @@
 import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { dataPath } from './dataPath.js';
 import {
   extractInstagramShortcodeFromUrl,
   isInvalidInstagramShortcode,
 } from './platformUrl.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CACHE_PATH = path.resolve(__dirname, '../../data/post-links.json');
+const CACHE_PATH = dataPath('post-links.json');
 
 /** @type {Record<string, string> | null} */
 let memory = null;

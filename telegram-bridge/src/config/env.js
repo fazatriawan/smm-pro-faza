@@ -6,7 +6,10 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '../..');
 
-dotenv.config({ path: path.join(rootDir, '.env') });
+const _envFile = process.env.ENV_FILE
+  ? path.resolve(rootDir, process.env.ENV_FILE)
+  : path.join(rootDir, '.env');
+dotenv.config({ path: _envFile });
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -86,12 +89,13 @@ const IMAGE_TO_VIDEO_NETWORKS_DEFAULT = [
   'instagram',
   'threads',
   'facebook',
+  'tiktok',
 ];
 
 function parseImageToVideoNetworks() {
   const raw =
     optionalEnv('IMAGE_TO_VIDEO_NETWORKS') ||
-    'youtube,instagram,threads,facebook';
+    'youtube,instagram,threads,facebook,tiktok';
   const list = raw
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -113,6 +117,8 @@ const imageToVideoDurationSec = Math.max(
 
 const imageToVideoAudioPath = resolveImageToVideoAudioPath(rootDir);
 
+const publisherChoice = optionalEnv('DEFAULT_PUBLISHER', 'woopsocial');
+
 function parseDurationByNetwork() {
   const raw = optionalEnv('IMAGE_TO_VIDEO_DURATION_BY_NETWORK');
   if (!raw) return {};
@@ -125,10 +131,16 @@ function parseDurationByNetwork() {
 }
 
 export const env = {
+  dataDir: path.resolve(rootDir, optionalEnv('DATA_DIR', 'data')),
   port: Number(process.env.PORT || 3000),
   telegramBotToken: requireEnv('TELEGRAM_BOT_TOKEN'),
-  outstandApiKey: requireOutstandApiKey(),
-  geminiApiKey: requireEnv('GEMINI_API_KEY'),
+  woopsocialApiKey: optionalEnv('WOOPSOCIAL_API_KEY'),
+  woopsocialProjectId: optionalEnv('WOOPSOCIAL_PROJECT_ID'),
+  postformeApiKey: optionalEnv('POSTFORME_API_KEY'),
+  postformeRedirectUrl: optionalEnv('POSTFORME_REDIRECT_URL'),
+  publisher: publisherChoice,
+  anthropicApiKey: optionalEnv('ANTHROPIC_API_KEY'),
+  geminiApiKey: optionalEnv('GEMINI_API_KEY'),
   /** Kosong = buat spreadsheet otomatis, ID disimpan di data/runtime.json */
   googleSpreadsheetId: optionalEnv('GOOGLE_SPREADSHEET_ID'),
   /** Parent bank konten (ID stabil). Bisa URL — di-parse otomatis. */
@@ -145,11 +157,16 @@ export const env = {
     .map((id) => id.trim())
     .filter(Boolean),
   outstandWebhookSecret: optionalEnv('OUTSTAND_WEBHOOK_SECRET'),
+  postformeWebhookSecret: optionalEnv('POSTFORME_WEBHOOK_SECRET'),
   googleSheetTab: optionalEnv('GOOGLE_SHEET_TAB', 'Sheet1'),
   outstandAccountBatchSize: Math.max(
     1,
     Number(process.env.OUTSTAND_ACCOUNT_BATCH_SIZE || 50)
   ),
+  /** Maks akun IG per request Outstand — lebih dari ini di-split otomatis (0 = tidak dibatasi). */
+  igPublishSplitSize: Math.max(0, Number(process.env.IG_PUBLISH_SPLIT_SIZE || 10)),
+  /** Maks akun Threads per request Outstand — lebih dari ini di-split otomatis (0 = tidak dibatasi). */
+  threadsPublishSplitSize: Math.max(0, Number(process.env.THREADS_PUBLISH_SPLIT_SIZE || 10)),
   outstandBaseUrl: 'https://api.outstand.so',
   /** Gambar → video + musik (YouTube, IG, Threads, Facebook) */
   imageToVideoAudioPath,
@@ -198,6 +215,11 @@ export const env = {
   outstandAccountLimit: Math.max(
     0,
     Number(process.env.OUTSTAND_ACCOUNT_LIMIT || 500)
+  ),
+  /** Tab harian Sheets disimpan N hari — lebih lama dihapus via /cleanup (0 = nonaktif). */
+  sheetTabRetentionDays: Math.max(
+    0,
+    Number(process.env.SHEET_TAB_RETENTION_DAYS || 30)
   ),
   /** Telegraf handler timeout (default 90s terlalu pendek untuk batch besar). */
   telegramHandlerTimeoutMs: Math.max(

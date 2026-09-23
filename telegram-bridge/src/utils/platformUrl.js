@@ -219,6 +219,18 @@ export function buildLivePostUrl(
       // Profil saja — jangan pakai; lanjut derive dari platformPostId.
     } else if (net === 'instagram') {
       if (!isInstagramProfileOnlyUrl(fromApi)) return fromApi;
+    } else if (net === 'tiktok') {
+      // Hanya pakai directUrl kalau ada /video/ — profile-only URL tidak berguna
+      if (/\/video\/\d+/i.test(fromApi)) {
+        // Jika bagian username mengandung spasi atau %20 (display name, bukan username valid),
+        // pakai format tanpa username agar URL bisa dibuka
+        const beforeVideo = fromApi.split('/video/')[0];
+        if (beforeVideo.includes('%20') || beforeVideo.includes(' ')) {
+          const m = fromApi.match(/\/video\/(\d+)/i);
+          if (m) return `https://www.tiktok.com/video/${m[1]}`;
+        }
+        return fromApi;
+      }
     } else {
       return fromApi;
     }
@@ -251,8 +263,8 @@ export function buildLivePostUrl(
       if (shortcode) {
         return `https://www.instagram.com/p/${shortcode}/`;
       }
-      // Tidak bisa derive shortcode → fallback ke profile (lebih baik dari URL
-      // mati). Tanpa username juga, return '' supaya kolom Link di Sheets blank.
+      // Tidak bisa derive shortcode → fallback ke profile supaya laporan
+      // tetap ada sesuatu (setidaknya bisa cek akun mana yang posting).
       return handle ? `https://www.instagram.com/${handle}/` : '';
     }
     case 'threads': {
@@ -269,10 +281,17 @@ export function buildLivePostUrl(
       }
       return '';
     }
-    case 'tiktok':
-      return handle
-        ? `https://www.tiktok.com/@${encodeURIComponent(handle)}/video/${id}`
-        : `https://www.tiktok.com/video/${id}`;
+    case 'tiktok': {
+      // Publisher kadang mengembalikan format internal "v_pub_url~v2-N.{numericId}" atau
+      // "v_pub_file~v2-N.{numericId}" (PostForme). Strip prefix supaya URL jadi
+      // https://tiktok.com/@user/video/{numericId}
+      const tikId = id.replace(/^v_pub_\w+~v\d+-\d+\./i, '');
+      // Handle dengan spasi = display name bukan username valid TikTok
+      const hasValidHandle = handle && !handle.includes(' ');
+      return hasValidHandle
+        ? `https://www.tiktok.com/@${encodeURIComponent(handle)}/video/${tikId}`
+        : `https://www.tiktok.com/video/${tikId}`;
+    }
     case 'facebook':
       return buildFacebookPostUrl(id, handle, directUrl, pageId);
     case 'youtube':
@@ -293,5 +312,33 @@ export function buildLivePostUrl(
       return `https://www.pinterest.com/pin/${id}/`;
     default:
       return isHttpUrl(id) ? id : '';
+  }
+}
+
+/**
+ * URL profil publik dari username akun sosial media.
+ * @param {string} network
+ * @param {string} username
+ * @param {string|null} [pageId]
+ */
+export function buildProfileUrl(network, username, pageId) {
+  const user = (username || '').replace(/^@/, '').trim();
+  const net = (network || '').toLowerCase();
+  switch (net) {
+    case 'instagram': return user ? `https://www.instagram.com/${encodeURIComponent(user)}/` : '';
+    case 'tiktok': return user ? `https://www.tiktok.com/@${encodeURIComponent(user)}` : '';
+    case 'threads': return user ? `https://www.threads.com/@${encodeURIComponent(user)}` : '';
+    case 'twitter':
+    case 'x': return user ? `https://x.com/${encodeURIComponent(user)}` : '';
+    case 'youtube': return user ? `https://www.youtube.com/@${encodeURIComponent(user)}` : '';
+    case 'linkedin': return user ? `https://www.linkedin.com/in/${encodeURIComponent(user)}` : '';
+    case 'facebook': {
+      const page = String(pageId || '').trim();
+      if (page) return `https://www.facebook.com/${page}`;
+      // Hanya pakai username jika tidak ada spasi (berarti URL slug, bukan display name)
+      if (user && !/\s/.test(user)) return `https://www.facebook.com/${encodeURIComponent(user)}`;
+      return '';
+    }
+    default: return '';
   }
 }

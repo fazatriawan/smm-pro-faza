@@ -52,7 +52,7 @@ import {
 /** @type {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, contentLabel?: string, folderName?: string, targetLabel?: string, mediaFilesDay?: string, timestamp: string, instructionId?: string, instructionLabel?: string, idempotencyKey?: string }>} */
 const publishContextByPostId = new Map();
 
-const CONTEXT_FILE = join(process.cwd(), 'data', 'publish-contexts.json');
+const CONTEXT_FILE = join(env.dataDir, 'publish-contexts.json');
 
 function loadPublishContextsFromDisk() {
   try {
@@ -539,10 +539,13 @@ function buildPublishEventRows(event) {
 
 /**
  * Hapus semua baris data (sisakan header) — hindari campur format lama.
+ * Selalu clear hingga kolom yang jauh lebih lebar dari colCount agar data
+ * dari write sebelumnya yang lebih lebar tidak tersisa.
  */
 async function clearDailyTabDataRows(spreadsheetId, tabName, colCount) {
   const sheets = getSheetsClient();
-  const colLetter = columnLetterFromIndex(colCount || getSheetColumnCount());
+  const clearCols = Math.max((colCount || getSheetColumnCount()), 300);
+  const colLetter = columnLetterFromIndex(clearCols);
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
     range: `${quoteTab(tabName)}!A2:${colLetter}`,
@@ -653,11 +656,40 @@ async function upsertPublishEventRowLocked(event, spreadsheetId) {
     ),
   ];
 
-  const resolved = attachContentLabelsToAccounts(
-    await resolveAccountsForSheetWrite(event.accounts || [], postIds),
-    event
-  );
-  const merged = await mergeTodayAccountsForWideSheet(resolved, postIds, tabName);
+  const resolvedRaw = await resolveAccountsForSheetWrite(event.accounts || [], postIds);
+  // Jika getPost gagal (misal PostForme sudah hapus post + tidak ada cache), semua akun
+  // punya postId kosong. Assign postId pertama agar semua akun masuk kolom instruksi yang sama,
+  // bukan masing-masing kolom sendiri (13-column bug).
+  if (postIds.length > 0) {
+    const primaryPostId = postIds[0];
+    for (const acc of resolvedRaw) {
+      if (!acc.postId) acc.postId = primaryPostId;
+    }
+  }
+  const resolved = attachContentLabelsToAccounts(resolvedRaw, event);
+
+  // Untuk post ID yang API-nya gagal/timeout, ambil data lama dari sheet sebagai fallback
+  // agar tidak kehilangan data akun yang sudah tercatat sebelumnya.
+  const freshPostIds = new Set((resolved || []).map((a) => a.postId).filter(Boolean));
+  const failedPostIds = postIds.filter((id) => !freshPostIds.has(id));
+  let accountsToMerge = resolved;
+  if (failedPostIds.length > 0) {
+    try {
+      const sheetFallback = await readPriorAccountsFromWideSheet(tabName, freshPostIds);
+      const fallback = sheetFallback.filter((a) => failedPostIds.includes(a.postId));
+      if (fallback.length > 0) {
+        log.info(
+          { failedPostIds, fallback: fallback.length },
+          '[Sheets] fallback sheet untuk post ID yang API-nya gagal'
+        );
+        accountsToMerge = reconcileSheetAccounts([...resolved, ...fallback]);
+      }
+    } catch (err) {
+      log.warn({ err: err.message }, '[Sheets] fallback sheet read gagal, lanjut tanpa fallback');
+    }
+  }
+
+  const merged = await mergeTodayAccountsForWideSheet(accountsToMerge, postIds, tabName);
 
   return writeWideDailyTab({
     ...event,
@@ -675,13 +707,35 @@ export async function rewriteDailyTabFromAccounts(event) {
   const spreadsheetId = await getSpreadsheetId();
   return withSheetLock(spreadsheetId, async () => {
     const tabName = getDailyTabName(event.timestamp);
+    const postIds = splitPostIds(event.postId || '');
+
     const annotated = attachContentLabelsToAccounts(
       annotateAccountsWithDayAttempts(event.accounts || []),
       event
     );
+
+    // Merge dengan data sheet yang ada: preserv akun dari sesi publish lain hari ini
+    // dan post ID yang API-nya timeout (agar tidak tertimpa saat overwrite).
+    let accounts = annotated;
+    if (postIds.length > 0) {
+      try {
+        const freshIds = new Set(annotated.map((a) => a.postId).filter(Boolean));
+        const sheetFallback = await readPriorAccountsFromWideSheet(tabName, freshIds);
+        if (sheetFallback.length > 0) {
+          log.info(
+            { fresh: annotated.length, fallback: sheetFallback.length, tab: tabName },
+            '[Sheets] rewriteDaily: merge dengan data sheet lama'
+          );
+          accounts = [...annotated, ...sheetFallback];
+        }
+      } catch (err) {
+        log.warn({ err: err.message }, '[Sheets] rewriteDaily: fallback read gagal, lanjut tanpa merge');
+      }
+    }
+
     return writeWideDailyTab({
       ...event,
-      accounts: annotated,
+      accounts,
       tabName,
       spreadsheetId,
     });
@@ -796,6 +850,7 @@ export async function refreshPublishResultsInSheet({
   folderName,
   targetLabel,
   contentLabel,
+  publisher,
 }) {
   const ids = (postIds || []).filter(Boolean);
   if (!ids.length) {
@@ -804,6 +859,11 @@ export async function refreshPublishResultsInSheet({
 
   const ctx = getPublishContext(ids[0]);
   const ts = timestamp || ctx?.timestamp || new Date().toISOString();
+
+  const resolvedTargetLabel =
+    publisher === 'postforme'
+      ? `${targetLabel ? `${targetLabel} ` : ''}[PostForme]`
+      : targetLabel;
 
   const { accounts: rawAccounts, meta } = await fetchPublishAccountStatuses({
     postIds: ids,
@@ -833,7 +893,7 @@ export async function refreshPublishResultsInSheet({
         accounts,
         baseCaption,
         folderName,
-        targetLabel,
+        targetLabel: resolvedTargetLabel,
         contentLabel,
         skipDelete: replaceWholeTab,
       },
@@ -879,6 +939,7 @@ export function scheduleSheetRefresh(
         folderName: meta.folderName,
         targetLabel: meta.targetLabel,
         contentLabel: meta.contentLabel,
+        publisher: meta.publisher,
       }).catch((err) => {
         log.error(
           { delayMin: delayMs / 60000, err: err.message },
@@ -1047,6 +1108,57 @@ function collectPostIdsFromDailyRows(header, rows) {
 export async function readPostIdsFromDailyTab(tabName) {
   const { header, rows } = await readDailyTabHeaderAndRows(tabName);
   return collectPostIdsFromDailyRows(header, rows);
+}
+
+/**
+ * Baca semua link yang tersimpan di sel Sheets tab hari ini — tanpa re-fetch
+ * ke Woopsocial API dan tanpa melewati kolom "ghost" (tanpa hex key).
+ *
+ * Logika:
+ * - Baca SEMUA kolom instruksi (termasuk ghost yang tidak punya hex key)
+ * - Hanya ambil baris yang punya URL di sel Link
+ * - Deduplikasi by URL sehingga kolom duplikat tidak menghasilkan link ganda
+ * - Akun dengan sel Link kosong dilewati (tidak re-fetch dari API)
+ */
+export async function readPublishedLinksFromDailyTab(tabName) {
+  const { header, rows } = await readDailyTabHeaderAndRows(tabName || getDailyTabName());
+  if (!isWideSheetHeader(header)) return [];
+
+  const { instructions } = parseWideSheetHeader(header);
+  if (!instructions.length) return [];
+
+  const labelToNetwork = Object.fromEntries(
+    Object.entries(PLATFORM_LABELS).map(([k, v]) => [v.toLowerCase(), k])
+  );
+
+  const seenUrls = new Set();
+  const accounts = [];
+
+  for (const row of rows) {
+    if (String(row[0] || '').startsWith('REKAP')) continue;
+    const platformLabel = String(row[0] || '').trim();
+    const network = labelToNetwork[platformLabel.toLowerCase()] || '';
+    const username = String(row[1] || '').trim().replace(/^@/, '');
+    if (!network || !username) continue;
+
+    for (const inst of instructions) {
+      const linkCell = String(row[inst.linkIdx] || '').trim();
+      if (!/^https?:\/\//i.test(linkCell)) continue; // kosong → skip
+      if (seenUrls.has(linkCell)) continue; // duplikat URL → skip
+      seenUrls.add(linkCell);
+
+      const statusCell = String(row[inst.statusIdx] || '').trim();
+      const status = statusCell.includes('✅')
+        ? 'published'
+        : statusCell.includes('❌')
+          ? 'failed'
+          : 'pending';
+
+      accounts.push({ network, username, status, url: linkCell });
+    }
+  }
+
+  return accounts;
 }
 
 /**
@@ -1263,6 +1375,165 @@ export async function deleteOldDailyTabs(options = {}) {
     kept,
     skipped,
   };
+}
+
+const LINKS_TAB_NAME = '🔗 Links';
+const PROFILE_TAB_NAME = '👤 Profil Akun';
+
+/**
+ * Tulis daftar link ke tab khusus "🔗 Links" (dibuat jika belum ada, ditulis ulang tiap call).
+ * Dipakai saat output /kopaslink terlalu panjang untuk Telegram.
+ *
+ * @param {string} dateLabel  label tanggal untuk header (mis. "2026-08-19")
+ * @param {string[]} lines    array baris teks (platform name + URL + '' separator)
+ * @returns {Promise<string>} URL spreadsheet
+ */
+export async function writeLinksToRightmostColumn(dateLabel, lines) {
+  const spreadsheetId = await getSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  // Pastikan tab "🔗 Links" ada
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const exists = (meta.data.sheets || []).some(
+    (s) => s.properties?.title === LINKS_TAB_NAME,
+  );
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{ addSheet: { properties: { title: LINKS_TAB_NAME, gridProperties: { columnCount: 1 } } } }],
+      },
+    });
+    log.info(`[Sheets] Tab "${LINKS_TAB_NAME}" dibuat`);
+  }
+
+  // Hapus isi lama dulu agar baris dari run sebelumnya tidak tersisa
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${quoteTab(LINKS_TAB_NAME)}!A:A`,
+  });
+
+  // Tulis ulang isi tab
+  const values = [[`🔗 Link Hari Ini (${dateLabel})`], ...lines.map((l) => [l])];
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${quoteTab(LINKS_TAB_NAME)}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values },
+  });
+
+  log.info(
+    { dateLabel, rows: values.length },
+    `[Sheets] writeLinksToRightmostColumn: ${values.length} baris di tab "${LINKS_TAB_NAME}"`,
+  );
+
+  return getSpreadsheetUrl(spreadsheetId);
+}
+
+/**
+ * Tulis daftar link profil akun ke tab khusus "👤 Profil Akun".
+ * @param {Array<{ network: string, username: string, pageId?: string|null, profileUrl: string }>} accounts
+ * @returns {Promise<string>} URL spreadsheet
+ */
+export async function writeProfileLinksToSheet(accounts) {
+  const spreadsheetId = await getSpreadsheetId();
+  const sheets = getSheetsClient();
+
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === PROFILE_TAB_NAME);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: PROFILE_TAB_NAME } } }] },
+    });
+    log.info(`[Sheets] Tab "${PROFILE_TAB_NAME}" dibuat`);
+  }
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${quoteTab(PROFILE_TAB_NAME)}!A:D`,
+  });
+
+  const sorted = [...accounts].sort((a, b) => {
+    const ia = PLATFORM_SORT_ORDER.indexOf(a.network);
+    const ib = PLATFORM_SORT_ORDER.indexOf(b.network);
+    if (ia !== ib) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return (a.username || '').localeCompare(b.username || '', 'id');
+  });
+
+  const header = ['No', 'Platform', 'Username', 'URL Profil'];
+  const rows = sorted.map((a, i) => [
+    i + 1,
+    PLATFORM_LABELS[a.network] || a.network || '',
+    a.username ? `@${a.username}` : '',
+    a.profileUrl || '',
+  ]);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${quoteTab(PROFILE_TAB_NAME)}!A1`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [header, ...rows] },
+  });
+
+  log.info({ count: sorted.length }, `[Sheets] writeProfileLinksToSheet: ${sorted.length} akun`);
+  return getSpreadsheetUrl(spreadsheetId);
+}
+
+/**
+ * Fix link TikTok di tab harian menggunakan platform_url dari feed PostForme.
+ * Setiap baris TikTok di sheet dicari username-nya, lalu semua sel yang berisi
+ * URL tiktok.com diganti dengan platform_url yang benar dari feed.
+ *
+ * @param {Map<string, string>} feedByUsername - username lowercase (tanpa @) → platform_url
+ * @param {string} [tabName] - default: hari ini
+ * @returns {Promise<{ updated: number, notFound: string[], alreadyCorrect: number }>}
+ */
+export async function fixTikTokLinksInSheet(feedByUsername, tabName) {
+  const { header, rows, tab, spreadsheetId } = await readDailyTabHeaderAndRows(tabName);
+  if (!rows.length) return { updated: 0, notFound: [], alreadyCorrect: 0 };
+
+  const sheets = getSheetsClient();
+  const tikTokLabel = PLATFORM_LABELS['tiktok'];
+
+  const updates = [];
+  const notFoundSet = new Set();
+  let alreadyCorrect = 0;
+
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const row = rows[rowIdx];
+    if (String(row[0] || '').trim() !== tikTokLabel) continue;
+
+    const rawUsername = String(row[1] || '').replace(/^@/, '').trim().toLowerCase();
+    if (!rawUsername) continue;
+
+    const newUrl = feedByUsername.get(rawUsername);
+    if (!newUrl) { notFoundSet.add(rawUsername); continue; }
+
+    for (let col = 0; col < row.length; col++) {
+      const cell = String(row[col] || '');
+      if (!cell.includes('tiktok.com')) continue;
+      if (cell === newUrl) { alreadyCorrect++; continue; }
+
+      // rows[0] = sheet row 2 (header is row 1), so sheet row = rowIdx + 2
+      const colLetter = columnLetterFromIndex(col + 1);
+      updates.push({ range: `${quoteTab(tab)}!${colLetter}${rowIdx + 2}`, values: [[newUrl]] });
+    }
+  }
+
+  if (updates.length) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: updates },
+    });
+  }
+
+  log.info(
+    { updated: updates.length, notFound: notFoundSet.size, alreadyCorrect },
+    `[Sheets] fixTikTokLinksInSheet: ${updates.length} sel diperbarui`,
+  );
+
+  return { updated: updates.length, notFound: [...notFoundSet], alreadyCorrect };
 }
 
 export async function recordWebhookToSheet(payload, notify) {

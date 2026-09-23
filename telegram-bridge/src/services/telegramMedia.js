@@ -40,6 +40,7 @@ export function extractTelegramMedia(ctx) {
       fileId: msg.video.file_id,
       name: msg.video.file_name || `video_${msg.video.file_unique_id}.mp4`,
       mimeType: msg.video.mime_type || 'video/mp4',
+      fileSize: msg.video.file_size ?? 0,
     };
   }
 
@@ -52,6 +53,7 @@ export function extractTelegramMedia(ctx) {
       fileId: msg.document.file_id,
       name: msg.document.file_name || 'document',
       mimeType: mime,
+      fileSize: msg.document.file_size ?? 0,
     };
   }
 
@@ -61,6 +63,7 @@ export function extractTelegramMedia(ctx) {
       fileId: photoId,
       name: `photo_${msg.message_id}.jpg`,
       mimeType: 'image/jpeg',
+      fileSize: msg.message?.photo?.at?.(-1)?.file_size ?? 0,
     };
   }
 

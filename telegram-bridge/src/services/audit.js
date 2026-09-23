@@ -7,6 +7,8 @@ import {
   parseWideSheetHeader,
 } from '../config/sheetLayout.js';
 import { createLogger } from '../utils/logger.js';
+import { withSheetLock } from '../utils/sheetMutex.js';
+import { resolveConflictTabs } from './sheetConflict.js';
 
 const log = createLogger('audit');
 
@@ -56,21 +58,39 @@ async function listDailyTabsBetween(spreadsheetId, fromDayKey, toDayKey) {
  * @param {string} tabName
  */
 async function ensureTab(spreadsheetId, tabName) {
-  const sheets = getSheetsClient();
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties',
+  return withSheetLock(spreadsheetId, async () => {
+    await resolveConflictTabs(spreadsheetId, { tabName });
+
+    const sheets = getSheetsClient();
+    const meta = await sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties',
+    });
+    const exists = meta.data.sheets?.some((s) => s.properties?.title === tabName);
+    if (exists) return tabName;
+
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: tabName } } }],
+        },
+      });
+      log.info({ tabName }, '[Audit] Tab created');
+    } catch (err) {
+      const retryMeta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      });
+      const nowExists = retryMeta.data.sheets?.some(
+        (s) => s.properties?.title === tabName
+      );
+      if (!nowExists) throw err;
+      await resolveConflictTabs(spreadsheetId, { tabName });
+    }
+
+    return tabName;
   });
-  const exists = meta.data.sheets?.some((s) => s.properties?.title === tabName);
-  if (exists) return tabName;
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [{ addSheet: { properties: { title: tabName } } }],
-    },
-  });
-  log.info({ tabName }, '[Audit] Tab created');
-  return tabName;
 }
 
 async function clearTab(spreadsheetId, tabName) {

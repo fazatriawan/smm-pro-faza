@@ -277,7 +277,21 @@ function groupAccountsByNetwork(accountIds, allAccounts) {
 }
 
 /**
+ * @template T
+ * @param {T[]} arr
+ * @param {number} size
+ * @returns {T[][]}
+ */
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
  * Publish ke akun terpilih — satu request Outstand per platform (caption beda limit).
+ * IG/Threads di-split otomatis per env.igPublishSplitSize / env.threadsPublishSplitSize
+ * untuk mencegah stuck pending di Outstand ketika akun terlalu banyak.
  * @param {{ baseCaption: string, captionsByNetwork?: Record<string, string>, youtubeFields?: { title: string, description: string, tags?: string[] }, mediaByNetwork: Record<string, OutstandMediaRef[]>, scheduledAt?: string, socialAccountIds: string[] }} options
  */
 export async function publishBulk({
@@ -307,6 +321,7 @@ export async function publishBulk({
 
   const postIds = [];
   const summary = [];
+  let totalRequests = 0;
 
   for (const [network, accts] of Object.entries(byNet)) {
     let caption = captionsByNetwork[network] || baseCaption;
@@ -314,49 +329,70 @@ export async function publishBulk({
 
     const networkMedia = mediaByNetwork[network] ?? [];
     const containerMedia = buildContainerMedia(networkMedia);
-    const payload = {
-      containers: [
-        {
-          content: caption,
-          ...(containerMedia.length ? { media: containerMedia } : {}),
-        },
-      ],
-      accounts: accountRefs,
-    };
-    if (scheduledAt) payload.scheduledAt = scheduledAt;
 
-    if (network === 'youtube' && containerMedia.length) {
-      const yt =
-        youtubeFields || buildYoutubePostFields(captionsByNetwork.youtube || baseCaption);
-      caption = yt.description;
-      payload.containers[0].content = yt.description;
-      payload.youtube = {
-        isShort: env.youtubePublishAsShorts,
-        privacyStatus: 'public',
-        title: yt.title,
-        ...(yt.tags?.length ? { tags: yt.tags } : {}),
+    // Split IG/Threads jika melebihi batas — mencegah stuck pending di Outstand
+    const splitSize =
+      network === 'instagram'
+        ? env.igPublishSplitSize
+        : network === 'threads'
+          ? env.threadsPublishSplitSize
+          : 0;
+    const chunks =
+      splitSize > 0 && accountRefs.length > splitSize
+        ? chunkArray(accountRefs, splitSize)
+        : [accountRefs];
+
+    for (const chunk of chunks) {
+      const payload = {
+        containers: [
+          {
+            content: caption,
+            ...(containerMedia.length ? { media: containerMedia } : {}),
+          },
+        ],
+        accounts: chunk,
       };
+      if (scheduledAt) payload.scheduledAt = scheduledAt;
+
+      if (network === 'youtube' && containerMedia.length) {
+        const yt =
+          youtubeFields || buildYoutubePostFields(captionsByNetwork.youtube || baseCaption);
+        caption = yt.description;
+        payload.containers[0].content = yt.description;
+        payload.youtube = {
+          isShort: env.youtubePublishAsShorts,
+          privacyStatus: 'public',
+          title: yt.title,
+          ...(yt.tags?.length ? { tags: yt.tags } : {}),
+        };
+      }
+
+      try {
+        const res = await client.post('/v1/posts/', payload);
+        const body = parseResponseBody(res);
+        const post = body.post ?? body.data?.post ?? body.data;
+        const postId = post?.id ?? post?.postId;
+        if (postId) postIds.push(postId);
+        totalRequests += 1;
+      } catch (err) {
+        throw new Error(
+          `Publish ${network} gagal (${chunk.length} akun): ${formatOutstandError(err)}`
+        );
+      }
     }
 
-    try {
-      const res = await client.post('/v1/posts/', payload);
-      const body = parseResponseBody(res);
-      const post = body.post ?? body.data?.post ?? body.data;
-      const postId = post?.id ?? post?.postId;
-      if (postId) postIds.push(postId);
-      summary.push(`${network}: ${accts.length} akun`);
-    } catch (err) {
-      throw new Error(
-        `Publish ${network} gagal (${accts.length} akun): ${formatOutstandError(err)}`
-      );
-    }
+    summary.push(
+      chunks.length > 1
+        ? `${network}: ${accts.length} akun (${chunks.length}×${splitSize})`
+        : `${network}: ${accts.length} akun`
+    );
   }
 
   return {
     postIds,
     accountCount: accountIds.length,
     uniqueAccountCount: new Set(accountIds).size,
-    batchCount: networks.length,
+    batchCount: totalRequests,
     summary,
     captionsByNetwork,
   };
@@ -508,11 +544,18 @@ async function enrichPostWithAccountDirectory(post) {
 
 /** @param {string} postId */
 export async function getPost(postId) {
-  const res = await client.get(`/v1/posts/${postId}`);
-  const body = parseResponseBody(res);
-  const raw = body.post ?? body.data?.post ?? body.data;
-  const post = normalizePost(raw);
-  return enrichPostWithAccountDirectory(post);
+  try {
+    const res = await client.get(`/v1/posts/${postId}`);
+    const body = parseResponseBody(res);
+    const raw = body.post ?? body.data?.post ?? body.data;
+    const post = normalizePost(raw);
+    return enrichPostWithAccountDirectory(post);
+  } catch (err) {
+    // Post sudah tidak ada di Outstand (dibatalkan/dihapus) — kembalikan null
+    // supaya caller bisa skip dengan tenang tanpa error ke Telegram.
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
 }
 
 /**
@@ -614,16 +657,26 @@ export async function listPostIdsForDailyTab(targetTab) {
 
     let stopPaging = false;
     for (const raw of batch) {
-      const ts =
+      // Untuk scheduled post: pakai scheduledAt/publishedAt sebagai tab,
+      // bukan createdAt — post dibuat kemarin tapi dijadwalkan hari ini
+      // harus masuk tab hari ini.
+      const effectiveTs =
+        raw.scheduledAt ??
+        raw.publishedAt ??
         raw.createdAt ??
         raw.created_at ??
-        raw.publishedAt ??
-        raw.scheduledAt ??
         raw.updatedAt;
-      if (!ts) continue;
+      // Untuk stopPaging: tetap pakai createdAt (urutan sort API).
+      const createdTs =
+        raw.createdAt ?? raw.created_at ?? effectiveTs;
+      if (!effectiveTs) continue;
 
-      const tab = dailyTabForIso(ts);
-      if (tab < targetTab) {
+      const tab = dailyTabForIso(effectiveTs);
+      const createdTab = dailyTabForIso(createdTs);
+
+      // Hanya stop jika KEDUANYA lebih lama dari target —
+      // supaya scheduled post (createdAt=kemarin, scheduledAt=hari ini) tidak terlewat.
+      if (createdTab < targetTab && tab < targetTab) {
         stopPaging = true;
         break;
       }
@@ -704,12 +757,14 @@ export async function listRecentPostIds(options = {}) {
 /**
  * Poll until each account is published/failed or timeout.
  * @param {string[]} postIds
- * @param {{ maxWaitMs?: number, intervalMs?: number }} [options]
+ * @param {{ maxWaitMs?: number, intervalMs?: number, onProgress?: (counts: { published: number, failed: number, pending: number, total: number, elapsedMs: number, failedAccounts: Array<{ username: string, network: string, error: string | null }> }) => void }} [options]
  */
 export async function waitForPostsSettled(postIds, options = {}) {
   const maxWaitMs = options.maxWaitMs ?? 45_000;
   const intervalMs = options.intervalMs ?? 3_000;
-  const deadline = Date.now() + maxWaitMs;
+  const onProgress = options.onProgress;
+  const startMs = Date.now();
+  const deadline = startMs + maxWaitMs;
   /** @type {Map<string, ReturnType<typeof normalizePost>>} */
   const latest = new Map();
 
@@ -732,6 +787,24 @@ export async function waitForPostsSettled(postIds, options = {}) {
         log.warn({ postId, err: err.message }, `[Outstand] poll ${postId}: ${err.message}`);
         allSettled = false;
       }
+    }
+
+    if (onProgress) {
+      const allAccounts = [...latest.values()].flatMap((p) => p?.socialAccounts ?? []);
+      const toInfo = (a) => ({ username: a.username, network: a.network, error: a.error ?? null });
+      const publishedAccs = allAccounts.filter((a) => a.status === 'published');
+      const failedAccs = allAccounts.filter((a) => a.status === 'failed');
+      const pendingAccs = allAccounts.filter((a) => a.status === 'pending');
+      onProgress({
+        published: publishedAccs.length,
+        failed: failedAccs.length,
+        pending: pendingAccs.length,
+        total: allAccounts.length,
+        elapsedMs: Date.now() - startMs,
+        publishedAccounts: publishedAccs.map(toInfo),
+        failedAccounts: failedAccs.map(toInfo),
+        pendingAccounts: pendingAccs.map(toInfo),
+      });
     }
 
     if (allSettled && postIds.every((id) => latest.get(id)?.socialAccounts?.length)) {

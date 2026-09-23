@@ -1,4 +1,4 @@
-import { cancelOutstandPost, getPost, listRecentPostIds } from './outstand.js';
+import { cancelOutstandPost, getPost, listRecentPostIds } from './publisher.js';
 import { collectTodayPublishLinks } from './todayPublish.js';
 import { getWibDayKey } from '../utils/wibTime.js';
 import {
@@ -252,7 +252,17 @@ export async function cancelPendingPostIds(postIds) {
     }
 
     const summary = await summarizePostForCancel(postId);
-    if (summary && summary.total > 0 && summary.pending === 0) {
+    if (!summary) {
+      markPostIdCancelled(postId);
+      results.push({
+        postId,
+        ok: true,
+        message:
+          'sudah tidak ada di Outstand (404) — antrian kemungkinan sudah dihapus/cancel',
+      });
+      continue;
+    }
+    if (summary.total > 0 && summary.pending === 0) {
       markPostIdCancelled(postId);
       results.push({
         postId,

@@ -62,7 +62,7 @@ export async function notifyPendingQueueIfNeeded(reason = '') {
  * Loop berkala: ingatkan antrian pending + konten batch kemarin.
  */
 export function startPendingMonitorLoop() {
-  const minutes = Number(env.pendingMonitorMinutes) || 20;
+  const minutes = Number(env.pendingMonitorMinutes ?? 20);
   if (!minutes || monitorTimer) return;
 
   const ms = minutes * 60_000;

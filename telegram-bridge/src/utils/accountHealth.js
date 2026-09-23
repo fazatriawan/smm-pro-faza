@@ -240,7 +240,7 @@ export function groupAttentionRows(rows) {
 function formatUsernameSample(sample, total) {
   const names = sample
     .slice(0, 4)
-    .map((a) => `@${normalizeUsernameToken(a.username || a.id)}`);
+    .map((a) => `@${normalizeUsernameToken(a.username || a.id).replace(/_/g, '\\_')}`);
   const rest = total - names.length;
   if (rest > 0) return `${names.join(', ')} … +${rest} lagi`;
   return names.join(', ');
@@ -301,7 +301,7 @@ export function formatHealthAttentionBlock(accounts, issueMap, opts = {}) {
   if (rows.length <= maxDetailRows && groups.length <= 1) {
     for (const { account, issue } of detailRows) {
       const net = getNetworkShortLabel(account.network);
-      const user = normalizeUsernameToken(account.username || account.id);
+      const user = normalizeUsernameToken(account.username || account.id).replace(/_/g, '\\_');
       lines.push(
         `• *${net}* @${user}${issue.level === 'bad' ? ' 🔴' : ' 🟡'} — ${issue.label}`
       );

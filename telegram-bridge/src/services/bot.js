@@ -19,6 +19,8 @@ import {
   fetchCaptionFromPostIds,
   listRecentPostIds,
   cancelOutstandPost,
+  getActivePublisher,
+  setActivePublisher,
 } from './publisher.js';
 import { isImageToVideoNetwork, getDurationForNetwork } from './imageToVideo.js';
 import {
@@ -51,10 +53,15 @@ import {
   deleteOldDailyTabs,
   upsertPublishEventRow,
   registerPublishContext,
+  writeLinksToRightmostColumn,
+  readPublishedLinksFromDailyTab,
+  writeProfileLinksToSheet,
+  fixTikTokLinksInSheet,
 } from './sheets.js';
 import {
   savePublishArchive,
   loadPublishArchive,
+  getTodayArchivedPostIds,
   hydrateMediaFromArchive,
   getArchiveStaleReason,
 } from './publishArchive.js';
@@ -65,7 +72,6 @@ import {
   cancelPendingPostIds,
   formatPendingReport,
   replyCancelResults,
-  buildOutstandCancelSupportDraft,
   isPostIdCancelled,
   markPostIdCancelled,
   parseStopCommandArgs,
@@ -95,8 +101,10 @@ import {
   summarizePublishResults,
   formatTelegramPublishReport,
   formatPublishLinksReport,
+  formatCopyPasteLinksText,
   replyTelegramLong,
   sendTelegramDocument,
+  summarizeSheetAccounts,
 } from './publishResult.js';
 import { validateBeforePublish, buildPublishPreviewText } from './validatePublish.js';
 import { parseScheduleInput, formatScheduleHelp } from '../utils/scheduleParse.js';
@@ -140,6 +148,7 @@ import {
 import {
   annotateAccountsWithDayAttempts,
   buildDuplicateAccountSummary,
+  reconcileSheetAccounts,
 } from '../utils/accountDayUsage.js';
 import {
   applyRetrySafetyFilter,
@@ -152,6 +161,7 @@ import {
   classifyRetryError,
   RETRY_ACTION,
 } from '../utils/retryPublish.js';
+import { recordTokenIssue, clearTokenIssue, getTokenIssuesById } from '../utils/tokenIssues.js';
 import {
   computePublishPollPlan,
   formatPollWaitHint,
@@ -191,6 +201,9 @@ import {
   listCaptions,
 } from '../utils/captionLibrary.js';
 import { createLogger } from '../utils/logger.js';
+import { buildProfileUrl } from '../utils/platformUrl.js';
+import { generateOAuthUrl, POSTFORME_PLATFORMS, listSocialAccounts as listPostformeAccounts, getMultiAccountFeed } from './postforme.js';
+import { listSocialAccounts as listWoopsocialAccounts } from './woopsocial.js';
 
 const log = createLogger('bot');
 
@@ -334,24 +347,34 @@ const NETWORK_LABELS = {
 const MENU = {
   PUBLISH: '📤 Publish',
   SHEET: '📊 Laporan Sheets',
+  KOPASLINK: '🔗 Kopas Link',
   CANCEL: '❌ Batal',
   HELP: 'ℹ️ Menu / Bantuan',
+  PLATFORM_POSTFORME: '🟣 PostForme',
+  PLATFORM_WOOPSOCIAL: '🔵 Woopsocial',
 };
 
 function mainMenuKeyboard() {
   return Markup.keyboard([
     [MENU.PUBLISH, MENU.SHEET],
-    [MENU.CANCEL, MENU.HELP],
+    [MENU.PLATFORM_POSTFORME, MENU.PLATFORM_WOOPSOCIAL],
+    [MENU.KOPASLINK, MENU.CANCEL],
+    [MENU.HELP],
   ]).resize();
 }
 
 async function showMainMenu(ctx, extraText = '') {
+  const activePub = getActivePublisher();
+  const activePubLabel = activePub === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
   const text =
     (extraText ? `${extraText}\n\n` : '') +
     '👋 *SMM Pro Publish Bot*\n\n' +
+    `Platform aktif: *${activePubLabel}*\n\n` +
     'Pilih tombol di bawah (tidak perlu ketik perintah):\n' +
     `• ${MENU.PUBLISH} — mulai upload\n` +
     `• ${MENU.SHEET} — buka laporan Google Sheets\n` +
+    `• ${MENU.KOPASLINK} — copy semua link live hari ini\n` +
+    `• ${MENU.PLATFORM_POSTFORME} / ${MENU.PLATFORM_WOOPSOCIAL} — ganti platform\n` +
     `• ${MENU.CANCEL} — batalkan sesi\n` +
     `• ${MENU.HELP} — panduan singkat\n\n` +
     'Kirim *broadcast misi* (§1–2–5) → lalu link Drive atau foto/video.\n' +
@@ -667,7 +690,7 @@ async function showTargetPicker(ctx) {
 
   if (!accounts.length) {
     await ctx.reply(
-      'Belum ada akun di Woopsocial.\nHubungkan dulu di dashboard → Social Accounts.'
+      'Belum ada akun di publisher.\nHubungkan dulu di dashboard → Social Accounts.'
     );
     return;
   }
@@ -859,7 +882,7 @@ async function handleRandomAccountPick(ctx, text) {
       '❌ Tidak ada akun yang bisa dipilih.\n\n' +
       (result.warnings.length
         ? result.warnings.join('\n')
-        : 'Cek koneksi Outstand.');
+        : 'Cek koneksi publisher.');
     const escBackticks = (s) => String(s || '').replace(/`/g, '');
     const forceHint = suggestForce
       ? `\n\n🔥 Mau *paksa* tetap pilih (post 2× ke akun yang sama)?\nKetik ulang dengan keyword \`force\`:\n\`${escBackticks(cleanText)} force\``
@@ -894,6 +917,9 @@ async function handleRandomAccountPick(ctx, text) {
   }
 
   await safeReply(ctx, msg, { parse_mode: 'Markdown' });
+
+  // Simpan requestedCounts untuk post-publish fill-up offer
+  updateSession(ctx.chat.id, { requestedCounts: parsed.counts });
 
   // Tawarkan: kalau ada shortage (mis. Threads minta 6 hanya dapat 1 karena
   // kuota sisa), tanya user mau isi sisa dari akun yang sudah dipakai hari
@@ -1240,7 +1266,7 @@ async function finalizeTargetSelection(ctx, accountIds, label) {
 async function showGlobalAccountPicker(ctx) {
   const accounts = await listSocialAccounts();
   if (!accounts.length) {
-    await ctx.reply('Belum ada akun di Outstand.');
+    await ctx.reply('Belum ada akun di publisher.');
     return;
   }
 
@@ -1283,7 +1309,7 @@ async function showGlobalAccountPicker(ctx) {
   rows.push([Markup.button.callback('« Kembali', 'target:back')]);
 
   await ctx.reply(
-    `☑️ *Pilih akun* (boleh lintas platform)\nTerpilih: ${selected.size} / ${accounts.length}`,
+    `☑️ *Pilih akun* (${getActivePublisher() === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial'})\nTerpilih: ${selected.size} / ${accounts.length}`,
     { parse_mode: 'Markdown', ...Markup.inlineKeyboard(rows) }
   );
 }
@@ -1324,7 +1350,7 @@ async function refreshGlobalAccountPicker(ctx) {
   }
   rows.push([Markup.button.callback('« Kembali', 'target:back')]);
 
-  const text = `☑️ *Pilih akun* (lintas platform)\nTerpilih: ${selected.size} / ${accounts.length}`;
+  const text = `☑️ *Pilih akun* (${getActivePublisher() === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial'})\nTerpilih: ${selected.size} / ${accounts.length}`;
   try {
     await ctx.editMessageText(text, {
       parse_mode: 'Markdown',
@@ -1551,6 +1577,54 @@ async function processIncomingDriveLink(ctx, linkText) {
     const entry = await resolveDriveEntry(linkText);
     const session = getSession(ctx.chat.id);
 
+    if (session.step === 'awaiting_tiktok_refill_media' && session.pendingTiktokRefill) {
+      const refill = session.pendingTiktokRefill;
+      if (Date.now() - refill.at > 60 * 60_000) {
+        await ctx.reply('⌛ Sesi TikTok refill kadaluarsa. Ulangi proses fill-up.');
+        updateSession(ctx.chat.id, { pendingTiktokRefill: undefined, step: 'idle' });
+        return;
+      }
+
+      const mediaRaw = entry.media?.length
+        ? entry.media
+        : entry.subfolders?.length
+          ? null
+          : await listMediaInFolder(entry.id).catch(() => []);
+
+      if (!mediaRaw?.length) {
+        await ctx.reply('Tidak ada media di folder/file ini. Kirim link folder yang berisi foto/video.');
+        return;
+      }
+
+      const mediaFiles = mediaRaw.map((f) => ({
+        id: f.id,
+        name: f.name || 'media',
+        mimeType: f.mimeType || 'application/octet-stream',
+        source: 'drive',
+      }));
+
+      setSessionMediaFiles(ctx.chat.id, mediaFiles, {
+        folderId: entry.id,
+        folderName: entry.name,
+        sourceLabel: `Drive · ${entry.name} (TikTok refill)`,
+        extra: {
+          step: 'selecting_targets',
+          caption: undefined,
+          captionsByNetwork: undefined,
+          selectedAccountIds: undefined,
+        },
+      });
+
+      const refillLabel = refill.label || getNetworkShortLabel(refill.network || 'akun');
+      await ctx.reply(
+        `✅ Konten baru siap. Menarget *${refill.fillCount}* akun ${refillLabel} yang sama…`,
+        { parse_mode: 'Markdown' }
+      );
+      updateSession(ctx.chat.id, { pendingTiktokRefill: undefined });
+      await finalizeTargetSelection(ctx, refill.accountIds, `${refillLabel} fill-up ×${refill.fillCount}`);
+      return;
+    }
+
     if (session.step === 'awaiting_retry_media' && session.retryPending) {
       const pending = session.retryPending;
       const mediaRaw = entry.media?.length
@@ -1631,13 +1705,16 @@ async function processIncomingDriveLink(ctx, linkText) {
 
 async function handlePublishCommand(ctx) {
   updateSession(ctx.chat.id, { step: 'awaiting_media' });
+  const pub = getActivePublisher();
+  const pubLabel = pub === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
   await ctx.reply(
-    '📤 *Mulai publish*\n\n' +
+    `📤 *Mulai publish* — ${pubLabel}\n\n` +
       'Kirim salah satu:\n' +
       '1️⃣ *Broadcast misi* (SONAR dll.) — bot baca §1 Pesan utama, §2 Poin, §5 Aturan\n' +
       '2️⃣ *Link Google Drive* (folder/file)\n' +
       '3️⃣ *Foto atau video* langsung ke chat\n\n' +
-      'Urutan disarankan: misi dulu (atau misi + link Drive dalam satu pesan), lalu pilih media.',
+      'Urutan disarankan: misi dulu (atau misi + link Drive dalam satu pesan), lalu pilih media.\n' +
+      `_Ganti platform: /setplatform woopsocial \\| /setplatform postforme_`,
     { parse_mode: 'Markdown', ...mainMenuKeyboard() }
   );
 }
@@ -1683,6 +1760,18 @@ async function processTelegramMedia(ctx) {
   if (!picked) {
     await ctx.reply(
       '❌ Format tidak didukung.\nKirim *foto*, *video*, atau *dokumen* gambar/video.'
+    );
+    return;
+  }
+
+  const MAX_TELEGRAM_BYTES = 20 * 1024 * 1024; // 20 MB — batas getFile Telegram Bot API
+  if (picked.fileSize > MAX_TELEGRAM_BYTES) {
+    const sizeMb = (picked.fileSize / 1024 / 1024).toFixed(0);
+    await ctx.reply(
+      `❌ File terlalu besar (${sizeMb} MB).\n\n` +
+      `Telegram Bot hanya bisa unduh file hingga *20 MB* langsung.\n\n` +
+      `*Solusi:* upload video ke Google Drive, lalu kirim link Drive-nya ke sini.`,
+      { parse_mode: 'Markdown' }
     );
     return;
   }
@@ -1839,7 +1928,7 @@ async function resolveCaptionForRetry(ctx, input) {
     '';
 
   if (!caption.trim() && postIds.length) {
-    await ctx.reply('⏳ Mengambil caption dari Outstand…').catch(() => {});
+    await ctx.reply(`⏳ Mengambil caption dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`).catch(() => {});
     caption = await fetchCaptionFromPostIds(postIds);
   }
 
@@ -2084,7 +2173,7 @@ async function handleRetryPublish(ctx, options = {}) {
         'Kirim *link Google Drive yang sama* atau foto/video, lalu bot publish ulang otomatis.\n\n' +
         `Post ID: ${postIds.join(', ')}\n` +
         `Akun: ${retryIds.length}\n\n` +
-        '_Caption diambil ulang dari Outstand jika tersedia._',
+        '_Caption diambil ulang dari publisher jika tersedia._',
       { parse_mode: 'Markdown' }
     );
     return;
@@ -2132,6 +2221,8 @@ async function handleRetryPublish(ctx, options = {}) {
 
 async function runPublish(ctx, scheduledAt) {
   const session = getSession(ctx.chat.id);
+  const _runPub = getActivePublisher();
+  const pubLabel = _runPub === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
 
   // Hard lock: jika ada publish lain sedang berjalan untuk chat ini, tolak.
   // `publishingSince` di-set di sini lalu di-clear di akhir / catch block.
@@ -2281,7 +2372,7 @@ async function runPublish(ctx, scheduledAt) {
 
   await ctx.reply(
     scheduledAt
-      ? '📅 Menjadwalkan & mengunggah media ke Outstand…'
+      ? `📅 Menjadwalkan & mengunggah media ke ${pubLabel}…`
       : '🚀 Mengunggah media & publish ke akun terpilih…'
   );
 
@@ -2331,12 +2422,14 @@ async function runPublish(ctx, scheduledAt) {
       idempotencyKey: session.lastPublishKey || '',
       instructionTargets,
       publishStaggerMs: session.publishStaggerMs || 0,
+      requestedCounts: session.requestedCounts || {},
     };
 
     const {
       byNetwork: mediaByNetwork,
       imageToVideoNetworks,
       imageToVideoSilent,
+      tiktokNormalized,
     } = await uploadMediaForTargets(
       snapshot.mediaFiles,
       snapshot.selectedAccountIds
@@ -2344,7 +2437,7 @@ async function runPublish(ctx, scheduledAt) {
 
     // Buffer sudah diterima Woopsocial — bebaskan segera supaya GC bisa collect
     for (const f of snapshot.mediaFiles) { f.buffer = undefined; }
-    const _liveSess = getSession(chatId);
+    const _liveSess = getSession(ctx.chat.id);
     if (_liveSess.mediaFiles) { for (const f of _liveSess.mediaFiles) { f.buffer = undefined; } }
     if (_liveSess.pendingReplacement?.mediaFiles) { for (const f of _liveSess.pendingReplacement.mediaFiles) { f.buffer = undefined; } }
 
@@ -2366,7 +2459,7 @@ async function runPublish(ctx, scheduledAt) {
       const netEntries = Object.entries(netGroups);
       const allPostIds = [];
       let batchIdx = 0;
-      for (const [, ids] of netEntries) {
+      for (const [net, ids] of netEntries) {
         const batchScheduledAt = batchIdx === 0
           ? undefined
           : new Date(Date.now() + batchIdx * snapshot.publishStaggerMs).toISOString();
@@ -2377,6 +2470,8 @@ async function runPublish(ctx, scheduledAt) {
           mediaByNetwork,
           scheduledAt: batchScheduledAt,
           socialAccountIds: ids,
+          tiktokVideoBuffer: net === 'tiktok' ? tiktokNormalized?.buffer : undefined,
+          tiktokVideoName: net === 'tiktok' ? tiktokNormalized?.name : undefined,
         });
         allPostIds.push(...(batchResult.postIds || []));
         batchIdx++;
@@ -2396,6 +2491,8 @@ async function runPublish(ctx, scheduledAt) {
         mediaByNetwork,
         scheduledAt,
         socialAccountIds: snapshot.selectedAccountIds,
+        tiktokVideoBuffer: tiktokNormalized?.buffer,
+        tiktokVideoName: tiktokNormalized?.name,
       });
     }
 
@@ -2430,11 +2527,18 @@ async function runPublish(ctx, scheduledAt) {
     // Lock `publishing` SENGAJA dipertahankan sampai polling selesai supaya
     // double-tap Send Now tidak men-trigger submit baru.
     clearSessionContent(ctx.chat.id);
+    const today = getWibDayKey();
+    const isRandomPublish = Object.keys(snapshot.requestedCounts || {}).length > 0;
+    const currentSess = getSession(ctx.chat.id);
+    const shouldSetDailyTargets = isRandomPublish && currentSess.dailyTargetsDate !== today;
     updateSession(ctx.chat.id, {
       step: 'publishing',
       lastPublish,
       outstandPostIds: result.postIds,
       outstandMediaIds: allMediaIds,
+      ...(shouldSetDailyTargets
+        ? { dailyTargets: { ...snapshot.requestedCounts }, dailyTargetsDate: today }
+        : {}),
     });
 
     log.info(
@@ -2455,13 +2559,13 @@ async function runPublish(ctx, scheduledAt) {
           `Target: ${targetInfo}\n` +
           `Akun: ${result.accountCount} · Batch: ${result.batchCount}\n` +
           `Post ID: ${postIdLine}\n\n` +
-          `Status live akan muncul setelah waktu jadwal. Cek Woopsocial dashboard jika perlu.`
+          `Status live akan muncul setelah waktu jadwal. Cek dashboard ${pubLabel} jika perlu.`
       );
       return;
     }
 
     const baseStatusText =
-      `📤 Request diterima Woopsocial\n` +
+      `📤 Request diterima ${pubLabel}\n` +
       `Target: ${targetInfo}\n` +
       `Post ID: ${postIdLine}` +
       (imageToVideoNetworks?.length
@@ -2495,6 +2599,8 @@ async function runPublish(ctx, scheduledAt) {
       let lastEditMs = 0;
       let lastSheetRefreshMs = 0;
       const SHEET_REFRESH_INTERVAL_MS = 30_000;
+      const _activePub = getActivePublisher();
+      const publisherLabel = _activePub === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
 
       const pollPlan = computePublishPollPlan(result.accountCount);
       // Konversi gambar→video butuh lebih lama — minimal 3 menit jika ada platform video
@@ -2516,6 +2622,7 @@ async function runPublish(ctx, scheduledAt) {
               baseCaption: snapshot.caption,
               folderName: snapshot.folderName,
               targetLabel: snapshot.targetLabel,
+              publisher: getActivePublisher(),
             }).catch(() => {});
           }
 
@@ -2524,7 +2631,7 @@ async function runPublish(ctx, scheduledAt) {
           const sec = Math.round(elapsedMs / 1000);
 
           const lines = [
-            `📤 Request diterima Woopsocial`,
+            `📤 Request diterima ${publisherLabel}`,
             `Target: ${targetInfo}`,
             `Post ID: ${postIdLine}`,
             ``,
@@ -2541,6 +2648,7 @@ async function runPublish(ctx, scheduledAt) {
         },
       });
       const summary = summarizePublishResults(posts, snapshot.caption);
+      syncTokenIssuesFromSummary(summary);
 
       // Update pesan segera setelah polling selesai — beri tahu user bot masih kerja
       {
@@ -2549,7 +2657,7 @@ async function runPublish(ctx, scheduledAt) {
         const failAccs = allAccs.filter((a) => a.status === 'failed');
         const pendAccs = allAccs.filter((a) => a.status === 'pending');
         const postPollLines = [
-          `📤 Request diterima Woopsocial`,
+          `📤 Request diterima ${publisherLabel}`,
           `Target: ${targetInfo}`,
           `Post ID: ${postIdLine}`,
           ``,
@@ -2565,7 +2673,7 @@ async function runPublish(ctx, scheduledAt) {
       // Update pesan ke "Selesai" — tidak tunggu Sheets supaya user langsung tahu
       telegram.editMessageText(
         chatId, statusMsg.message_id, undefined,
-        `📤 Request diterima Woopsocial\nTarget: ${targetInfo}\nPost ID: ${postIdLine}\n\n` +
+        `📤 Request diterima ${publisherLabel}\nTarget: ${targetInfo}\nPost ID: ${postIdLine}\n\n` +
           `✅ *Selesai* — ✅ ${summary.published} live · ❌ ${summary.failed} gagal · ⏳ ${summary.pending} pending\n` +
           (summary.pending > 0 ? `_${summary.pending} akun masih proses — notifikasi otomatis dalam 5 mnt._` : ``),
         { parse_mode: 'Markdown' }
@@ -2606,7 +2714,23 @@ async function runPublish(ctx, scheduledAt) {
       }
 
       if (summary.failed > 0) await offerAutoRetryIfAny(bgCtx, { summary, postIds: result.postIds });
-      await offerReplacementAccountsIfAny(bgCtx, { summary, snapshot, result });
+      const hasRequestedCounts = Object.keys(snapshot.requestedCounts || {}).length > 0;
+      // PostForme: tidak offer replacement/fillup — status dari API tidak reliable
+      // (post dihapus setelah diproses, jadi 0 live bukan berarti gagal)
+      const isPostForme = getActivePublisher() === 'postforme';
+      if (!isPostForme) {
+        if (!hasRequestedCounts) {
+          // Tidak dari /random — pakai flow replacement biasa
+          await offerReplacementAccountsIfAny(bgCtx, { summary, snapshot, result });
+        }
+        // Dari /random — fillup hanya kalau sudah tidak ada pending; kalau masih ada,
+        // schedulePublishStatusFollowUp akan memanggil offerFillupIfShortfall setelah settle.
+        if (hasRequestedCounts && summary.pending === 0) {
+          await offerFillupIfShortfall(bgCtx, { summary, snapshot }).catch((err) =>
+            log.warn({ err: err.message }, '[postfillup] offerFillupIfShortfall error')
+          );
+        }
+      }
 
       updateSession(chatId, { step: 'idle', publishingSince: undefined });
 
@@ -2624,11 +2748,24 @@ async function runPublish(ctx, scheduledAt) {
               if (!valid.length) { doPeriodicCheck(attempt + 1); return; }
 
               const s = summarizePublishResults(valid, snapshot.caption);
+              syncTokenIssuesFromSummary(s);
 
               const allAccs = valid.flatMap((p) => p?.socialAccounts ?? []);
               const pubAccs = allAccs.filter((a) => a.status === 'published');
               const failAccs = allAccs.filter((a) => a.status === 'failed');
               const pendAccs = allAccs.filter((a) => a.status === 'pending');
+
+              // Guard: jangan declare done kalau API return data parsial.
+              // Jika jumlah akun yang dikembalikan API < 85% dari yang diexpect,
+              // berarti sebagian post ID gagal difetch — lanjutkan monitoring.
+              const totalExpected = (snapshot.selectedAccountIds || []).length;
+              const isMissingData =
+                totalExpected > 0 && allAccs.length < Math.floor(totalExpected * 0.85);
+
+              if (s.pending === 0 && isMissingData) {
+                doPeriodicCheck(attempt + 1);
+                return;
+              }
 
               if (s.pending === 0) {
                 // Semua sudah settle — kirim notif final lalu berhenti
@@ -2645,6 +2782,12 @@ async function runPublish(ctx, scheduledAt) {
                   lines.push(`_Cek link: \`/links ${result.postIds[0]}\`_`);
                 }
                 await telegram.sendMessage(chatId, lines.join('\n'), { parse_mode: 'Markdown' });
+                // Tawarkan fill-up setelah semua akun settle
+                if (hasRequestedCounts && !isPostForme) {
+                  await offerFillupIfShortfall(bgCtx, { summary: s, snapshot }).catch((err) =>
+                    log.warn({ err: err.message }, '[postfillup:periodic] offerFillupIfShortfall error')
+                  );
+                }
                 return; // berhenti — tidak jadwalkan lagi
               }
 
@@ -2686,6 +2829,7 @@ async function runPublish(ctx, scheduledAt) {
               mediaFiles: snapshot.mediaFiles,
               mediaFilesDay: snapshot.mediaFilesDay,
               idempotencyKey: snapshot.idempotencyKey,
+              publisher: getActivePublisher(),
             });
             if (sheetResult.recorded > 0) {
               const rows = sheetResult.rowCount ?? sheetResult.recorded;
@@ -2752,6 +2896,39 @@ const FOLLOW_UP_DELAYS_MS = [90_000, 240_000, 480_000];
  * Setelah publish selesai: tawarkan retry untuk akun yang gagal (retryNow saja).
  * Tidak auto-publish — user harus klik tombol konfirmasi.
  */
+/**
+ * Simpan/hapus flag "token bermasalah" per akun berdasarkan hasil publish nyata.
+ * Dashboard publisher (PostForMe/Woopsocial) bisa saja masih bilang "connected"
+ * walau refresh token sudah mati di TikTok/Meta — satu-satunya sinyal yang bisa
+ * diandalkan adalah hasil publish sungguhan. Dipakai reconnectMonitor.js (alert
+ * harian) dan /cekakun (getTodayFailuresById) supaya keduanya tahu akun mana
+ * yang benar-benar perlu reconnect, bukan cuma "gagal publish" generik.
+ * @param {ReturnType<typeof import('./publishResult.js').summarizePublishResults>} summary
+ */
+function syncTokenIssuesFromSummary(summary) {
+  try {
+    for (const a of summary?.sheetAccounts || []) {
+      if (!a.accountId) continue;
+      if (a.status === 'published') {
+        clearTokenIssue(a.accountId);
+        continue;
+      }
+      if (a.status !== 'failed') continue;
+      const c = classifyRetryError(a.error);
+      if (c.action === RETRY_ACTION.FIX_ACCOUNT) {
+        recordTokenIssue({
+          accountId: a.accountId,
+          network: a.network,
+          username: a.username,
+          error: a.error,
+        });
+      }
+    }
+  } catch (err) {
+    log.warn({ err: err?.message }, `[Bot] syncTokenIssuesFromSummary: ${err?.message}`);
+  }
+}
+
 async function offerAutoRetryIfAny(ctx, { summary, postIds }) {
   try {
     const accounts = summary?.sheetAccounts || [];
@@ -2797,6 +2974,84 @@ async function offerAutoRetryIfAny(ctx, { summary, postIds }) {
   } catch (err) {
     log.warn({ err: err?.message }, `[Bot] offerAutoRetryIfAny: ${err?.message}`);
   }
+}
+
+/**
+ * Setelah publish selesai: jika ada platform yang live < target (/random ig 45 tapi hanya 40),
+ * tawarkan posting ulang ke akun yang sama untuk melengkapi.
+ * TikTok perlu konten baru; platform lain pakai konten yang sama otomatis.
+ */
+async function offerFillupIfShortfall(ctx, { summary, snapshot }) {
+  const requested = snapshot.requestedCounts || {};
+  if (!Object.keys(requested).length) return;
+
+  const publishedByNet = {};
+  const publishedIdsByNet = {};
+  for (const acc of summary.sheetAccounts || []) {
+    if ((acc.status || '').toLowerCase() !== 'published') continue;
+    const net = (acc.network || '').toLowerCase();
+    publishedByNet[net] = (publishedByNet[net] || 0) + 1;
+    if (!publishedIdsByNet[net]) publishedIdsByNet[net] = [];
+    if (acc.accountId) publishedIdsByNet[net].push(acc.accountId);
+  }
+
+  const items = [];
+  for (const [net, reqCount] of Object.entries(requested)) {
+    const postedCount = publishedByNet[net] || 0;
+    const shortfall = reqCount - postedCount;
+    if (shortfall <= 0) continue;
+    const postedIds = publishedIdsByNet[net] || [];
+    if (!postedIds.length) continue;
+    items.push({ net, reqCount, postedCount, shortfall, postedIds, isTiktok: net === 'tiktok' });
+  }
+
+  if (!items.length) return;
+
+  updateSession(ctx.chat.id, {
+    pendingPostFillup: {
+      items,
+      at: Date.now(),
+    },
+    pendingPostFillupSnapshot: {
+      mediaFiles: snapshot.mediaFiles,
+      caption: snapshot.caption,
+      folderName: snapshot.folderName,
+      folderId: snapshot.folderId,
+      mediaFilesSetAt: snapshot.mediaFilesSetAt,
+      mediaFilesDay: snapshot.mediaFilesDay,
+    },
+  });
+
+  const lines = items.map((item) => {
+    const lab = getNetworkShortLabel(item.net);
+    const fillCount = Math.min(item.shortfall, item.postedIds.length);
+    if (fillCount < item.shortfall) {
+      const rounds = Math.ceil(item.shortfall / fillCount);
+      return `• *${lab}*: ${item.postedCount}/${item.reqCount} live → kurang *${item.shortfall}* (~${rounds} ronde × maks ${fillCount} akun)`;
+    }
+    return `• *${lab}*: ${item.postedCount}/${item.reqCount} live → dobel ${fillCount} akun yang sama`;
+  });
+
+  const totalFill = items.reduce((s, i) => s + Math.min(i.shortfall, i.postedIds.length), 0);
+  const buttons = [];
+  if (items.length > 1) {
+    buttons.push([Markup.button.callback(`♻️ Lengkapi semua — konten sama (+${totalFill})`, 'postfillup:all:samecon')]);
+    buttons.push([Markup.button.callback(`🆕 Lengkapi semua — konten baru (+${totalFill})`, 'postfillup:all:newcon')]);
+  }
+  for (const item of items) {
+    buttons.push([
+      Markup.button.callback(
+        `🔁 Lengkapi ${getNetworkShortLabel(item.net)} (+${Math.min(item.shortfall, item.postedIds.length)})`,
+        `postfillup:yes:${item.net}`
+      ),
+    ]);
+  }
+  buttons.push([Markup.button.callback('Tidak perlu', 'postfillup:skip')]);
+
+  await ctx.reply(
+    `📌 *Instruksi lanjutan — belum mencapai target*\n\n${lines.join('\n')}\n\n_Pilih platform atau lengkapi semua sekaligus:_`,
+    { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }
+  );
 }
 
 /**
@@ -2864,7 +3119,9 @@ async function offerReplacementAccountsIfAny(ctx, input) {
     last?.mediaFiles?.length ? last : null
   );
 
-  if (batchStale.stale || archiveStale) {
+  // Hanya blokir jika media dari hari berbeda (day-changed).
+  // "too-old" (media hari ini tapi dimuat >3j lalu) tetap boleh dipakai fill-up.
+  if (batchStale.reason === 'day-changed' || archiveStale?.reason === 'day-changed') {
     const day =
       batchStale.prevDay ||
       archiveStale?.prevDay ||
@@ -2875,7 +3132,7 @@ async function offerReplacementAccountsIfAny(ctx, input) {
       `🛑 *Tidak bisa melengkapi dengan media lama*\n` +
         `Batch konten: *${day}* (bukan hari ini).\n\n` +
         `Kalau @abrorsoeka dll. baru posting konten lama tanpa Anda suruh, ` +
-        `biasanya *antrian Outstand* dari hari itu yang baru selesai — ` +
+        `biasanya *antrian publish* dari hari itu yang baru selesai — ` +
         `bukan publish baru dari bot.\n\n` +
         `• Batalkan antrian lama: \`/stop 3d ig ya\`\n` +
         `• Konten hari ini: \`/publish\` + media baru, lalu publish lagi\n\n` +
@@ -3110,23 +3367,27 @@ function schedulePublishStatusFollowUp(ctx, input) {
     setTimeout(async () => {
       if (stopped) return;
       try {
-        const { accounts } = await fetchPublishAccountStatuses({
-          postIds,
-          expectedAccountIds: expectedAccountIds || [],
-          baseCaption,
-        });
+        const updatedPosts = await Promise.all(
+          postIds.map((pid) => getPost(pid).catch(() => null))
+        );
+        const validPosts = updatedPosts.filter(Boolean);
+        if (!validPosts.length) return;
+
+        const allAccs = validPosts.flatMap((p) => p?.socialAccounts ?? []);
 
         /** @type {Array<{ network: string, username: string, status: string, url?: string }>} */
         const changed = [];
         let stillPending = 0;
-        for (const a of accounts) {
-          const key = a.accountId || `${a.network}:${a.username}`;
+        for (const a of allAccs) {
+          const net = (a.network || '').toLowerCase();
+          const user = (a.username || '').replace(/^@/, '');
+          const key = a.id || `${net}:${user}`;
           const prev = lastStatusById.get(key) || 'pending';
           const cur = (a.status || 'pending').toLowerCase();
           if (cur !== prev && cur !== 'pending') {
             changed.push({
-              network: (a.network || '').toLowerCase(),
-              username: (a.username || '').replace(/^@/, ''),
+              network: net,
+              username: user,
               status: cur,
               url: a.url || '',
             });
@@ -3178,11 +3439,13 @@ function schedulePublishStatusFollowUp(ctx, input) {
 
         if (!stillPending) {
           stopped = true;
-          if (!replacementOffered && snapshot?.instructionTargets) {
+          const sheetAccs = allAccs.map((a) => ({ ...a, accountId: a.id }));
+          const isPostFormeFollowUp = getActivePublisher() === 'postforme';
+          if (!isPostFormeFollowUp && !replacementOffered && snapshot?.instructionTargets && !Object.keys(snapshot?.requestedCounts || {}).length) {
             replacementOffered = true;
             try {
               await offerReplacementAccountsIfAny(ctx, {
-                summary: { sheetAccounts: accounts },
+                summary: { sheetAccounts: sheetAccs },
                 snapshot,
                 result: { postIds },
                 source: 'followup',
@@ -3192,6 +3455,16 @@ function schedulePublishStatusFollowUp(ctx, input) {
                 { err: err.message },
                 `[FollowUp] replacement offer: ${err.message}`
               );
+            }
+          }
+          if (!isPostFormeFollowUp && Object.keys(snapshot?.requestedCounts || {}).length > 0) {
+            try {
+              await offerFillupIfShortfall(ctx, {
+                summary: { sheetAccounts: sheetAccs, pending: 0, failed: 0, published: sheetAccs.filter((a) => (a.status || '').toLowerCase() === 'published').length },
+                snapshot,
+              });
+            } catch (err) {
+              log.warn({ err: err.message }, `[FollowUp] fillup offer: ${err.message}`);
             }
           }
         }
@@ -3269,10 +3542,13 @@ async function handleAction(ctx) {
   }
 }
 
-async function handleTextMessage(ctx) {
+async function handleTextMessage(ctx, next) {
   const session = getSession(ctx.chat.id);
   const text = ctx.message.text?.trim();
   if (!text) return;
+
+  // Biarkan command handler Telegraf yang menangani slash commands
+  if (text.startsWith('/')) return next?.();
 
   if (text === MENU.PUBLISH) {
     await handlePublishCommand(ctx);
@@ -3288,6 +3564,52 @@ async function handleTextMessage(ctx) {
   }
   if (text === MENU.HELP) {
     await showMainMenu(ctx);
+    return;
+  }
+  if (text === MENU.KOPASLINK) {
+    await ctx.reply('⏳ Mengambil link post hari ini…');
+    try {
+      const tabName = getDailyTabName();
+      const accounts = await readPublishedLinksFromDailyTab(tabName);
+      if (!accounts.length) {
+        await ctx.reply(`Tidak ada data untuk tab *${tabName}* hari ini.`, { parse_mode: 'Markdown' });
+        return;
+      }
+      const result = formatCopyPasteLinksText(accounts);
+      if (!result) {
+        await ctx.reply('Belum ada link live hari ini. Coba lagi setelah publish selesai.');
+        return;
+      }
+      const { text: linksText, liveCount } = result;
+      const header = `🔗 ${liveCount} link live — ${tabName}\n\n`;
+      if (header.length + linksText.length <= 3800) {
+        await ctx.reply(header + linksText, { disable_web_page_preview: true });
+      } else {
+        const lines = linksText.split('\n');
+        const sheetsUrl = await writeLinksToRightmostColumn(tabName, lines);
+        await ctx.reply(`📊 ${liveCount} link tersimpan di Sheets (kolom paling kanan tab ${tabName}):\n${sheetsUrl}`, { disable_web_page_preview: true });
+      }
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+    return;
+  }
+  if (text === MENU.PLATFORM_POSTFORME) {
+    try {
+      setActivePublisher('postforme');
+      await ctx.reply('✅ Platform diubah ke *🟣 PostForme*\n\nSemua /publish berikutnya menggunakan PostForme.', { parse_mode: 'Markdown' });
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`);
+    }
+    return;
+  }
+  if (text === MENU.PLATFORM_WOOPSOCIAL) {
+    try {
+      setActivePublisher('woopsocial');
+      await ctx.reply('✅ Platform diubah ke *🔵 Woopsocial*\n\nSemua /publish berikutnya menggunakan Woopsocial.', { parse_mode: 'Markdown' });
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`);
+    }
     return;
   }
 
@@ -3472,7 +3794,7 @@ export function createBot() {
 
       updateSession(ctx.chat.id, { step: 'awaiting_status_id' });
       await ctx.reply(
-        '🔍 Kirim *Post ID* Outstand (satu ID per pesan).\n' +
+        '🔍 Kirim *Post ID* (satu ID per pesan).\n' +
           'Bisa juga langsung: `/status ghy7x`.\n' +
           'ID ada di pesan setelah publish.',
         { parse_mode: 'Markdown', ...mainMenuKeyboard() }
@@ -3577,7 +3899,7 @@ export function createBot() {
       : 'semua platform';
 
     await ctx.reply(
-      `⏳ Mengambil post *${filterLabel}* hari ini (${env.timezone}) dari Outstand…`,
+      `⏳ Mengambil post *${filterLabel}* hari ini (${env.timezone}) dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`,
       { parse_mode: 'Markdown' }
     );
     try {
@@ -3585,7 +3907,7 @@ export function createBot() {
       if (!data.postIds.length) {
         await ctx.reply(
           `Tidak ada post untuk tab *${data.tabName}*.\n` +
-            'Pastikan publish lewat bot/Outstand hari ini.',
+            'Pastikan publish lewat bot hari ini.',
           { parse_mode: 'Markdown' }
         );
         return;
@@ -3700,21 +4022,74 @@ export function createBot() {
     }
   });
 
+  bot.command('kopaslink', async (ctx) => {
+    await ctx.reply('⏳ Mengambil link post hari ini…');
+    try {
+      const tabName = getDailyTabName();
+      // Baca langsung dari sel Sheets — bukan re-fetch ke API — agar tidak
+      // mencampur akun dari hari sebelumnya yang ada di instruksi lama.
+      const accounts = await readPublishedLinksFromDailyTab(tabName);
+
+      if (!accounts.length) {
+        await ctx.reply(
+          `Tidak ada data untuk tab *${tabName}* hari ini.`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      const result = formatCopyPasteLinksText(accounts);
+      if (!result) {
+        await ctx.reply('Belum ada link live hari ini. Coba lagi setelah publish selesai.');
+        return;
+      }
+
+      const { text, liveCount } = result;
+      const header = `🔗 ${liveCount} link live — ${tabName}\n\n`;
+
+      if (header.length + text.length <= 3800) {
+        await ctx.reply(header + text, {
+          disable_web_page_preview: true,
+        });
+      } else {
+        // Terlalu panjang → tulis ke Sheets kolom paling kanan
+        const lines = text.split('\n');
+        const sheetsUrl = await writeLinksToRightmostColumn(tabName, lines);
+        await ctx.reply(
+          `📊 ${liveCount} link tersimpan di Sheets (kolom paling kanan tab ${tabName}):\n${sheetsUrl}`,
+          { disable_web_page_preview: true }
+        );
+      }
+    } catch (err) {
+      log.warn({ err: err.message }, '[kopaslink] error');
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
   async function replySyncTodayResult(ctx) {
-    // Step 1: fetch dari Outstand saja (cepat ~5-10 detik)
-    const data = await collectTodayPublishLinks();
+    // Step 1: fetch dari publisher saja (cepat ~5-10 detik)
+    // Sertakan post ID arsip hari ini agar sheet yang sudah tertimpa tidak kehilangan sesi publish sebelumnya
+    const pub = getActivePublisher();
+    const pubName = pub === 'postforme' ? 'PostForme' : 'Woopsocial';
+    // PostForme: API adalah sumber kebenaran; arsip bisa mengandung post ID dari hari lain
+    const extraPostIds = pub === 'postforme' ? [] : getTodayArchivedPostIds(ctx.chat.id);
+    const data = await collectTodayPublishLinks({ extraPostIds });
 
     if (!data.postIds.length) {
       throw new Error(
-        `Tidak ada post untuk tab ${data.tabName} (${env.timezone}). Cek Woopsocial dashboard.`
+        `Tidak ada post untuk tab ${data.tabName} (${env.timezone}). Cek dashboard ${pubName}.`
       );
     }
 
     const { meta, tabName, postIds, accounts } = data;
 
     if (!accounts.length) {
+      const extraNote =
+        pub === 'postforme'
+          ? '\n_PostForme menghapus post setelah diproses — data dari cache. Deploy ulang jika cache hilang._'
+          : '';
       await ctx.reply(
-        `⚠️ *${tabName}* — ${postIds.length} post ditemukan tapi Outstand API tidak merespons.\nData lama di Sheets tidak diubah. Coba lagi nanti.`,
+        `⚠️ *${tabName}* — ${postIds.length} post ditemukan tapi ${pubName} API tidak merespons.\nData lama di Sheets tidak diubah. Coba lagi nanti.${extraNote}`,
         { parse_mode: 'Markdown' }
       );
       return;
@@ -3738,20 +4113,20 @@ export function createBot() {
           accounts,
         });
         const dupeLine = result.duplicateAccounts
-          ? `\n⚠️ *${result.duplicateAccounts} akun* posting >1× — lihat baris REKAP di atas tab.`
+          ? `\n⚠️ <b>${result.duplicateAccounts} akun</b> posting >1× — lihat baris REKAP di atas tab.`
           : '';
         await ctx.reply(
-          `📊 Sheets *${tabName}* tersimpan: ${result.recorded} baris` +
+          `📊 Sheets <b>${tabName}</b> tersimpan: ${result.recorded} baris` +
             dupeLine +
-            `\n\n_Gagal yang sudah live di IG akan berubah jadi Live jika Outstand sudah kirim link._\n` +
+            `\n\n<i>Gagal yang sudah live di IG akan berubah jadi Live jika publisher sudah kirim link.</i>\n` +
             `${result.spreadsheetUrl}`,
-          { parse_mode: 'Markdown' }
+          { parse_mode: 'HTML', disable_web_page_preview: true }
         );
 
         // Tawaran pengganti akun (setelah Sheets selesai)
         const session = getSession(ctx.chat.id);
         const last = session.lastPublish;
-        if (last?.instructionTargets && last?.mediaFiles?.length && !getArchiveStaleReason(last)) {
+        if (last?.instructionTargets && last?.mediaFiles?.length && !getArchiveStaleReason(last) && !Object.keys(last?.requestedCounts || {}).length) {
           const expected = new Set(last.selectedAccountIds || []);
           const batchAccounts = (result.accounts || accounts).filter((a) =>
             expected.has(a.accountId)
@@ -3763,6 +4138,36 @@ export function createBot() {
             source: 'refresh',
           }).catch((err) => log.warn({ err: err.message }, `[Refresh] replacement: ${err.message}`));
         }
+
+        // Progress instruksi hari ini vs target awal (/random pertama hari ini)
+        const todayKey = getWibDayKey();
+        if (session.dailyTargets && session.dailyTargetsDate === todayKey) {
+          const liveByNet = {};
+          for (const acc of accounts) {
+            if ((acc.status || '').toLowerCase() === 'published') {
+              const net = (acc.network || '').toLowerCase();
+              if (net) liveByNet[net] = (liveByNet[net] || 0) + 1;
+            }
+          }
+          const lines = [];
+          let allMet = true;
+          for (const [net, target] of Object.entries(session.dailyTargets)) {
+            const live = liveByNet[net] || 0;
+            if (live >= target) {
+              lines.push(`• ${getNetworkShortLabel(net)}: ✅ ${live}/${target}`);
+            } else {
+              allMet = false;
+              lines.push(`• ${getNetworkShortLabel(net)}: ⏳ ${live}/${target} — kurang ${target - live}`);
+            }
+          }
+          if (lines.length) {
+            const header = allMet
+              ? '✅ *Instruksi awal terpenuhi* — boleh instruksi baru'
+              : '📋 *Progress instruksi hari ini:*';
+            await ctx.reply(`${header}\n${lines.join('\n')}`, { parse_mode: 'Markdown' })
+              .catch((err) => log.warn({ err: err.message }, '[Refresh] daily progress: send error'));
+          }
+        }
       } catch (sheetErr) {
         await ctx.reply(`⚠️ Gagal simpan Sheets: ${sheetErr.message}`).catch(() => {});
       }
@@ -3770,8 +4175,10 @@ export function createBot() {
   }
 
   async function runSyncTodayCommand(ctx) {
+    const pub = getActivePublisher();
+    const pubName = pub === 'postforme' ? 'PostForme' : 'Woopsocial';
     await ctx.reply(
-      `⏳ Mengambil status terbaru Outstand → Sheets (*${getDailyTabName()}*)…`,
+      `⏳ Mengambil status terbaru ${pubName} → Sheets (*${getDailyTabName()}*)…`,
       { parse_mode: 'Markdown' }
     );
     try {
@@ -3779,7 +4186,7 @@ export function createBot() {
         replySyncTodayResult(ctx),
         new Promise((_, reject) =>
           setTimeout(
-            () => reject(new Error('Outstand API lambat, coba lagi dalam 1 menit.')),
+            () => reject(new Error(`${pubName} API lambat, coba lagi dalam 1 menit.`)),
             90_000
           )
         ),
@@ -3789,8 +4196,29 @@ export function createBot() {
     }
   }
 
-  bot.command('synctoday', runSyncTodayCommand);
   bot.command('refresh', runSyncTodayCommand);
+
+  const handlePlatformCommand = async (ctx) => {
+    const arg = (ctx.message?.text || '').replace(/^\/\w+(@\w+)?\s*/i, '').trim().toLowerCase();
+    if (arg === 'postforme' || arg === 'pfm') {
+      setActivePublisher('postforme');
+      await ctx.reply('✅ Platform diubah ke *🟣 PostForme*', { parse_mode: 'Markdown' });
+      return;
+    }
+    if (arg === 'woopsocial' || arg === 'woop') {
+      setActivePublisher('woopsocial');
+      await ctx.reply('✅ Platform diubah ke *🔵 Woopsocial*', { parse_mode: 'Markdown' });
+      return;
+    }
+    const current = getActivePublisher();
+    const label = current === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
+    await ctx.reply(
+      `Platform aktif: *${label}*\n\nGanti:\n• /platform postforme\n• /platform woopsocial`,
+      { parse_mode: 'Markdown' }
+    );
+  };
+  bot.command('platform', handlePlatformCommand);
+  bot.command('setplatform', handlePlatformCommand);
 
   bot.command('recover', async (ctx) => {
     const raw = String(ctx.message?.text || '')
@@ -3809,7 +4237,7 @@ export function createBot() {
       return;
     }
 
-    await ctx.reply(`⏳ Mengambil data dari Woopsocial untuk ${ids.length} post ID…`);
+    await ctx.reply(`⏳ Mengambil data dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'} untuk ${ids.length} post ID…`);
 
     try {
       const allAccounts = [];
@@ -3829,7 +4257,7 @@ export function createBot() {
       }
 
       if (!allAccounts.length) {
-        await ctx.reply('❌ Tidak ada data akun dari Woopsocial. Post ID mungkin sudah kedaluwarsa atau API tidak tersedia.');
+        await ctx.reply(`❌ Tidak ada data akun dari publisher. Post ID mungkin sudah kedaluwarsa atau API tidak tersedia.`);
         return;
       }
 
@@ -3855,7 +4283,7 @@ export function createBot() {
   });
 
   bot.command('scanpost', async (ctx) => {
-    await ctx.reply('⏳ Scan Outstand untuk post tak terduga…');
+    await ctx.reply(`⏳ Scan ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'} untuk post tak terduga…`);
     try {
       await checkForUnexpectedPosts();
       await ctx.reply(
@@ -3951,7 +4379,7 @@ export function createBot() {
 
     if (parsed.doCancel && parsed.postIds.length) {
       await ctx.reply(
-        `⏳ Membatalkan ${parsed.postIds.length} Post ID di Outstand…`
+        `⏳ Membatalkan ${parsed.postIds.length} Post ID di ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`
       );
       const results = await cancelPendingPostIds(parsed.postIds);
       clearPublishedTodayCache();
@@ -3960,7 +4388,7 @@ export function createBot() {
       return;
     }
 
-    await ctx.reply('⏳ Mengecek antrian pending di Outstand…');
+    await ctx.reply(`⏳ Mengecek antrian pending di ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
 
     try {
       const data = daysBack
@@ -4046,41 +4474,7 @@ export function createBot() {
   bot.action('stop:abort', async (ctx) => {
     await ack(ctx);
     updateSession(ctx.chat.id, { pendingStopPostIds: undefined });
-    await ctx.reply('Dibatalkan. Antrian Outstand tidak diubah.');
-  });
-
-  bot.command('stopsupport', async (ctx) => {
-    const session = getSession(ctx.chat.id);
-    const args = (ctx.message.text || '')
-      .replace(/^\/stopsupport(@\w+)?\s*/i, '')
-      .trim();
-    const postIds = args
-      ? args.split(/[\s,]+/).filter(Boolean)
-      : session.pendingStopPostIds || [];
-    if (!postIds.length) {
-      await ctx.reply(
-        'Kirim Post ID:\n`/stopsupport ghy7x, O39Av`\n\n' +
-          'Atau jalankan `/stop` dulu lalu `/stopsupport` tanpa argumen.',
-        { parse_mode: 'Markdown' }
-      );
-      return;
-    }
-    await ctx.reply('⏳ Menyusun draft email support…');
-    try {
-      const draft = await buildOutstandCancelSupportDraft(postIds);
-      await replyTelegramLong(
-        ctx,
-        `📧 *Salin ke support@outstand.so:*\n\n\`\`\`\n${draft}\n\`\`\``
-      );
-    } catch (err) {
-      await ctx.reply(`❌ ${err.message}`);
-    }
-  });
-
-  bot.command('antrian', async (ctx) => {
-    const args = (ctx.message.text || '').replace(/^\/antrian(@\w+)?\s*/i, '').trim();
-    ctx.message.text = `/stop${args ? ' ' + args : ''}`;
-    await handleStopCommand(ctx);
+    await ctx.reply('Dibatalkan. Antrian publisher tidak diubah.');
   });
 
   bot.command('stuck', async (ctx) => {
@@ -4263,7 +4657,7 @@ export function createBot() {
 
         const st = (a.status || '').toLowerCase();
         if (st === 'published') {
-          skipped.push({ a, reason: 'sudah live (Outstand)' });
+          skipped.push({ a, reason: 'sudah live (publisher)' });
           continue;
         }
         if (st === 'failed' && isRateLimitMaybeLiveError(a.error)) {
@@ -4329,7 +4723,7 @@ export function createBot() {
         `🔄 *Republish dari /stuck — ${network}*\n` +
           `Akun siap retry: *${planAccounts.length}*\n` +
           `${preview}${more}\n\n` +
-          `⚠️ Pastikan job pending di dashboard Outstand sudah di-*cancel* dulu (cegah dobel).\n` +
+          `⚠️ Pastikan job pending di dashboard publisher sudah di-*cancel* dulu (cegah dobel).\n` +
           `Safety filter aktif: akun yang sudah live / sudah ≥2× attempt otomatis di-skip saat konfirmasi.` +
           mediaNote,
         {
@@ -4364,7 +4758,7 @@ export function createBot() {
       return;
     }
 
-    await ctx.reply('⏳ Mengambil link dari Outstand…');
+    await ctx.reply(`⏳ Mengambil link dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
     try {
       const { accounts, meta, postIdLine } = await fetchPublishAccountStatuses({
         postIds,
@@ -4389,6 +4783,67 @@ export function createBot() {
     }
   });
 
+  bot.command('syncpost', async (ctx) => {
+    const args = (ctx.message.text || '').replace(/^\/syncpost(@\w+)?\s*/i, '').trim();
+    const postIds = args.split(/[\s,]+/).filter(Boolean);
+    if (!postIds.length) {
+      await ctx.reply(
+        '📋 Sync post ID ke Sheets:\n\n`/syncpost [postId1] [postId2] ...`\n\nPost ID ada di pesan setelah publish.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+    await ctx.reply(`⏳ Mengambil data ${postIds.length} Post ID ke Sheets...`);
+    try {
+      const CHUNK = 5;
+      const TIMEOUT = 25_000;
+      const rawAccounts = [];
+      for (let i = 0; i < postIds.length; i += CHUNK) {
+        const chunk = postIds.slice(i, i + CHUNK);
+        const posts = await Promise.all(
+          chunk.map((id) =>
+            Promise.race([
+              getPost(id),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('timeout')), TIMEOUT)
+              ),
+            ]).catch(() => null)
+          )
+        );
+        for (const post of posts) {
+          if (!post) continue;
+          const { sheetAccounts } = summarizePublishResults([post]);
+          rawAccounts.push(...sheetAccounts);
+        }
+      }
+      if (!rawAccounts.length) {
+        await ctx.reply('❌ Tidak ada data yang bisa diambil dari Post ID tersebut.');
+        return;
+      }
+      const accounts = reconcileSheetAccounts(rawAccounts);
+      const meta = summarizeSheetAccounts(accounts);
+      const tabName = getDailyTabName();
+      const result = await rewriteDailyTabFromAccounts({
+        timestamp: nowIsoUtc(),
+        postId: postIds.join(', '),
+        youtubeTitle: meta.youtubeTitle,
+        accounts,
+      });
+      const pub = accounts.filter((a) => (a.status || '').toLowerCase() === 'published').length;
+      const fail = accounts.filter((a) => (a.status || '').toLowerCase() === 'failed').length;
+      const pend = accounts.length - pub - fail;
+      await ctx.reply(
+        `✅ <b>${accounts.length} akun</b> dicatat ke tab <b>${tabName}</b>\n` +
+        `✅ ${pub} live · ❌ ${fail} gagal · ⏳ ${pend} pending\n\n` +
+        `${result.sheetUrl || ''}`,
+        { parse_mode: 'HTML', disable_web_page_preview: true }
+      );
+    } catch (err) {
+      log.warn({ err: err.message }, '[syncpost] error');
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
   bot.command('debuglinks', async (ctx) => {
     const session = getSession(ctx.chat.id);
     const args = (ctx.message.text || '')
@@ -4400,13 +4855,13 @@ export function createBot() {
 
     if (!postIds.length) {
       await ctx.reply(
-        '🔍 Debug URL IG & Threads dari Outstand:\n`/debuglinks <postId>`\n\nContoh: `/debuglinks QFXny`',
+        '🔍 Debug URL IG & Threads dari publisher:\n`/debuglinks <postId>`\n\nContoh: `/debuglinks QFXny`',
         { parse_mode: 'Markdown' }
       );
       return;
     }
 
-    await ctx.reply('⏳ Mengambil raw data dari Outstand…');
+    await ctx.reply(`⏳ Mengambil raw data dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
     try {
       for (const postId of postIds.slice(0, 3)) {
         const post = await getPost(postId);
@@ -4481,14 +4936,14 @@ export function createBot() {
 
     if (!postIds.length) {
       await ctx.reply(
-        'Kirim Post ID Outstand:\n`/syncsheet atyGb, vSTXg, MgkAC, nH72l`\n\n' +
+        'Kirim Post ID:\n`/syncsheet atyGb, vSTXg, MgkAC, nH72l`\n\n' +
           'Atau publish dulu — bot akan ingat Post ID terakhir.',
         { parse_mode: 'Markdown' }
       );
       return;
     }
 
-    await ctx.reply('⏳ Menyinkronkan Sheets dari Outstand…');
+    await ctx.reply(`⏳ Menyinkronkan Sheets dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
     try {
       const result = await refreshPublishResultsInSheet({
         postIds,
@@ -4692,6 +5147,10 @@ export function createBot() {
 
   /**
    * Ambil Map failures hari ini langsung dari Outstand (best-effort, tidak throw).
+   * usageCounts hanya punya jumlah gagal (bukan pesan error asli), jadi di-merge
+   * dengan token-issues.js (diisi syncTokenIssuesFromSummary saat publish nyata)
+   * supaya akun yang jelas-jelas token/permission invalid tetap ditandai 🔴 di
+   * /cekakun — bukan cuma "Gagal publish hari ini" generik yang selalu jatuh ke 🟡.
    * @returns {Promise<Map<string, { error: string, failedCount: number }>>}
    */
   async function getTodayFailuresById() {
@@ -4709,6 +5168,13 @@ export function createBot() {
           });
         }
       }
+      for (const issue of getTokenIssuesById().values()) {
+        const prev = map.get(issue.accountId);
+        map.set(issue.accountId, {
+          error: issue.error || prev?.error || 'Gagal publish hari ini',
+          failedCount: prev?.failedCount || issue.count || 1,
+        });
+      }
       return map;
     } catch {
       return new Map();
@@ -4716,14 +5182,36 @@ export function createBot() {
   }
 
   bot.command('akun', async (ctx) => {
+    const args = (ctx.message.text || '').replace(/^\/akun(@\w+)?\s*/i, '').trim();
+    const { filterText } = parseAkunCommandArgs(args);
+    const netFilter = filterText ? (parseNetworkFilter(filterText).networks[0] || '') : '';
+    await ctx.reply(
+      '📋 *Daftar Akun* — Pilih sumber:',
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🔵 Woopsocial', `akun_view:woopsocial:${netFilter}`),
+            Markup.button.callback('🟣 PostForme', `akun_view:postforme:${netFilter}`),
+          ],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^akun_view:(woopsocial|postforme):(.*)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const publisher = ctx.match[1];
+    const netFilter = ctx.match[2] || '';
+    const pubLabel = publisher === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
+
     try {
-      const args = (ctx.message.text || '').replace(/^\/akun(@\w+)?\s*/i, '').trim();
-      const { filterText } = parseAkunCommandArgs(args);
-      const netFilter = filterText ? (parseNetworkFilter(filterText).networks[0] || null) : null;
+      const sent = await ctx.reply(`⏳ Mengambil akun ${pubLabel}…`);
 
-      await ctx.reply('⏳ Mengambil daftar akun…');
+      const accounts = publisher === 'postforme'
+        ? await listPostformeAccounts()
+        : await listWoopsocialAccounts();
 
-      const accounts = await listSocialAccounts();
       const filtered = netFilter
         ? accounts.filter((a) => (a.network || '').toLowerCase() === netFilter)
         : accounts;
@@ -4739,44 +5227,58 @@ export function createBot() {
       }
 
       const lines = [
-        `📋 *Daftar Akun* (${filtered.length}${netFilter ? ' · ' + netFilter.toUpperCase() : ''})`,
+        `📋 *Daftar Akun* — ${pubLabel} (${filtered.length}${netFilter ? ' · ' + netFilter.toUpperCase() : ''})`,
         '',
       ];
 
       if (!filtered.length) {
-        lines.push(netFilter ? `Tidak ada akun ${netFilter}.` : 'Belum ada akun terhubung di Outstand.');
+        lines.push(netFilter ? `Tidak ada akun ${netFilter}.` : `Belum ada akun terhubung di ${pubLabel}.`);
         lines.push('🟡 gagal publish hari ini · 🔴 token/nonaktif');
-        await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+        await ctx.telegram.editMessageText(ctx.chat.id, sent.message_id, undefined, lines.join('\n'), { parse_mode: 'Markdown' });
         return;
       }
 
-      // Tampilkan SEMUA akun per platform dalam pesan terpisah
-      const headerMsg = lines.join('\n') + '🟡 gagal publish hari ini · 🔴 token/nonaktif';
-      await ctx.reply(headerMsg, { parse_mode: 'Markdown' });
+      await ctx.telegram.editMessageText(
+        ctx.chat.id, sent.message_id, undefined,
+        lines.join('\n') + '🟡 gagal publish hari ini · 🔴 token/nonaktif',
+        { parse_mode: 'Markdown' }
+      );
 
       for (const [net, accs] of byNetwork) {
         const netLabel = getNetworkShortLabel(net) || net.toUpperCase();
         const bad = accs.filter((a) => issueMap.get(a.id)?.worst);
-        const netLines = [
-          `*${netLabel}* — ${accs.length} akun${bad.length ? ` · ${bad.length} ⚠️` : ' ✅'}`,
-          '',
-        ];
-        for (const a of accs) {
+        const header = `*${netLabel}* — ${accs.length} akun${bad.length ? ` · ${bad.length} ⚠️` : ' ✅'}`;
+
+        const accountLines = accs.map((a) => {
           const entry = issueMap.get(a.id);
           const badge = issueBadge(entry?.worst);
-          const user = (a.username || a.id).replace(/^@/, '').replace(/_/g, '\\_');
-          netLines.push(`• @${user}${badge}`);
+          const user = (a.username || a.id).replace(/^@/, '').replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+          return `• @${user}${badge}`;
+        });
+
+        // Kirim dalam chunk agar tidak melebihi limit 4096 karakter Telegram
+        const MAX_CHARS = 3800;
+        let chunk = [header, ''];
+        let chunkLen = header.length + 1;
+        let isFirst = true;
+        for (const line of accountLines) {
+          if (!isFirst && chunkLen + line.length + 1 > MAX_CHARS) {
+            await ctx.reply(chunk.join('\n'), { parse_mode: 'Markdown' });
+            chunk = [`_${netLabel} (lanjutan)_`, ''];
+            chunkLen = netLabel.length + 15;
+          }
+          chunk.push(line);
+          chunkLen += line.length + 1;
+          isFirst = false;
         }
-        await ctx.reply(netLines.join('\n'), { parse_mode: 'Markdown' });
+        if (chunk.length > 2) await ctx.reply(chunk.join('\n'), { parse_mode: 'Markdown' });
       }
 
       if (!netFilter) {
-        await ctx.reply('_Filter per platform: `/akun ig` · `/akun fb` · `/akun yt`_', {
-          parse_mode: 'Markdown',
-        });
+        await ctx.reply('_Filter per platform: `/akun ig` · `/akun fb` · `/akun yt`_', { parse_mode: 'Markdown' });
       }
     } catch (err) {
-      log.error({ err: err?.message }, `[Bot] /akun: ${err?.message}`);
+      log.error({ err: err?.message }, `[Bot] akun_view:${publisher}: ${err?.message}`);
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
     }
   });
@@ -5022,6 +5524,237 @@ export function createBot() {
     await finalizeTargetSelection(ctx, pending.baseAccountIds, pending.label);
   });
 
+  // --- Post-publish fill-up handlers ---
+
+  bot.action('postfillup:all:samecon', async (ctx) => {
+    await ack(ctx, 'Menyiapkan semua platform — konten sama…');
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingPostFillup;
+    if (!pending || Date.now() - pending.at > 60 * 60_000) {
+      await ctx.reply('⌛ Sesi fill-up kadaluarsa (>1 jam). Ulangi /random.');
+      updateSession(ctx.chat.id, { pendingPostFillup: undefined });
+      return;
+    }
+    const { mediaFiles, caption, folderName, folderId, mediaFilesSetAt, mediaFilesDay } = session.pendingPostFillupSnapshot || {};
+    const media = mediaFiles || session.mediaFiles;
+    if (!media?.length) {
+      await ctx.reply('❌ Media sesi tidak tersedia. Pilih platform satu-satu atau kirim konten baru.');
+      return;
+    }
+    const allFillIds = [];
+    const summaryLines = [];
+    // Hitung sisa shortfall setelah ronde ini — hanya platform yang masih kurang
+    // yang dimasukkan ke requestedCounts agar instruksi lanjutan tidak muncul
+    // untuk platform yang sudah terpenuhi.
+    const updatedRequestedCounts = {};
+    for (const item of pending.items) {
+      const willFill = Math.min(item.shortfall, item.postedIds.length);
+      const shuffled = [...item.postedIds].sort(() => Math.random() - 0.5);
+      const ids = shuffled.slice(0, willFill);
+      allFillIds.push(...ids);
+      summaryLines.push(`• ${getNetworkShortLabel(item.net)} +${ids.length}`);
+      const remaining = item.shortfall - willFill;
+      if (remaining > 0) {
+        // Masih perlu ronde berikutnya: target baru = willFill (ronde ini) + remaining
+        updatedRequestedCounts[item.net] = willFill + remaining;
+      }
+    }
+    updateSession(ctx.chat.id, {
+      step: 'selecting_targets',
+      selectedAccountIds: allFillIds,
+      mediaFiles: media,
+      mediaFilesSetAt: mediaFilesSetAt || session.mediaFilesSetAt,
+      mediaFilesDay: mediaFilesDay || session.mediaFilesDay,
+      caption: caption || session.caption || undefined,
+      folderName: folderName || session.folderName || '',
+      folderId: folderId || session.folderId || '',
+      targetLabel: `Fill-up semua ×${allFillIds.length}`,
+      requestedCounts: updatedRequestedCounts,
+      lastPublishKey: undefined,
+      lastPublishAt: undefined,
+      pendingPostFillup: undefined,
+      pendingTiktokRefill: undefined,
+    });
+    await ctx.reply(
+      `♻️ *Melengkapi semua platform* — konten sama\n\n${summaryLines.join('\n')}\nTotal: *${allFillIds.length} akun*`,
+      { parse_mode: 'Markdown' }
+    );
+    await finalizeTargetSelection(ctx, allFillIds, `Fill-up semua ×${allFillIds.length}`);
+  });
+
+  bot.action('postfillup:all:newcon', async (ctx) => {
+    await ack(ctx, 'Siapkan konten baru untuk semua platform…');
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingPostFillup;
+    if (!pending || Date.now() - pending.at > 60 * 60_000) {
+      await ctx.reply('⌛ Sesi fill-up kadaluarsa (>1 jam). Ulangi /random.');
+      updateSession(ctx.chat.id, { pendingPostFillup: undefined });
+      return;
+    }
+    const allFillIds = [];
+    const summaryLines = [];
+    for (const item of pending.items) {
+      const shuffled = [...item.postedIds].sort(() => Math.random() - 0.5);
+      const ids = shuffled.slice(0, Math.min(item.shortfall, item.postedIds.length));
+      allFillIds.push(...ids);
+      summaryLines.push(`• ${getNetworkShortLabel(item.net)} +${ids.length}`);
+    }
+    updateSession(ctx.chat.id, {
+      step: 'awaiting_tiktok_refill_media',
+      pendingPostFillup: undefined,
+      pendingTiktokRefill: {
+        accountIds: allFillIds,
+        fillCount: allFillIds.length,
+        shortfall: allFillIds.length,
+        network: 'all',
+        label: 'Semua Platform',
+        at: Date.now(),
+      },
+    });
+    await ctx.reply(
+      `🆕 *Fill-up semua platform — konten baru*\n\n${summaryLines.join('\n')}\nTotal: *${allFillIds.length} akun*\n\nKirim sekarang:\n• Link folder Google Drive, atau\n• Upload foto/video langsung ke chat`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action(/^postfillup:yes:(.+)$/, async (ctx) => {
+    const network = ctx.match[1].toLowerCase();
+    await ack(ctx, `Menyiapkan fill-up ${getNetworkShortLabel(network)}…`);
+
+    const session = getSession(ctx.chat.id);
+    const pending = session.pendingPostFillup;
+    if (!pending || Date.now() - pending.at > 60 * 60_000) {
+      await ctx.reply('⌛ Sesi fill-up kadaluarsa (>1 jam). Ulangi /random.');
+      updateSession(ctx.chat.id, { pendingPostFillup: undefined });
+      return;
+    }
+
+    const item = pending.items.find((i) => i.net === network);
+    if (!item) {
+      await ctx.reply('⚠️ Platform tidak ditemukan dalam sesi fill-up.');
+      return;
+    }
+
+    const fillCount = Math.min(item.shortfall, item.postedIds.length);
+    const lab = getNetworkShortLabel(network);
+
+    // Simpan state fill-up, tanya konten sama atau baru
+    updateSession(ctx.chat.id, {
+      pendingTiktokRefill: {
+        accountIds: item.postedIds,
+        fillCount,
+        shortfall: item.shortfall,
+        reqCount: item.reqCount,
+        postedSoFar: item.postedCount,
+        network,
+        label: lab,
+        at: Date.now(),
+      },
+      pendingPostFillup: undefined,
+    });
+    await ctx.reply(
+      `🔁 *Fill-up ${lab}* — ${fillCount} akun yang sama\n\nPakai konten apa?`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('♻️ Konten sama', `postfillup:samecon:${network}`)],
+          [Markup.button.callback('🆕 Konten baru', `postfillup:newcon:${network}`)],
+          [Markup.button.callback('Batal', 'postfillup:skip')],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/^postfillup:samecon:(.+)$/, async (ctx) => {
+    const network = ctx.match[1].toLowerCase();
+    await ack(ctx, 'Menyiapkan konten sama…');
+
+    const session = getSession(ctx.chat.id);
+    const refill = session.pendingTiktokRefill;
+    if (!refill || Date.now() - refill.at > 60 * 60_000) {
+      await ctx.reply('⌛ Sesi fill-up kadaluarsa. Ulangi dari tombol fill-up.');
+      return;
+    }
+
+    const { mediaFiles, caption, folderName, folderId, mediaFilesSetAt, mediaFilesDay } = session.pendingPostFillupSnapshot || {};
+    const media = mediaFiles || session.mediaFiles;
+    if (!media?.length) {
+      await ctx.reply('❌ Media sesi tidak tersedia lagi. Pilih "Konten baru" sebagai gantinya.');
+      return;
+    }
+
+    const shuffled = [...refill.accountIds].sort(() => Math.random() - 0.5);
+    const fillAccountIds = shuffled.slice(0, refill.fillCount);
+    log.info(
+      {
+        network,
+        fillCount: refill.fillCount,
+        accountIdsTotal: refill.accountIds?.length,
+        fillAccountIdsCount: fillAccountIds.length,
+        shortfall: refill.shortfall,
+        fillAccountIds: fillAccountIds.slice(0, 5),
+      },
+      '[postfillup:samecon] akun terpilih untuk fill-up'
+    );
+    const lab = refill.label || getNetworkShortLabel(network);
+
+    // Sisa shortfall setelah ronde ini untuk platform ini
+    const remainingAfterFill = (refill.shortfall || 0) - refill.fillCount;
+    const updatedRequestedCounts = remainingAfterFill > 0
+      ? { [network]: refill.fillCount + remainingAfterFill }
+      : {};
+
+    updateSession(ctx.chat.id, {
+      step: 'selecting_targets',
+      selectedAccountIds: fillAccountIds,
+      mediaFiles: media,
+      mediaFilesSetAt: mediaFilesSetAt || session.mediaFilesSetAt,
+      mediaFilesDay: mediaFilesDay || session.mediaFilesDay,
+      caption: caption || session.caption || undefined,
+      folderName: folderName || session.folderName || '',
+      folderId: folderId || session.folderId || '',
+      targetLabel: `${lab} fill-up ×${refill.fillCount}`,
+      requestedCounts: updatedRequestedCounts,
+      lastPublishKey: undefined,
+      lastPublishAt: undefined,
+      pendingTiktokRefill: undefined,
+    });
+
+    await ctx.reply(
+      `🔁 Melengkapi *${lab}* — ${refill.fillCount} akun dengan konten yang sama…`,
+      { parse_mode: 'Markdown' }
+    );
+    await finalizeTargetSelection(ctx, fillAccountIds, `${lab} fill-up ×${refill.fillCount}`);
+  });
+
+  bot.action(/^postfillup:newcon:(.+)$/, async (ctx) => {
+    const network = ctx.match[1].toLowerCase();
+    await ack(ctx, 'Siapkan konten baru…');
+
+    const session = getSession(ctx.chat.id);
+    const refill = session.pendingTiktokRefill;
+    if (!refill || Date.now() - refill.at > 60 * 60_000) {
+      await ctx.reply('⌛ Sesi fill-up kadaluarsa. Ulangi dari tombol fill-up.');
+      return;
+    }
+
+    const lab = refill.label || getNetworkShortLabel(network);
+    updateSession(ctx.chat.id, { step: 'awaiting_tiktok_refill_media' });
+    await ctx.reply(
+      `🆕 *Fill-up ${lab} — konten baru*\n\n` +
+      `Target: *${refill.fillCount} akun* ${lab} yang sama\n\n` +
+      `Kirim sekarang:\n• Link folder Google Drive, atau\n• Upload foto/video langsung ke chat\n\n` +
+      `_Bot otomatis target ${refill.fillCount} akun setelah konten diterima._`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action('postfillup:skip', async (ctx) => {
+    await ack(ctx);
+    updateSession(ctx.chat.id, { pendingPostFillup: undefined, pendingTiktokRefill: undefined });
+    await ctx.reply('Oke, tidak ada fill-up tambahan.');
+  });
+
   bot.action(/^replace:yes:(.+)$/, async (ctx) => {
     const network = ctx.match[1].toLowerCase();
     await ack(ctx, `Mencari pengganti ${network}…`);
@@ -5127,6 +5860,102 @@ export function createBot() {
   bot.action(/^file:(.+)$/, handleFileSelect);
   bot.action(/^action:(preview|send|schedule|edit)$/, handleAction);
 
+  // ── /listlinkprofilakun ───────────────────────────────────────────────────
+  bot.command('listlinkprofilakun', async (ctx) => {
+    try {
+      const sentMsg = await ctx.reply('⏳ Mengambil daftar akun…');
+      const accounts = await listSocialAccounts();
+      const withUrls = accounts
+        .map((a) => ({ ...a, profileUrl: buildProfileUrl(a.network, a.username, a.pageId) }))
+        .filter((a) => a.profileUrl);
+
+      if (!withUrls.length) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id, sentMsg.message_id, undefined,
+          '❌ Tidak ada akun dengan URL profil yang bisa dikonstruksi.'
+        );
+        return;
+      }
+
+      const sheetUrl = await writeProfileLinksToSheet(withUrls);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id, sentMsg.message_id, undefined,
+        `✅ *${withUrls.length} akun* ditulis ke tab _👤 Profil Akun_\n\n[Buka Sheet](${sheetUrl})`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /listlinkprofilakun: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /connectpostforme ────────────────────────────────────────────────────
+  bot.command('connectpostforme', async (ctx) => {
+    const buttons = POSTFORME_PLATFORMS.map((p) => [
+      Markup.button.callback(p.label, `pfconn:${p.cbKey}`),
+    ]);
+    await ctx.reply(
+      '🔗 *PostForme — Hubungkan Akun*\n\nPilih platform yang ingin dihubungkan:',
+      { ...Markup.inlineKeyboard(buttons), parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.action(/^pfconn:(\w+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const cbKey = ctx.match[1];
+    const entry = POSTFORME_PLATFORMS.find((p) => p.cbKey === cbKey);
+    if (!entry) { await ctx.reply('❌ Platform tidak dikenal.'); return; }
+
+    try {
+      const sent = await ctx.reply(`⏳ Membuat link OAuth untuk *${entry.label}*…`, {
+        parse_mode: 'Markdown',
+      });
+      const redirectUrl = env.postformeRedirectUrl || undefined;
+      const oauthUrl = await generateOAuthUrl({
+        platform: entry.key,
+        redirectUrl,
+        connectionType: entry.connectionType,
+      });
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        sent.message_id,
+        undefined,
+        `🔗 *Hubungkan ${entry.label} ke PostForme*\n\nKlik tombol di bawah atau salin link:\n\`${oauthUrl}\`\n\n_Link berlaku sementara — segera buka._`,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([[Markup.button.url(`Login ${entry.label}`, oauthUrl)]]),
+        }
+      );
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] pfconn:${cbKey}: ${err?.message}`);
+      await ctx.reply(`❌ Gagal membuat link: ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /setplatform ─────────────────────────────────────────────────────────
+  bot.command('setplatform', async (ctx) => {
+    const arg = (ctx.message?.text || '').split(/\s+/)[1]?.toLowerCase().trim();
+    const current = getActivePublisher();
+    if (!arg) {
+      const label = current === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
+      await ctx.reply(
+        `Platform publish aktif: *${label}*\n\nGunakan:\n• /setplatform woopsocial\n• /setplatform postforme`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+    try {
+      setActivePublisher(arg);
+      const label = arg === 'postforme' ? '🟣 PostForme' : '🔵 Woopsocial';
+      await ctx.reply(
+        `✅ Platform publish diubah ke *${label}*\n\nSemua /publish berikutnya akan menggunakan ${label}.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await ctx.reply(`❌ ${err.message}`);
+    }
+  });
+
   bot.on(['photo', 'video', 'document'], async (ctx) => {
     if (!extractTelegramMedia(ctx)) return;
     await processTelegramMedia(ctx);
@@ -5193,7 +6022,7 @@ export function createBot() {
       const args = (ctx.message.text || '').replace(/^\/laporan(@\w+)?\s*/i, '').trim();
       const { networks: filterNets } = parseNetworkFilter(args);
 
-      await ctx.reply('⏳ Mengambil data performa hari ini dari Outstand…');
+      await ctx.reply(`⏳ Mengambil data performa hari ini dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
 
       const usageCounts = await getTodayAccountUsageCounts();
       const tabName = getDailyTabName();
@@ -5407,7 +6236,7 @@ export function createBot() {
         return;
       }
 
-      await ctx.reply('⏳ Mengambil daftar post terjadwal dari Outstand…');
+      await ctx.reply(`⏳ Mengambil daftar post terjadwal dari ${getActivePublisher() === 'postforme' ? 'PostForme' : 'Woopsocial'}…`);
 
       const postIds = await listRecentPostIds({ daysBack: 7 });
       const now = Date.now();
@@ -5598,6 +6427,138 @@ export function createBot() {
       await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
     } catch (err) {
       log.error({ err: err?.message }, `[Bot] /topakun: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /analytics ────────────────────────────────────────────────────────────
+  bot.command('analytics', async (ctx) => {
+    try {
+      const args = (ctx.message.text || '').replace(/^\/analytics(@\w+)?\s*/i, '').trim().toLowerCase();
+      const platformFilter = args || null;
+
+      const msg = await ctx.reply(`⏳ Mengambil feed postingan${platformFilter ? ' ' + platformFilter.toUpperCase() : ''}…`);
+
+      const allAccounts = await listPostformeAccounts().catch(() => []);
+      const filtered = platformFilter
+        ? allAccounts.filter((a) => (a.network || a.platform || '').toLowerCase() === platformFilter)
+        : allAccounts;
+
+      if (!filtered.length) {
+        await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+          `Tidak ada akun${platformFilter ? ' ' + platformFilter.toUpperCase() : ''} yang terhubung.`);
+        return;
+      }
+
+      // Ambil feed maksimal 5 akun untuk hindari rate limit
+      const sample = filtered.slice(0, 5);
+      const feedMap = await getMultiAccountFeed(sample.map((a) => a.id));
+
+      const escUser = (s) => String(s || '').replace(/_/g, '\\_');
+      const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short' }) : '';
+
+      const lines = [
+        `📋 *Feed Postingan PostForme*${platformFilter ? ' · ' + platformFilter.toUpperCase() : ''}`,
+        `_(${sample.length} dari ${filtered.length} akun)_`,
+        '',
+      ];
+
+      for (const acct of sample) {
+        const feed = feedMap.get(String(acct.id)) ?? [];
+        const net = getNetworkShortLabel(acct.network || acct.platform) || (acct.network || acct.platform || '').toUpperCase();
+        lines.push(`*${net} @${escUser(acct.username)}* — ${feed.length} post`);
+
+        for (const item of feed.slice(0, 3)) {
+          const date = fmtDate(item.posted_at);
+          const url = item.platform_url ?? '';
+          const caption = (item.caption ?? '').replace(/\n/g, ' ').slice(0, 60);
+          lines.push(`  ${date}${url ? ' · [lihat](' + url + ')' : ''}`);
+          if (caption) lines.push(`  _${caption}${item.caption?.length > 60 ? '…' : ''}_`);
+        }
+        lines.push('');
+      }
+
+      if (filtered.length > 5) {
+        lines.push(`_…dan ${filtered.length - 5} akun lainnya. Gunakan /analytics tiktok untuk filter._`);
+      }
+
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+        lines.join('\n'), { parse_mode: 'Markdown', disable_web_page_preview: true });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /analytics: ${err?.message}`);
+      await ctx.reply(`❌ ${err.message}`).catch(() => {});
+    }
+  });
+
+  // ── /fixlinks ─────────────────────────────────────────────────────────────
+  bot.command('fixlinks', async (ctx) => {
+    try {
+      const msg = await ctx.reply('⏳ Mengambil daftar akun TikTok dari PostForme…');
+
+      const allAccounts = await listPostformeAccounts().catch(() => []);
+      const tikTokAccounts = allAccounts.filter(
+        (a) => (a.network || a.platform || '').toLowerCase() === 'tiktok',
+      );
+
+      if (!tikTokAccounts.length) {
+        await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+          '⚠️ Tidak ada akun TikTok yang terhubung di PostForme.');
+        return;
+      }
+
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+        `⏳ Mengambil feed ${tikTokAccounts.length} akun TikTok (throttled)…`);
+
+      const feedMap = await getMultiAccountFeed(tikTokAccounts.map((a) => a.id));
+
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+      const feedByUsername = new Map();
+
+      for (const acct of tikTokAccounts) {
+        const items = feedMap.get(String(acct.id)) ?? [];
+        const username = (acct.username ?? '').replace(/^@/, '').toLowerCase();
+        if (!username) continue;
+
+        // Cari post hari ini; fallback ke post terbaru
+        const todayItem = items.find((item) => {
+          if (!item.platform_url) return false;
+          const d = item.posted_at
+            ? new Date(item.posted_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+            : '';
+          return d === today;
+        });
+        const url = todayItem?.platform_url ?? items.find((i) => i.platform_url)?.platform_url;
+        if (url) feedByUsername.set(username, url);
+      }
+
+      if (!feedByUsername.size) {
+        await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+          '⚠️ Tidak ada feed TikTok hari ini ditemukan dari PostForme.');
+        return;
+      }
+
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+        `⏳ Mengupdate sheet… (${feedByUsername.size} akun punya feed)`);
+
+      const { updated, notFound, alreadyCorrect } = await fixTikTokLinksInSheet(feedByUsername);
+
+      const lines = ['✅ *Fix Link TikTok Selesai*', ''];
+      lines.push(`🔄 Diperbarui: *${updated}* sel`);
+      if (alreadyCorrect) lines.push(`✓ Sudah benar: ${alreadyCorrect} sel`);
+      if (notFound.length) {
+        lines.push(`⚠️ Tidak ada feed: ${notFound.length} akun`);
+        if (notFound.length <= 8) {
+          lines.push(`  ${notFound.map((u) => '@' + u).join(', ')}`);
+        }
+      }
+      if (!updated && !alreadyCorrect) {
+        lines.push('_(Tidak ada baris TikTok di sheet hari ini yang cocok)_');
+      }
+
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, null,
+        lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (err) {
+      log.error({ err: err?.message }, `[Bot] /fixlinks: ${err?.message}`);
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
     }
   });
@@ -5892,7 +6853,7 @@ export function createBot() {
       }
     }
     await ctx.reply(
-      `🛑 Selesai: ${ok} dibatalkan${fail ? ` · ${fail} gagal (sudah live/error Outstand)` : ''}.`
+      `🛑 Selesai: ${ok} dibatalkan${fail ? ` · ${fail} gagal (sudah live/error publisher)` : ''}.`
     );
   });
 
@@ -5913,34 +6874,45 @@ export async function startBot() {
 
   try {
     await bot.telegram.setMyCommands([
-      { command: 'start', description: 'Menu utama' },
-      { command: 'menu', description: 'Tampilkan menu tombol' },
+      // ── Publish ──
       { command: 'publish', description: 'Publish konten baru' },
-      { command: 'sheet', description: 'Link laporan Sheets' },
-      { command: 'cancel', description: 'Batalkan sesi' },
-      { command: 'status', description: 'Cek status Post ID' },
-      { command: 'ping', description: 'Cek bot online' },
-      { command: 'kuota', description: 'Kuota upload harian & sisa sesi' },
-      { command: 'republish', description: 'Publish ulang ke target lain' },
+      { command: 'random', description: 'Publish ke akun random hari ini' },
       { command: 'retry', description: 'Ulangi akun yang gagal' },
-      { command: 'refresh', description: 'Sync status Outstand → Sheets' },
-      { command: 'stop', description: 'Lihat/batalkan antrian pending Outstand' },
-      { command: 'akun', description: 'Daftar semua akun (filter: ig/fb/yt/dll)' },
-      { command: 'cekakun', description: 'Cek akun bermasalah hari ini' },
-      { command: 'laporan', description: 'Performa publish hari ini per platform' },
-      { command: 'riwayat', description: 'Laporan mingguan Sheets (contoh: /riwayat 7)' },
-      { command: 'topakun', description: 'Ranking akun terbaik/terburuk hari ini' },
-      { command: 'simulasi', description: 'Preview akun yg dipilih tanpa publish' },
-      { command: 'jadwal', description: 'Lihat post terjadwal (/jadwal list)' },
-      { command: 'skip', description: 'Blacklist akun dari random pick' },
-      { command: 'grup', description: 'Kelola grup akun per niche' },
-      { command: 'lib', description: 'Caption library — simpan & pakai ulang' },
+      { command: 'republish', description: 'Publish ulang ke target lain' },
       { command: 'duplikat', description: 'Duplikat publish terakhir ke target baru' },
-      { command: 'autostop', description: 'Batalkan antrian pending lama (def: >6 jam)' },
-      { command: 'scanpost', description: 'Scan post tak terduga di Outstand' },
+      { command: 'cancel', description: 'Batalkan sesi aktif' },
+      // ── Status & Monitoring ──
+      { command: 'refresh', description: 'Sync status → Sheets (semua post hari ini)' },
+      { command: 'status', description: 'Cek status Post ID' },
       { command: 'stuck', description: 'Akun pending >2 jam' },
+      { command: 'stop', description: 'Lihat/batalkan antrian pending' },
+      { command: 'cekakun', description: 'Cek akun bermasalah hari ini' },
+      { command: 'autostop', description: 'Batalkan antrian pending lama (def: >6 jam)' },
+      // ── Laporan ──
+      { command: 'laporan', description: 'Performa publish hari ini per platform' },
       { command: 'linkshari', description: 'Link post hari ini (filter: ig/fb/yt/dll)' },
-      { command: 'misi', description: 'Lihat misi hari ini' },
+      { command: 'links', description: 'Link post by Post ID' },
+      { command: 'riwayat', description: 'Laporan mingguan (contoh: /riwayat 7)' },
+      { command: 'topakun', description: 'Ranking akun terbaik/terburuk hari ini' },
+      // ── Akun & Konten ──
+      { command: 'akun', description: 'Daftar semua akun (filter: ig/fb/yt/dll)' },
+      { command: 'listlinkprofilakun', description: 'Ekspor link profil semua akun ke Sheet' },
+      { command: 'connectpostforme', description: 'Hubungkan akun sosial via PostForme OAuth' },
+      { command: 'platform', description: 'Lihat/ganti platform: /platform postforme | woopsocial' },
+      { command: 'grup', description: 'Kelola grup akun per niche' },
+      { command: 'skip', description: 'Blacklist akun dari random pick' },
+      { command: 'lib', description: 'Caption library — simpan & pakai ulang' },
+      { command: 'jadwal', description: 'Lihat post terjadwal (/jadwal list)' },
+      { command: 'simulasi', description: 'Preview akun yang dipilih tanpa publish' },
+      // ── Sheets & Maintenance ──
+      { command: 'sheet', description: 'Buka link Google Sheets' },
+      { command: 'syncpost', description: 'Pulihkan data Sheets dari Post ID' },
+      { command: 'cleanup', description: 'Hapus tab Sheets lama (>30 hari)' },
+      { command: 'scanpost', description: 'Scan post tak terduga di publisher' },
+      // ── Sistem ──
+      { command: 'kuota', description: 'Sisa kuota upload harian' },
+      { command: 'ping', description: 'Cek bot online' },
+      { command: 'menu', description: 'Menu tombol' },
     ]);
   } catch (err) {
     log.warn({ err: err.message }, `[Bot] setMyCommands: ${err.message}`);

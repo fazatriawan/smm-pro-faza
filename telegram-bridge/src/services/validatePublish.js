@@ -1,7 +1,7 @@
 import { env } from '../config/env.js';
 import { isFfmpegAvailable } from './imageToVideo.js';
 import { networksNeedingImageToVideo } from './imageToVideo.js';
-import { listSocialAccounts } from './outstand.js';
+import { listSocialAccounts } from './publisher.js';
 import { buildContentLabel } from '../utils/contentLabel.js';
 import { accountLooksLiveOnPlatform } from '../utils/accountDayUsage.js';
 import { collectTodayPublishLinks } from './todayPublish.js';

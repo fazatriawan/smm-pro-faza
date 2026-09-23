@@ -1,9 +1,7 @@
 import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { dataPath } from './dataPath.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CACHE_PATH = path.resolve(__dirname, '../../data/auto-comment-sent.json');
+const CACHE_PATH = dataPath('auto-comment-sent.json');
 
 /** @type {Record<string, number> | null} */
 let memory = null;

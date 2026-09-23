@@ -23,8 +23,10 @@ const SHEET_HEADER_WORDS = new Set([
 
 export function isValidOutstandPostId(id) {
   const s = String(id || '').trim();
-  if (s.length < 3 || s.length > 16) return false;
-  if (!/^[a-zA-Z0-9]+$/.test(s)) return false;
+  // Woopsocial IDs: 18-digit numbers. Outstand: shorter alphanumeric.
+  // PostForme IDs: sp_[alphanumeric] — contain underscore, up to ~30 chars.
+  if (s.length < 3 || s.length > 40) return false;
+  if (!/^[a-zA-Z0-9_]+$/.test(s)) return false;
   if (/^rekap/i.test(s)) return false;
   if (SHEET_HEADER_WORDS.has(s.toLowerCase())) return false;
   return true;
@@ -117,13 +119,13 @@ export function sheetNoteForAccount(acc, eventIso) {
     const err = String(acc.error || '').trim();
     return err
       ? err.slice(0, 500)
-      : 'Publish gagal — cek error di Outstand';
+      : 'Publish gagal — cek error di dashboard publisher';
   }
   if (isPendingStuck(acc, eventIso)) {
     const h = Math.round(hoursSincePost(acc, eventIso));
     return `Pending ${h} jam — mungkin konten kemarin; batalkan: /stop · cek profil IG`;
   }
-  return 'Antrian Outstand — /stop untuk batalkan · /refresh untuk update status';
+  return 'Antrian publish — /stop untuk batalkan · /refresh untuk update status';
 }
 
 /**

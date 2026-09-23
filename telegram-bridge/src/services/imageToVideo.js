@@ -112,7 +112,8 @@ async function assertAudioFile(audioPath) {
 }
 
 function getVideoFilter() {
-  return VF_FILTERS.vertical || VF_FILTERS.square;
+  // fps=30 wajib di awal — TikTok tolak video VFR (frame_rate_check_failed)
+  return `fps=30,${VF_FILTERS.vertical || VF_FILTERS.square}`;
 }
 
 /**
@@ -348,7 +349,11 @@ async function buildCarouselVideo({ items, audioPath, durationSec, suffix }) {
       '-map',
       '1:a',
       '-c:v',
-      'copy',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      '30',
       '-c:a',
       'aac',
       '-b:a',
@@ -429,7 +434,11 @@ async function buildCarouselVideoSilent({ items, durationSec, suffix }) {
       '-map',
       '1:a',
       '-c:v',
-      'copy',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      '30',
       '-c:a',
       'aac',
       '-t',
@@ -446,6 +455,69 @@ async function buildCarouselVideoSilent({ items, durationSec, suffix }) {
       mimeType: 'video/mp4',
       silent: true,
     };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Re-encode video ke 30fps CFR — wajib untuk TikTok (frame_rate_check_failed).
+ * @param {Buffer} buffer
+ * @param {string} filename
+ */
+/**
+ * Trim sedikit dari awal video agar file hash berbeda (anti-fingerprint TikTok).
+ * Menggunakan stream copy — sangat cepat, tidak re-encode.
+ * @param {Buffer} buffer
+ * @param {string} filename
+ * @param {number} offsetSec  - detik yang dipotong dari awal (mis. 0.1, 0.2)
+ */
+export async function trimVideoStart(buffer, filename, offsetSec) {
+  if (!(await isFfmpegAvailable()) || !offsetSec || offsetSec <= 0) {
+    return { buffer, name: filename, mimeType: 'video/mp4' };
+  }
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'smm-trim-'));
+  const ext = path.extname(filename) || '.mp4';
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, `out-trim${Math.round(offsetSec * 10)}.mp4`);
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      '-y',
+      '-ss', String(offsetSec),
+      '-i', inPath,
+      '-c', 'copy',
+      outPath,
+    ]);
+    const outBuffer = await fs.readFile(outPath);
+    const base = path.basename(filename, ext) || 'video';
+    return { buffer: outBuffer, name: `${base}-v${Math.round(offsetSec * 10)}.mp4`, mimeType: 'video/mp4' };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function normalizeVideoForTikTok(buffer, filename) {
+  if (!(await isFfmpegAvailable())) return { buffer, name: filename, mimeType: 'video/mp4' };
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'smm-tiktok-'));
+  const ext = path.extname(filename) || '.mp4';
+  const inPath = path.join(tmpDir, `in${ext}`);
+  const outPath = path.join(tmpDir, 'out-30fps.mp4');
+  try {
+    await fs.writeFile(inPath, buffer);
+    await runFfmpeg([
+      '-y', '-i', inPath,
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-r', '30',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      outPath,
+    ]);
+    const outBuffer = await fs.readFile(outPath);
+    const base = path.basename(filename, ext) || 'video';
+    return { buffer: outBuffer, name: `${base}-tiktok.mp4`, mimeType: 'video/mp4' };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }

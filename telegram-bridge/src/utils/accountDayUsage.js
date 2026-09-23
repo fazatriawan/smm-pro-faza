@@ -69,9 +69,11 @@ export function shouldExcludeAccountFromNewPublishToday(account) {
 
 export function accountDayKey(account) {
   const net = (account.network || 'unknown').toLowerCase();
-  const user = (account.username || account.accountId || '')
-    .replace(/^@/, '')
-    .toLowerCase();
+  // Pakai accountId supaya 2 akun nama sama (mis. 2x "Lania Juni") tetap
+  // dianggap berbeda. Fallback ke username jika accountId tidak tersedia.
+  const id = (account.accountId || '').toLowerCase();
+  if (id) return `${net}:${id}`;
+  const user = (account.username || '').replace(/^@/, '').toLowerCase();
   return `${net}:${user}`;
 }
 

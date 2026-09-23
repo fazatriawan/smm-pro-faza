@@ -1,6 +1,6 @@
 import { getWibDayKey, nowIsoUtc } from './wibTime.js';
 
-/** @typedef {'idle' | 'awaiting_drive_link' | 'awaiting_media' | 'awaiting_retry_media' | 'selecting_content' | 'selecting_folder' | 'ready' | 'selecting_targets' | 'selecting_accounts' | 'awaiting_caption_edit' | 'awaiting_schedule' | 'awaiting_status_id' | 'selecting_tone'} SessionStep */
+/** @typedef {'idle' | 'awaiting_drive_link' | 'awaiting_media' | 'awaiting_retry_media' | 'selecting_content' | 'selecting_folder' | 'ready' | 'selecting_targets' | 'selecting_accounts' | 'awaiting_caption_edit' | 'awaiting_manual_caption' | 'awaiting_schedule' | 'awaiting_status_id' | 'selecting_tone'} SessionStep */
 
 /**
  * @typedef {object} MediaFile
@@ -38,7 +38,7 @@ import { getWibDayKey, nowIsoUtc } from './wibTime.js';
  * @property {string} [accountPickNetwork]
  * @property {string[]} [accountPickSelected]
  * @property {string} [captionTone]
- * @property {string} [retryAccountIdsWithWait]
+ * @property {string[]} [retryAccountIdsWithWait]
  * @property {{ postIds?: string[], network?: string | null, retryIds?: string[], caption?: string }} [retryPending]
  * @property {{ usernamesByNetwork: Record<string, string[]>, postIds: string[], total: number, at: number }} [stuckSnapshot]
  * @property {object} [lastPublish]
@@ -46,6 +46,9 @@ import { getWibDayKey, nowIsoUtc } from './wibTime.js';
  * @property {string[]} [usedAccountIdsToday] akun sudah dipakai publish hari ini (sesi bot)
  * @property {{ baseAccountIds: string[], shortages: Array<{ network: string, missing: number, skippedUsed: number }>, label: string, at: number }} [pendingFillShortage]
  * @property {{ byNetwork: Record<string, number>, instructionTargets?: Record<string, number>, mediaFiles: MediaFile[], caption: string, folderName: string, folderId: string, mediaFilesDay: string, mediaFilesSetAt?: string, originalPostIds: string[], targetLabel?: string, at: number }} [pendingReplacement]
+ * @property {{ postIds: string[], retryIds: string[], failedSample: Array<{ net: string, username: string, hint: string }>, at: number }} [pendingAutoRetry]
+ * @property {string[]} [pendingAutoStop] post IDs yang ditawarkan untuk auto-cancel
+ * @property {number} [publishStaggerMs] delay antar platform saat stagger publish
  * @property {string} [replacementOfferedKey] postIds batch yang sudah ditawari pengganti
  * @property {Record<string, number>} [instructionTargets] target per platform instruksi aktif
  * @property {number} [publishingSince] timestamp ms — lock anti double-submit

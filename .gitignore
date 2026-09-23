@@ -1,6 +1,9 @@
 desktop-app/node_modules/
 node_modules
 
+# Claude Code worktree checkouts (stale gitdir pointers cause git errors)
+.claude/worktrees/
+
 # Environment files
 .env
 .env.local

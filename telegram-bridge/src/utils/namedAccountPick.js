@@ -346,15 +346,37 @@ export function resolveNamedPick(accounts, parsed) {
     picked.push(a);
   }
 
+  // Fuzzy: strip underscore, dot, dash, space untuk matching fallback
+  function slugify(s) {
+    return String(s || '').toLowerCase().replace(/[_.\-\s]/g, '');
+  }
+
+  function findMatches(candidates, key) {
+    // Fallback 0: exact match
+    const exact = candidates.filter((a) => normalizeUsername(a.username) === key);
+    if (exact.length) return exact;
+    // Fallback 1: strip separator chars dari kedua sisi (cendrawasih_girl↔cendrawasihgirl, sekar_paramitha↔Sekar Paramitha)
+    const slug = slugify(key);
+    const stripped = candidates.filter((a) => slugify(normalizeUsername(a.username)) === slug);
+    if (stripped.length) return stripped;
+    // Fallback 2: prefix match (stored slug adalah prefix dari input slug, atau sebaliknya)
+    // min 5 char, hanya kalau hasilnya unik — handle neng_aura88↔"Neng Aura", sasak_gadislmbk↔"Sasak gadis"
+    if (slug.length >= 5) {
+      const prefixed = candidates.filter((a) => {
+        const s = slugify(normalizeUsername(a.username));
+        return s.length >= 5 && (slug.startsWith(s) || s.startsWith(slug));
+      });
+      if (prefixed.length === 1) return prefixed;
+    }
+    return [];
+  }
+
   for (const [net, names] of Object.entries(parsed.scoped || {})) {
     for (const name of names) {
       const key = normalizeUsername(name);
       const inputKey = `${net}:${key}`;
-      const matches = list.filter(
-        (a) =>
-          (a.network || '').toLowerCase() === net &&
-          normalizeUsername(a.username) === key
-      );
+      const candidates = list.filter((a) => (a.network || '').toLowerCase() === net);
+      const matches = findMatches(candidates, key);
       if (matches.length === 1) addAccount(matches[0], inputKey);
       else if (matches.length > 1) {
         ambiguous.push({ name, network: net, accounts: matches });
@@ -367,9 +389,7 @@ export function resolveNamedPick(accounts, parsed) {
   for (const name of parsed.global || []) {
     const key = normalizeUsername(name);
     const inputKey = key;
-    const matches = list.filter(
-      (a) => normalizeUsername(a.username) === key
-    );
+    const matches = findMatches(list, key);
     if (matches.length === 1) addAccount(matches[0], inputKey);
     else if (matches.length > 1) {
       ambiguous.push({ name, accounts: matches });
@@ -402,7 +422,7 @@ export function formatAccountListReport(accounts, opts = {}) {
   if (!filtered.length) {
     return filterNets.length
       ? `❌ Tidak ada akun untuk platform: ${filterNets.map(getNetworkShortLabel).join(', ')}`
-      : '❌ Belum ada akun di Outstand.';
+      : '❌ Belum ada akun di publisher.';
   }
 
   /** @type {Map<string, typeof filtered>} */
@@ -442,7 +462,7 @@ export function formatAccountListReport(accounts, opts = {}) {
   ).length;
 
   const lines = [
-    '📋 *Daftar akun Outstand*',
+    '📋 *Daftar akun*',
     filterNets.length
       ? `_Filter: ${filterNets.map(getNetworkShortLabel).join(', ')}_`
       : '_Semua platform_',
@@ -450,10 +470,10 @@ export function formatAccountListReport(accounts, opts = {}) {
   ];
 
   if (inactiveCount && !opts.deepCheck) {
-    lines.push(`_⚠️ ${inactiveCount} akun nonaktif di Outstand (lihat tanda di list)_`);
+    lines.push(`_⚠️ ${inactiveCount} akun nonaktif di publisher (lihat tanda di list)_`);
   }
   if (opts.deepCheck) {
-    lines.push('_Health check token via Outstand API_');
+    lines.push('_Health check token via publisher API_');
   }
   lines.push('');
 

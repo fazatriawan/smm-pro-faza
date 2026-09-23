@@ -395,7 +395,7 @@ function formatCompactTelegramReport(summary, postIdLine) {
   }
 
   if (summary.pending > 0) {
-    msg += `\n⏳ *${summary.pending} akun masih pending* — tunggu webhook atau cek Outstand dashboard.\n`;
+    msg += `\n⏳ *${summary.pending} akun masih pending* — tunggu webhook atau cek Woopsocial dashboard.\n`;
   }
 
   if (summary.failed > 0) {
@@ -707,4 +707,55 @@ export async function sendTelegramDocument(
 export function formatWebhookNotify(summary, postId) {
   const body = formatCompactTelegramReport(summary, postId);
   return body.length > 3500 ? body.slice(0, 3500) + '\n…' : body;
+}
+
+/**
+ * Format semua link live hari ini — satu platform per blok, hanya URL (tanpa username).
+ * Format output (plain text, siap copy-paste):
+ *   Instagram
+ *   https://...
+ *   https://...
+ *
+ *   TikTok
+ *   https://...
+ *
+ * @param {Array<{ network: string, username?: string, status?: string, platformPostId?: string, url?: string, pageId?: string }>} accounts
+ * @returns {{ text: string, lines: string[], liveCount: number } | null} null jika tidak ada link live
+ */
+export function formatCopyPasteLinksText(accounts) {
+  const live = accounts.filter((a) => {
+    const st = (a.status || '').toLowerCase();
+    return (st === 'published' || st === 'live') && (a.url || a.platformPostId);
+  });
+  if (!live.length) return null;
+
+  /** @type {Record<string, typeof live>} */
+  const byNet = {};
+  for (const a of live) {
+    const net = (a.network || 'unknown').toLowerCase();
+    if (!byNet[net]) byNet[net] = [];
+    byNet[net].push(a);
+  }
+
+  const lines = [];
+  for (const [net, list] of Object.entries(byNet).sort()) {
+    const label = NET_LABELS[net] || net;
+    lines.push(label);
+    for (const a of list) {
+      const user = (a.username || '').replace(/^@/, '');
+      let url = buildLivePostUrl(net, user, a.platformPostId, a.url, a.pageId);
+      if (!url) continue;
+      // Masking username di TikTok dan Threads
+      if (net === 'tiktok') {
+        url = url.replace(/tiktok\.com\/@[^/]+\//i, 'tiktok.com/@username/');
+      } else if (net === 'threads') {
+        url = url.replace(/threads\.(com|net)\/@[^/]+\//i, 'threads.com/@username/');
+      }
+      lines.push(url);
+    }
+    lines.push('');
+  }
+
+  const text = lines.join('\n').trim();
+  return { text, lines: lines.filter((l) => l !== ''), liveCount: live.length };
 }

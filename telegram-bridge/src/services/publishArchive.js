@@ -1,12 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { getWibDayKey } from '../utils/wibTime.js';
+import { dataPath } from '../utils/dataPath.js';
 
-const archiveDir = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../data/publish-archives'
-);
+const archiveDir = dataPath('publish-archives');
 
 /**
  * @param {string | number} chatId
@@ -120,6 +117,24 @@ export async function hydrateMediaFromArchive(archive) {
   // Jangan re-list seluruh folder Drive — folder sering berisi file beberapa hari
   // dan akan meng-upload konten kemarin lagi. Paksa user kirim link Drive baru.
   return null;
+}
+
+/**
+ * Semua post ID yang telah dipublish hari ini (WIB), berdasarkan arsip disk.
+ * Dipakai oleh /refresh agar tidak kehilangan post ID lama saat sheet sudah tertimpa.
+ * @param {string | number} chatId
+ * @returns {string[]}
+ */
+export function getTodayArchivedPostIds(chatId) {
+  const store = loadPublishArchiveStore(chatId);
+  if (!store?.byPostId) return [];
+  const today = getWibDayKey();
+  return Object.entries(store.byPostId)
+    .filter(([, snap]) => {
+      const day = snap.mediaFilesDay || getWibDayKey(snap.savedAt || '');
+      return day === today;
+    })
+    .map(([pid]) => pid);
 }
 
 /**

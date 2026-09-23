@@ -1,7 +1,7 @@
 import { env } from '../config/env.js';
 import { nowIsoUtc } from '../utils/wibTime.js';
 import { createLogger } from '../utils/logger.js';
-import { getPost, listPostIdsForDailyTab } from './outstand.js';
+import { getPost, getPostResultsBatch, listPostIdsForDailyTab, getActivePublisher } from './publisher.js';
 
 const log = createLogger('today-publish');
 import {
@@ -21,6 +21,7 @@ import {
 } from './publishResult.js';
 
 const FETCH_CHUNK = 5;
+const FETCH_TIMEOUT_MS = 25_000;
 
 /** @type {{ at: number, ids: string[] } | null} */
 let publishedTodayCache = null;
@@ -97,11 +98,46 @@ async function fetchAccountsForPostIds(postIds) {
   /** @type {Array<object>} */
   const accounts = [];
 
+  // PostForme: pakai batch query ke /v1/social-post-results — 1 request untuk semua postId
+  // menghindari rate limit dari N request parallel
+  if (getActivePublisher() === 'postforme') {
+    try {
+      const batchResults = await getPostResultsBatch(postIds);
+      for (const [postId, socialAccounts] of batchResults) {
+        if (!socialAccounts.length) continue;
+        const syntheticPost = { id: postId, status: 'published', socialAccounts, caption: '', scheduledAt: null };
+        const sheetAccs = summarizePublishResults([syntheticPost]).sheetAccounts;
+        // Pastikan postId tersimpan di setiap akun untuk keperluan sheet
+        for (const a of sheetAccs) { if (!a.postId) a.postId = postId; }
+        accounts.push(...sheetAccs);
+      }
+    } catch (err) {
+      log.warn({ err: err.message }, `[Today] getPostResultsBatch gagal: ${err.message}`);
+    }
+    // Akun yang tidak ada di batch (postId lama tanpa results) — coba getPost satu per satu
+    const coveredPostIds = new Set(accounts.map((a) => a.postId).filter(Boolean));
+    const missing = postIds.filter((id) => !coveredPostIds.has(id));
+    for (const id of missing) {
+      const post = await getPost(id).catch((err) => {
+        log.warn({ postId: id, err: err.message }, `[Today] getPost ${id}: ${err.message}`);
+        return null;
+      });
+      if (post) accounts.push(...summarizePublishResults([post]).sheetAccounts);
+    }
+    return accounts;
+  }
+
+  // Woopsocial: pakai parallel chunk seperti sebelumnya
   for (let i = 0; i < postIds.length; i += FETCH_CHUNK) {
     const chunk = postIds.slice(i, i + FETCH_CHUNK);
     const posts = await Promise.all(
       chunk.map((id) =>
-        getPost(id).catch((err) => {
+        Promise.race([
+          getPost(id),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), FETCH_TIMEOUT_MS)
+          ),
+        ]).catch((err) => {
           log.warn({ postId: id, err: err.message }, `[Today] getPost ${id}: ${err.message}`);
           return null;
         })
@@ -117,25 +153,48 @@ async function fetchAccountsForPostIds(postIds) {
 }
 
 /**
- * Kumpulkan semua Post ID + status akun untuk hari ini (Outstand API + Sheets).
- * @param {{ tabName?: string }} [options]
+ * Kumpulkan semua Post ID + status akun untuk hari ini (publisher API + Sheets + arsip).
+ * @param {{ tabName?: string, sheetsOnly?: boolean, extraPostIds?: string[] }} [options]
  */
 export async function collectTodayPublishLinks(options = {}) {
   const tabName = options.tabName || getDailyTabName();
 
-  const fromSheet = await readPostIdsFromDailyTab(tabName).catch((err) => {
-    log.warn({ err: err.message }, `[Today] read sheet: ${err.message}`);
-    return [];
-  });
+  // PostForme: skip sheet — API is source of truth for today's posts.
+  // Old post IDs from previous days can pollute the Sheet tab when accumulated
+  // across runs; skipping the sheet read breaks that loop and lets rewrite clear them.
+  const fromSheet = getActivePublisher() === 'postforme'
+    ? []
+    : await Promise.race([
+        readPostIdsFromDailyTab(tabName),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), FETCH_TIMEOUT_MS)
+        ),
+      ]).catch((err) => {
+        log.warn({ err: err.message }, `[Today] read sheet: ${err.message}`);
+        return [];
+      });
 
   let fromApi = [];
-  try {
-    fromApi = await listPostIdsForDailyTab(tabName);
-  } catch (err) {
-    log.warn({ err: err.message }, `[Today] list Outstand posts: ${err.message}`);
+  if (!options.sheetsOnly) {
+    try {
+      fromApi = await Promise.race([
+        listPostIdsForDailyTab(tabName),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), FETCH_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (err) {
+      log.warn({ err: err.message }, `[Today] list publisher posts: ${err.message}`);
+    }
   }
 
-  const postIds = [...new Set([...fromSheet, ...fromApi])];
+  const extra = (options.extraPostIds || []).filter(Boolean);
+  if (extra.length) {
+    log.info({ count: extra.length }, '[Today] extra post IDs dari arsip');
+  }
+
+  const postIds = [...new Set([...fromSheet, ...fromApi, ...extra])];
+  log.info({ tabName, fromSheet: fromSheet.length, fromApi: fromApi.length, extra: extra.length, postIds }, '[Today] postIds final');
   const rawAccounts = postIds.length ? await fetchAccountsForPostIds(postIds) : [];
   const accounts = reconcileSheetAccounts(rawAccounts);
   const meta = summarizeSheetAccounts(accounts);
@@ -159,7 +218,13 @@ export async function syncTodayToSheet() {
 
   if (!data.postIds.length) {
     throw new Error(
-      `Tidak ada post untuk tab ${data.tabName} (${env.timezone}). Cek Outstand dashboard.`
+      `Tidak ada post untuk tab ${data.tabName} (${env.timezone}). Cek dashboard publisher.`
+    );
+  }
+
+  if (!data.accounts.length) {
+    throw new Error(
+      `Publisher API tidak tersedia — status akun tidak bisa diambil. Sheets tidak diubah.`
     );
   }
 

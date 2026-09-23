@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 import { PLATFORM_LABELS } from '../config/sheetLayout.js';
-import { listSocialAccounts } from './outstand.js';
+import { listSocialAccounts } from './publisher.js';
 import { collectTodayPublishLinks, getTodayAccountUsageCounts } from './todayPublish.js';
 import { getDailyTabName } from './sheets.js';
 
@@ -268,7 +268,7 @@ export function formatDailyQuotaReport(status, options = {}) {
 
   if (!compact) {
     lines.push(
-      `Batch Outstand hari ini: ${status.postBatchCount} · Live total: ${status.totalPublishedToday}`,
+      `Batch publish hari ini: ${status.postBatchCount} · Live total: ${status.totalPublishedToday}`,
       `Akun terhubung: ${status.connectedTotal}${
         status.outstandAccountLimit
           ? ` / ${status.outstandAccountLimit}`

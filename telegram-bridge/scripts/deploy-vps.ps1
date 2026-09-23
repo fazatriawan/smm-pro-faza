@@ -7,7 +7,7 @@
 # Kalau belum, script minta password root (2×: scp + ssh).
 
 $ErrorActionPreference = "Stop"
-$Host_ = "187.77.118.131"
+$Host_ = "163.245.208.211"
 $User = "root"
 $Remote = "/opt/telegram-bridge"
 $Root = Split-Path $PSScriptRoot -Parent

@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env.js';
 import { downloadFile } from './drive.js';
@@ -20,10 +21,30 @@ import {
 import { getTonePrompt } from '../config/captionTones.js';
 import { buildMissionPromptForGemini } from '../utils/missionParse.js';
 
-const genAI = new GoogleGenerativeAI(env.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+const useAnthropic = Boolean(
+  env.anthropicApiKey && !env.anthropicApiKey.includes('your_anthropic_api_key')
+);
+
+const anthropic = useAnthropic ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
+
+const geminiClient =
+  !useAnthropic && env.geminiApiKey
+    ? new GoogleGenerativeAI(env.geminiApiKey)
+    : null;
+const geminiModel = geminiClient
+  ? geminiClient.getGenerativeModel({ model: 'gemini-flash-latest' })
+  : null;
+
+if (useAnthropic) {
+  log.info('[AI] Menggunakan Claude (Anthropic)');
+} else if (geminiModel) {
+  log.info('[AI] Menggunakan Gemini (Google)');
+} else {
+  log.warn('[AI] Tidak ada AI API key — caption generation tidak akan berfungsi');
+}
 
 const MAX_VIDEO_BYTES = 18 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Claude limit 5MB per image
 
 const CAPTION_RULES = `You are a social media copywriter (Indonesia).
 No markdown. Professional but engaging.
@@ -65,12 +86,100 @@ function buildMultiPlatformFormatInstruction(networks) {
   );
 }
 
+function sanitizeForApi(str) {
+  // Remove lone Unicode surrogates (\uD800-\uDFFF) that make JSON invalid
+  return String(str || '').replace(/[\uD800-\uDFFF]/g, '');
+}
+
+// ─── Claude ──────────────────────────────────────────────────────────────────
+
 /**
- * @param {object} context
- * @param {import('@google/generative-ai').Part[]} parts
+ * @param {Array<{type: string, [key: string]: any}>} content
  */
+async function callClaude(content) {
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2048,
+    messages: [{ role: 'user', content }],
+  });
+  const text = response.content?.[0]?.text?.trim();
+  if (!text) throw new Error('Claude returned an empty caption');
+  return text;
+}
+
+/**
+ * Build Claude message content (text + optional image).
+ * Claude tidak support video inline — pakai text fallback.
+ */
+async function buildClaudeParts(context) {
+  const { folderName, mediaFiles, targetNetworks, tone, missionBriefing } = context;
+  const videos = mediaFiles.filter((f) => f.mimeType?.startsWith('video/'));
+  const images = mediaFiles.filter((f) => f.mimeType?.startsWith('image/'));
+  const primaryType = videos.length ? 'video' : images.length ? 'image' : 'unknown';
+
+  const fileList = mediaFiles
+    .map((f, i) => `${i + 1}. ${f.name} (${f.mimeType})`)
+    .join('\n');
+
+  const netsNorm = (targetNetworks || []).map((n) => n.toLowerCase());
+  const uniqueNets = [...new Set(netsNorm.map((n) => (n === 'twitter' ? 'x' : n)))];
+
+  let mediaNote = '';
+  if (primaryType === 'video') {
+    mediaNote =
+      '\n\nKonten utama: VIDEO (tidak bisa dilampirkan langsung). ' +
+      'Turunkan caption dari nama file & briefing, tetap spesifik dan visual.';
+  }
+
+  const toneNote = tone ? `\n\n${getTonePrompt(tone)}` : '';
+  const missionNote = buildMissionPromptForGemini(missionBriefing);
+  const formatNote = buildMultiPlatformFormatInstruction(uniqueNets);
+
+  const promptText = sanitizeForApi(
+    `${CAPTION_RULES}${toneNote}${missionNote}${mediaNote}${formatNote}\n\n` +
+    `Folder / tema: ${folderName}\nFile:\n${fileList}`
+  );
+
+  /** @type {Array<{type: string, [key: string]: any}>} */
+  const content = [{ type: 'text', text: promptText }];
+
+  // Lampirkan gambar pertama (Claude support image, tidak support video)
+  const firstImage = images[0];
+  if (firstImage && !videos.length) {
+    try {
+      let buffer;
+      let mimeType = firstImage.mimeType || 'image/jpeg';
+      if (firstImage.buffer) buffer = firstImage.buffer;
+      else if (firstImage.id) {
+        const dl = await downloadFile(firstImage.id);
+        buffer = dl.buffer;
+        mimeType = dl.mimeType;
+      }
+      if (buffer && buffer.length <= MAX_IMAGE_BYTES) {
+        const validMime = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        const safeMime = validMime.includes(mimeType) ? mimeType : 'image/jpeg';
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: safeMime,
+            data: buffer.toString('base64'),
+          },
+        });
+        log.info({ name: firstImage.name }, `[Claude] Image attached: ${firstImage.name}`);
+      }
+    } catch (err) {
+      log.warn({ err: err.message }, `[Claude] Could not attach image: ${err.message}`);
+    }
+  }
+
+  return { content, uniqueNets, missionBriefing };
+}
+
+// ─── Gemini (fallback) ────────────────────────────────────────────────────────
+
 async function callGemini(parts) {
-  const result = await model.generateContent({
+  const result = await geminiModel.generateContent({
     contents: [{ role: 'user', parts }],
   });
   const text = result.response.text()?.trim();
@@ -78,9 +187,6 @@ async function callGemini(parts) {
   return text;
 }
 
-/**
- * @param {object} context
- */
 async function buildGeminiParts(context) {
   const { folderName, mediaFiles, targetNetworks, tone, missionBriefing } = context;
   const videos = mediaFiles.filter((f) => f.mimeType?.startsWith('video/'));
@@ -105,9 +211,10 @@ async function buildGeminiParts(context) {
   const formatNote = buildMultiPlatformFormatInstruction(uniqueNets);
 
   const textPart = {
-    text:
+    text: sanitizeForApi(
       `${CAPTION_RULES}${toneNote}${missionNote}${mediaNote}${formatNote}\n\n` +
-      `Folder / tema: ${folderName}\nFile:\n${fileList}`,
+      `Folder / tema: ${folderName}\nFile:\n${fileList}`
+    ),
   };
 
   const parts = [textPart];
@@ -154,9 +261,7 @@ async function buildGeminiParts(context) {
         mimeType = dl.mimeType;
       }
       if (buffer) {
-        parts.push({
-          inlineData: { data: buffer.toString('base64'), mimeType },
-        });
+        parts.push({ inlineData: { data: buffer.toString('base64'), mimeType } });
       }
     } catch (err) {
       log.warn({ err: err.message }, `[Gemini] Could not attach image: ${err.message}`);
@@ -166,15 +271,32 @@ async function buildGeminiParts(context) {
   return { parts, uniqueNets, missionBriefing };
 }
 
+// ─── Unified call ─────────────────────────────────────────────────────────────
+
+async function callAI(context) {
+  if (useAnthropic) {
+    const { content, uniqueNets, missionBriefing } = await buildClaudeParts(context);
+    const raw = await callClaude(content);
+    return { raw, uniqueNets, missionBriefing };
+  }
+  if (geminiModel) {
+    const { parts, uniqueNets, missionBriefing } = await buildGeminiParts(context);
+    const raw = await callGemini(parts);
+    return { raw, uniqueNets, missionBriefing };
+  }
+  throw new Error('Tidak ada AI API key. Tambahkan ANTHROPIC_API_KEY atau GEMINI_API_KEY di .env');
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
  * Generate caption berbeda per platform.
  * @param {{ folderName: string, mediaFiles: object[], targetNetworks?: string[], tone?: string, missionBriefing?: object }} context
  */
 export async function generateCaptionsByNetwork(context) {
-  const { parts, uniqueNets, missionBriefing } = await buildGeminiParts(context);
+  const { raw, uniqueNets, missionBriefing } = await callAI(context);
   const required = missionBriefing?.requiredHashtags || [];
 
-  const raw = await callGemini(parts);
   const parsed = parseMultiPlatformCaptions(raw, uniqueNets);
 
   /** @type {Record<string, string>} */
@@ -201,7 +323,8 @@ export async function generateCaptionsByNetwork(context) {
   }
 
   if (Object.keys(byNetwork).length < uniqueNets.length) {
-    log.warn('[Gemini] Multi-platform parse incomplete, fallback single caption');
+    const provider = useAnthropic ? 'Claude' : 'Gemini';
+    log.warn(`[${provider}] Multi-platform parse incomplete, fallback single caption`);
     const single = await generateCaption(context);
     const fallback = buildCaptionsByNetwork(single, uniqueNets, required);
     for (const net of uniqueNets) {
@@ -234,8 +357,7 @@ export async function generateCaption(context) {
     return baseCaption;
   }
 
-  const { parts } = await buildGeminiParts(context);
-  const raw = await callGemini(parts);
+  const { raw } = await callAI(context);
   const required = missionBriefing?.requiredHashtags || [];
 
   const ytParsed = parseYoutubeStructuredCaption(raw);
@@ -251,4 +373,11 @@ export async function generateCaption(context) {
     out = adaptCaptionForPlatform(out, 'youtube');
   }
   return out;
+}
+
+function normalizeCaptionBody(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
