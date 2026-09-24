@@ -4038,6 +4038,60 @@ export function createBot() {
         return;
       }
 
+      // PostForme: TikTok link di sheet bisa jadi masih draft ID (bukan video ID final).
+      // Ambil platform_url dari feed PostForme dan override URL di sini (in-memory)
+      // sebelum ditampilkan. Sheet juga diperbarui di background.
+      if (getActivePublisher() === 'postforme') {
+        const liveTik = accounts.filter(
+          (a) => a.network === 'tiktok' && (a.status === 'published' || a.status === 'live'),
+        );
+        if (liveTik.length > 0) {
+          try {
+            const usernameSet = new Set(
+              liveTik.map((a) => (a.username || '').replace(/^@/, '').toLowerCase()),
+            );
+            const allPfAccounts = await listPostformeAccounts().catch(() => []);
+            const tikPfAccounts = allPfAccounts.filter((a) => {
+              const net = (a.network || a.platform || '').toLowerCase();
+              const uname = (a.username ?? '').replace(/^@/, '').toLowerCase();
+              return net === 'tiktok' && usernameSet.has(uname);
+            });
+            if (tikPfAccounts.length) {
+              const feedMap = await getMultiAccountFeed(tikPfAccounts.map((a) => a.id));
+              const feedByUsername = new Map();
+              for (const acct of tikPfAccounts) {
+                const items = feedMap.get(String(acct.id)) ?? [];
+                const username = (acct.username ?? '').replace(/^@/, '').toLowerCase();
+                if (!username) continue;
+                const todayItem = items.find((item) => {
+                  if (!item.platform_url) return false;
+                  const d = item.posted_at
+                    ? new Date(item.posted_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+                    : '';
+                  return d === tabName;
+                });
+                const url = todayItem?.platform_url ?? items.find((i) => i.platform_url)?.platform_url;
+                if (url) feedByUsername.set(username, url);
+              }
+              // Override URL TikTok di accounts array (in-memory, untuk tampilan)
+              for (const a of liveTik) {
+                const uname = (a.username || '').replace(/^@/, '').toLowerCase();
+                const newUrl = feedByUsername.get(uname);
+                if (newUrl && newUrl !== a.url) a.url = newUrl;
+              }
+              // Update sheet di background agar sinkron
+              if (feedByUsername.size > 0) {
+                fixTikTokLinksInSheet(feedByUsername, tabName).catch((e) =>
+                  log.warn({ err: e.message }, '[kopaslink] update sheet TikTok gagal'),
+                );
+              }
+            }
+          } catch (fixErr) {
+            log.warn({ err: fixErr.message }, '[kopaslink] auto-fix TikTok gagal, pakai URL lama');
+          }
+        }
+      }
+
       const result = formatCopyPasteLinksText(accounts);
       if (!result) {
         await ctx.reply('Belum ada link live hari ini. Coba lagi setelah publish selesai.');
