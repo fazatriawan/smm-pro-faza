@@ -2637,8 +2637,9 @@ async function runPublish(ctx, scheduledAt) {
         onProgress: ({ published, failed, pending, elapsedMs, publishedAccounts, failedAccounts, pendingAccounts }) => {
           const now = Date.now();
 
-          // Update Sheets setiap 30 detik selama polling
-          if (now - lastSheetRefreshMs >= SHEET_REFRESH_INTERVAL_MS && (published > 0 || failed > 0)) {
+          // Update Sheets setiap 30 detik selama polling — termasuk saat semua masih pending
+          // supaya akun pending tercatat di sheet dan tidak dikira "shortage" saat /refresh
+          if (now - lastSheetRefreshMs >= SHEET_REFRESH_INTERVAL_MS) {
             lastSheetRefreshMs = now;
             refreshPublishResultsInSheet({
               postIds: result.postIds,

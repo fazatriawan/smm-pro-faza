@@ -50,9 +50,13 @@ export function analyzeInstructionCompletion(
   const failedAccounts = [];
   let pendingTotal = 0;
 
+  /** @type {Record<string, number>} */
+  const dataByNetwork = {};
+
   for (const raw of relevant) {
     const net = normalizeNetwork(raw.network);
     if (!instructionTargets[net]) continue;
+    dataByNetwork[net] = (dataByNetwork[net] || 0) + 1;
     const a = reconcileSheetAccountStatus(raw);
     if (accountLooksLiveOnPlatform(a)) {
       liveByNetwork[net] = (liveByNetwork[net] || 0) + 1;
@@ -81,7 +85,14 @@ export function analyzeInstructionCompletion(
     if (need > 0) shortageByNetwork[net] = need;
   }
 
-  const settled = pendingTotal === 0;
+  // Anggap settled hanya jika:
+  // 1. Tidak ada akun pending
+  // 2. Semua network instruksi punya data (>0 akun tercatat) — network tanpa data berarti
+  //    PostForme belum merespons (masih memproses), bukan shortage.
+  const networksMissingData = Object.keys(instructionTargets).filter(
+    (net) => !dataByNetwork[net]
+  );
+  const settled = pendingTotal === 0 && networksMissingData.length === 0;
   const totalShortage = Object.values(shortageByNetwork).reduce((s, n) => s + n, 0);
 
   return {
@@ -90,6 +101,7 @@ export function analyzeInstructionCompletion(
     shortageByNetwork,
     failedAccounts,
     pendingTotal,
+    networksMissingData,
     settled,
     totalShortage,
     instructionTargets,
