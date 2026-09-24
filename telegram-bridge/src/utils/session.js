@@ -54,6 +54,7 @@ import { getWibDayKey, nowIsoUtc } from './wibTime.js';
  * @property {number} [publishingSince] timestamp ms — lock anti double-submit
  * @property {string} [lastPublishKey] idempotency key publish terakhir
  * @property {number} [lastPublishAt] timestamp ms publish terakhir di-submit
+ * @property {boolean} [carouselMode] true = upload gambar sebagai carousel (PostForme), bukan konversi ke video
  */
 
 const sessions = new Map();
@@ -144,6 +145,7 @@ export function clearSessionContent(chatId) {
     targetLabel: undefined,
     captionTone: undefined,
     outstandMediaIds: undefined,
+    carouselMode: undefined,
   });
 }
 

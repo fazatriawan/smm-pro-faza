@@ -627,7 +627,7 @@ async function generateCaptionAndShowPreview(ctx, accountIds, label, networks) {
       f.mimeType?.startsWith('image/')
     );
     const reelTargets = networks.filter((n) => isImageToVideoNetwork(n));
-    if (reelTargets.length && onlyImages && !env.imageToVideoAudioPath) {
+    if (reelTargets.length && onlyImages && !env.imageToVideoAudioPath && !session.carouselMode) {
       await ctx.reply(
         env.imageToVideoAllowSilent
           ? `ℹ️ ${reelTargets.map((n) => NETWORK_LABELS[n] || n).join(', ')}: gambar→video *tanpa musik*.`
@@ -1528,6 +1528,7 @@ async function loadFolderAndCaption(ctx, folderId, folderName, presetMedia = nul
       selectedAccountIds: undefined,
       targetLabel: undefined,
       outstandMediaIds: undefined,
+      carouselMode: undefined,
     },
   });
 
@@ -1551,8 +1552,27 @@ async function loadFolderAndCaption(ctx, folderId, folderName, presetMedia = nul
   if (session.missionBriefing) {
     msg += '\n📋 Caption akan mengikuti *misi hari ini* (§1, §2, §5).';
   }
-  msg +=
-    '\n\n🎯 Pilih target platform — caption disesuaikan limit terpendek (mis. X/Threads).';
+  const allImages = mediaFiles.every((f) => f.mimeType?.startsWith('image/'));
+  const carouselEligible = allImages && mediaFiles.length >= 2 && getActivePublisher() === 'postforme';
+
+  if (carouselEligible) {
+    await safeReply(ctx, msg, { parse_mode: 'Markdown' });
+    await ctx.reply(
+      `📸 *${mediaFiles.length} gambar* terdeteksi.\nPilih format upload ke sosmed:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📸 Carousel', callback_data: 'media_format:carousel' },
+            { text: '🎬 Video Slideshow', callback_data: 'media_format:video' },
+          ]],
+        },
+      }
+    );
+    return;
+  }
+
+  msg += '\n\n🎯 Pilih target platform — caption disesuaikan limit terpendek (mis. X/Threads).';
   await safeReply(ctx, msg, { parse_mode: 'Markdown' });
   await showTargetPicker(ctx);
 }
@@ -2384,7 +2404,10 @@ async function runPublish(ctx, scheduledAt) {
       session.selectedAccountIds
     );
 
-    if (reelTargets.length && onlyImages) {
+    if (session.carouselMode && onlyImages) {
+      const imgCount = session.mediaFiles.filter((f) => f.mimeType?.startsWith('image/')).length;
+      await ctx.reply(`📸 Carousel — ${imgCount} gambar dikirim langsung (tanpa konversi video).`);
+    } else if (reelTargets.length && onlyImages) {
       const labels = reelTargets
         .map((n) => NETWORK_LABELS[n] || n)
         .join(', ');
@@ -2432,7 +2455,8 @@ async function runPublish(ctx, scheduledAt) {
       tiktokNormalized,
     } = await uploadMediaForTargets(
       snapshot.mediaFiles,
-      snapshot.selectedAccountIds
+      snapshot.selectedAccountIds,
+      { carouselMode: !!session.carouselMode }
     );
 
     // Buffer sudah diterima Woopsocial — bebaskan segera supaya GC bisa collect
@@ -5913,6 +5937,19 @@ export function createBot() {
   bot.action(/^pack:(.+)$/, handlePackSelect);
   bot.action(/^file:(.+)$/, handleFileSelect);
   bot.action(/^action:(preview|send|schedule|edit)$/, handleAction);
+
+  bot.action(/^media_format:(carousel|video)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const mode = ctx.match[1];
+    updateSession(ctx.chat.id, { carouselMode: mode === 'carousel' });
+    const label = mode === 'carousel' ? '📸 Carousel (multi-gambar)' : '🎬 Video Slideshow';
+    try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }); } catch {}
+    await ctx.reply(
+      `✅ Format: *${label}*\n\n🎯 Pilih target platform — caption disesuaikan limit terpendek:`,
+      { parse_mode: 'Markdown' }
+    );
+    await showTargetPicker(ctx);
+  });
 
   // ── /listlinkprofilakun ───────────────────────────────────────────────────
   bot.command('listlinkprofilakun', async (ctx) => {

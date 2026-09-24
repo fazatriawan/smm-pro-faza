@@ -341,14 +341,18 @@ async function uploadMediaFromDrive(driveFile) {
  * Returns { mediaUrls, imageToVideoNetworks, imageToVideoSilent, tiktokNormalized }
  * — interface sama seperti woopsocial agar bot.js bisa pakai keduanya.
  */
-export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds) {
+export async function uploadMediaForTargets(driveMediaFiles, socialAccountIds, opts = {}) {
+  const { carouselMode = false } = opts;
   const allAccounts = await listSocialAccounts();
   const byNet = groupAccountsByNetwork(socialAccountIds, allAccounts);
   const networks = Object.keys(byNet);
 
   const hasVideo = driveMediaFiles.some((f) => f.mimeType?.startsWith('video/'));
   const images = driveMediaFiles.filter((f) => f.mimeType?.startsWith('image/'));
-  const convertNetworks = networksNeedingImageToVideo(networks, hasVideo, images.length > 0);
+  // Carousel mode: upload gambar langsung tanpa konversi ke video
+  const convertNetworks = carouselMode
+    ? []
+    : networksNeedingImageToVideo(networks, hasVideo, images.length > 0);
 
   let imageToVideoSilent = false;
   let mediaUrls = [];
