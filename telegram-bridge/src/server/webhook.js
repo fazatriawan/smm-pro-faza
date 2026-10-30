@@ -42,20 +42,31 @@ function verifyOutstandSignature(req, rawBody) {
 }
 
 /**
- * Verifikasi signature webhook PostForme (Svix format).
- * Secret format: whsec_<base64key>
- * Headers: svix-id, svix-timestamp, svix-signature (v1,<base64hmac>)
+ * Verifikasi signature webhook PostForme.
+ * PostForme kirim secret langsung di header `post-for-me-webhook-secret`.
+ * Fallback: Svix format (whsec_<base64key>) jika header Svix tersedia.
  */
 function verifyPostformeSignature(req, rawBody) {
   const secret = env.postformeWebhookSecret;
   if (!secret) return { ok: true, reason: 'no-secret-configured' };
 
+  // PostForme: cek header `post-for-me-webhook-secret` langsung
+  const directSecret = req.headers['post-for-me-webhook-secret'];
+  if (directSecret) {
+    try {
+      const valid = crypto.timingSafeEqual(Buffer.from(directSecret), Buffer.from(secret));
+      return valid ? { ok: true } : { ok: false, reason: 'secret-mismatch' };
+    } catch {
+      return { ok: false, reason: 'secret-mismatch' };
+    }
+  }
+
+  // Fallback: Svix format
   const msgId = req.headers['svix-id'];
   const msgTs = req.headers['svix-timestamp'];
   const msgSig = req.headers['svix-signature'];
 
   if (!msgId || !msgTs || !msgSig) {
-    // Log semua header agar bisa debug format yang dipakai PostForme
     log.warn({ headers: Object.keys(req.headers) }, '[Webhook/PostForme] header Svix tidak lengkap');
     return { ok: false, reason: 'missing-svix-headers' };
   }
@@ -66,7 +77,6 @@ function verifyPostformeSignature(req, rawBody) {
     const computed = crypto.createHmac('sha256', keyBytes).update(toSign, 'utf8').digest('base64');
     const expected = `v1,${computed}`;
 
-    // svix-signature bisa berisi beberapa versi: "v1,sig1 v1,sig2"
     const valid = String(msgSig).split(' ').some((s) => {
       try { return crypto.timingSafeEqual(Buffer.from(s), Buffer.from(expected)); } catch { return false; }
     });

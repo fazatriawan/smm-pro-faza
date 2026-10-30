@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import axios from 'axios';
 import { env } from '../config/env.js';
-import { downloadFile } from './drive.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('ai');
@@ -21,30 +19,27 @@ import {
 import { getTonePrompt } from '../config/captionTones.js';
 import { buildMissionPromptForGemini } from '../utils/missionParse.js';
 
-const useAnthropic = Boolean(
-  env.anthropicApiKey && !env.anthropicApiKey.includes('your_anthropic_api_key')
-);
-
-const anthropic = useAnthropic ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
-
-const geminiClient =
-  !useAnthropic && env.geminiApiKey
-    ? new GoogleGenerativeAI(env.geminiApiKey)
-    : null;
-const geminiModel = geminiClient
-  ? geminiClient.getGenerativeModel({ model: 'gemini-flash-latest' })
+const tokenplusClient = env.tokenplusApiKey && !env.tokenplusApiKey.includes('your_tokenplus')
+  ? axios.create({
+      baseURL: 'https://tokenplus.net/v1',
+      headers: { Authorization: `Bearer ${env.tokenplusApiKey}`, 'Content-Type': 'application/json' },
+      timeout: 120000,
+    })
   : null;
 
-if (useAnthropic) {
-  log.info('[AI] Menggunakan Claude (Anthropic)');
-} else if (geminiModel) {
-  log.info('[AI] Menggunakan Gemini (Google)');
-} else {
-  log.warn('[AI] Tidak ada AI API key — caption generation tidak akan berfungsi');
-}
+const openaiClient = env.openaiApiKey && !env.openaiApiKey.includes('your_openai')
+  ? axios.create({
+      baseURL: 'https://api.openai.com/v1',
+      headers: { Authorization: `Bearer ${env.openaiApiKey}`, 'Content-Type': 'application/json' },
+      timeout: 120000,
+    })
+  : null;
 
-const MAX_VIDEO_BYTES = 18 * 1024 * 1024;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Claude limit 5MB per image
+if (openaiClient) log.info({ model: env.openaiModel }, '[AI] Primary: OpenAI');
+if (tokenplusClient) log.info({ model: env.tokenplusModel }, '[AI] Fallback: TokenPlus');
+if (!tokenplusClient && !openaiClient) {
+  log.warn('[AI] Tidak ada AI API key — tambahkan TOKENPLUS_API_KEY atau OPENAI_API_KEY di .env');
+}
 
 const CAPTION_RULES = `You are a social media copywriter (Indonesia).
 No markdown. Professional but engaging.
@@ -54,7 +49,7 @@ CRITICAL:
 - Do NOT invent metaphors unrelated to media (avoid clichés like "jas hujan" unless the video shows rain/weather).
 - Do NOT use "title line" then repeat the same sentence in the next paragraph. Write flowing body text only.
 - Each platform block MUST use DIFFERENT wording (not copy-paste).
-- Max 5 hashtags on the last line only. Use proper casing for brand tags when given in briefing.`;
+- Exactly 5 hashtags on the last line only. Use proper casing for brand tags when given in briefing.`;
 
 /**
  * @param {string[]} networks
@@ -91,36 +86,38 @@ function sanitizeForApi(str) {
   return String(str || '').replace(/[\uD800-\uDFFF]/g, '');
 }
 
-// ─── Claude ──────────────────────────────────────────────────────────────────
+// ─── OpenAI-compatible helper ─────────────────────────────────────────────────
 
-/**
- * @param {Array<{type: string, [key: string]: any}>} content
- */
-async function callClaude(content) {
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
-    messages: [{ role: 'user', content }],
-  });
-  const text = response.content?.[0]?.text?.trim();
-  if (!text) throw new Error('Claude returned an empty caption');
-  return text;
+async function callOpenAICompat(client, model, messages, label) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await client.post('/chat/completions', { model, max_tokens: 2048, messages });
+      const text = res.data?.choices?.[0]?.message?.content?.trim();
+      if (!text) throw new Error(`${label} returned an empty caption`);
+      return text;
+    } catch (err) {
+      const status = err?.response?.status;
+      const isRetryable =
+        status === 524 || status === 502 || status === 503 || status === 504 ||
+        err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED';
+      if (isRetryable && attempt < 2) {
+        log.warn({ attempt: attempt + 1, status, code: err.code }, `[${label}] timeout — retry`);
+        await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+        continue;
+      }
+      log.error({ status, model, msg: err.message }, `[${label}] API error: ${status}`);
+      throw err;
+    }
+  }
 }
 
-/**
- * Build Claude message content (text + optional image).
- * Claude tidak support video inline — pakai text fallback.
- */
-async function buildClaudeParts(context) {
+async function buildTokenPlusParts(context) {
   const { folderName, mediaFiles, targetNetworks, tone, missionBriefing } = context;
   const videos = mediaFiles.filter((f) => f.mimeType?.startsWith('video/'));
   const images = mediaFiles.filter((f) => f.mimeType?.startsWith('image/'));
   const primaryType = videos.length ? 'video' : images.length ? 'image' : 'unknown';
 
-  const fileList = mediaFiles
-    .map((f, i) => `${i + 1}. ${f.name} (${f.mimeType})`)
-    .join('\n');
-
+  const fileList = mediaFiles.map((f, i) => `${i + 1}. ${f.name} (${f.mimeType})`).join('\n');
   const netsNorm = (targetNetworks || []).map((n) => n.toLowerCase());
   const uniqueNets = [...new Set(netsNorm.map((n) => (n === 'twitter' ? 'x' : n)))];
 
@@ -140,151 +137,38 @@ async function buildClaudeParts(context) {
     `Folder / tema: ${folderName}\nFile:\n${fileList}`
   );
 
-  /** @type {Array<{type: string, [key: string]: any}>} */
-  const content = [{ type: 'text', text: promptText }];
-
-  // Lampirkan gambar pertama (Claude support image, tidak support video)
-  const firstImage = images[0];
-  if (firstImage && !videos.length) {
-    try {
-      let buffer;
-      let mimeType = firstImage.mimeType || 'image/jpeg';
-      if (firstImage.buffer) buffer = firstImage.buffer;
-      else if (firstImage.id) {
-        const dl = await downloadFile(firstImage.id);
-        buffer = dl.buffer;
-        mimeType = dl.mimeType;
-      }
-      if (buffer && buffer.length <= MAX_IMAGE_BYTES) {
-        const validMime = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        const safeMime = validMime.includes(mimeType) ? mimeType : 'image/jpeg';
-        content.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: safeMime,
-            data: buffer.toString('base64'),
-          },
-        });
-        log.info({ name: firstImage.name }, `[Claude] Image attached: ${firstImage.name}`);
-      }
-    } catch (err) {
-      log.warn({ err: err.message }, `[Claude] Could not attach image: ${err.message}`);
-    }
-  }
-
-  return { content, uniqueNets, missionBriefing };
-}
-
-// ─── Gemini (fallback) ────────────────────────────────────────────────────────
-
-async function callGemini(parts) {
-  const result = await geminiModel.generateContent({
-    contents: [{ role: 'user', parts }],
-  });
-  const text = result.response.text()?.trim();
-  if (!text) throw new Error('Gemini returned an empty caption');
-  return text;
-}
-
-async function buildGeminiParts(context) {
-  const { folderName, mediaFiles, targetNetworks, tone, missionBriefing } = context;
-  const videos = mediaFiles.filter((f) => f.mimeType?.startsWith('video/'));
-  const images = mediaFiles.filter((f) => f.mimeType?.startsWith('image/'));
-  const primaryType = videos.length ? 'video' : images.length ? 'image' : 'unknown';
-
-  const fileList = mediaFiles
-    .map((f, i) => `${i + 1}. ${f.name} (${f.mimeType})`)
-    .join('\n');
-
-  const netsNorm = (targetNetworks || []).map((n) => n.toLowerCase());
-  const uniqueNets = [...new Set(netsNorm.map((n) => (n === 'twitter' ? 'x' : n)))];
-
-  let mediaNote = '';
-  if (primaryType === 'video') {
-    mediaNote =
-      '\n\nKonten utama: VIDEO terlampir. WAJIB jelaskan apa yang terlihat/terdengar di video, lalu hubungkan ke briefing (jika ada).';
-  }
-
-  const toneNote = tone ? `\n\n${getTonePrompt(tone)}` : '';
-  const missionNote = buildMissionPromptForGemini(missionBriefing);
-  const formatNote = buildMultiPlatformFormatInstruction(uniqueNets);
-
-  const textPart = {
-    text: sanitizeForApi(
-      `${CAPTION_RULES}${toneNote}${missionNote}${mediaNote}${formatNote}\n\n` +
-      `Folder / tema: ${folderName}\nFile:\n${fileList}`
-    ),
-  };
-
-  const parts = [textPart];
-
-  const firstVideo = videos[0];
-  if (firstVideo) {
-    try {
-      let buffer;
-      let mimeType = firstVideo.mimeType || 'video/mp4';
-      let name = firstVideo.name;
-      if (firstVideo.buffer) buffer = firstVideo.buffer;
-      else if (firstVideo.id) {
-        const dl = await downloadFile(firstVideo.id);
-        buffer = dl.buffer;
-        mimeType = dl.mimeType;
-        name = dl.name;
-      }
-      if (buffer && buffer.length <= MAX_VIDEO_BYTES) {
-        parts.push({
-          inlineData: {
-            data: buffer.toString('base64'),
-            mimeType: mimeType.startsWith('video/') ? mimeType : 'video/mp4',
-          },
-        });
-        log.info({ name }, `[Gemini] Video attached: ${name}`);
-      } else if (buffer) {
-        textPart.text +=
-          `\n\nVideo terlalu besar — turunkan caption dari nama file & briefing, tetap spesifik.`;
-      }
-    } catch (err) {
-      log.warn({ err: err.message }, `[Gemini] Could not attach video: ${err.message}`);
-    }
-  }
-
-  const firstImage = images[0];
-  if (firstImage && !videos.length) {
-    try {
-      let buffer;
-      let mimeType = firstImage.mimeType || 'image/jpeg';
-      if (firstImage.buffer) buffer = firstImage.buffer;
-      else if (firstImage.id) {
-        const dl = await downloadFile(firstImage.id);
-        buffer = dl.buffer;
-        mimeType = dl.mimeType;
-      }
-      if (buffer) {
-        parts.push({ inlineData: { data: buffer.toString('base64'), mimeType } });
-      }
-    } catch (err) {
-      log.warn({ err: err.message }, `[Gemini] Could not attach image: ${err.message}`);
-    }
-  }
-
-  return { parts, uniqueNets, missionBriefing };
+  const messages = [{ role: 'user', content: promptText }];
+  return { messages, uniqueNets, missionBriefing };
 }
 
 // ─── Unified call ─────────────────────────────────────────────────────────────
 
 async function callAI(context) {
-  if (useAnthropic) {
-    const { content, uniqueNets, missionBriefing } = await buildClaudeParts(context);
-    const raw = await callClaude(content);
-    return { raw, uniqueNets, missionBriefing };
+  if (!tokenplusClient && !openaiClient) {
+    throw new Error('Tidak ada AI API key — tambahkan TOKENPLUS_API_KEY atau OPENAI_API_KEY di .env');
   }
-  if (geminiModel) {
-    const { parts, uniqueNets, missionBriefing } = await buildGeminiParts(context);
-    const raw = await callGemini(parts);
-    return { raw, uniqueNets, missionBriefing };
+  const { messages, uniqueNets, missionBriefing } = await buildTokenPlusParts(context);
+
+  // Coba OpenAI dulu; kalau gagal (524/timeout) dan TokenPlus tersedia → fallback
+  if (openaiClient) {
+    try {
+      const raw = await callOpenAICompat(openaiClient, env.openaiModel, messages, 'OpenAI');
+      return { raw, uniqueNets, missionBriefing };
+    } catch (err) {
+      const status = err?.response?.status;
+      const isGateway = status === 524 || status === 502 || status === 503 || status === 504 ||
+        err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED';
+      if (isGateway && tokenplusClient) {
+        log.warn({ status }, '[AI] OpenAI gagal — fallback ke TokenPlus');
+      } else {
+        throw err;
+      }
+    }
   }
-  throw new Error('Tidak ada AI API key. Tambahkan ANTHROPIC_API_KEY atau GEMINI_API_KEY di .env');
+
+  // TokenPlus sebagai primary (jika OpenAI tidak dikonfigurasi) atau fallback
+  const raw = await callOpenAICompat(tokenplusClient, env.tokenplusModel, messages, 'TokenPlus');
+  return { raw, uniqueNets, missionBriefing };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -323,7 +207,7 @@ export async function generateCaptionsByNetwork(context) {
   }
 
   if (Object.keys(byNetwork).length < uniqueNets.length) {
-    const provider = useAnthropic ? 'Claude' : 'Gemini';
+    const provider = tokenplusClient ? 'TokenPlus' : 'OpenAI';
     log.warn(`[${provider}] Multi-platform parse incomplete, fallback single caption`);
     const single = await generateCaption(context);
     const fallback = buildCaptionsByNetwork(single, uniqueNets, required);
@@ -380,4 +264,72 @@ function normalizeCaptionBody(text) {
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Generate N variasi caption dari satu caption dasar.
+ * Setiap variasi: 1 kalimat diparafrase + urutan hashtag di-shuffle.
+ * Elemen pertama array adalah caption asli.
+ * @param {string} caption
+ * @param {number} count - jumlah total variasi (termasuk asli)
+ * @returns {Promise<string[]>}
+ */
+export async function generateCaptionVariations(caption, count) {
+  if (count <= 1) return [caption];
+
+  const hashtags = (caption.match(/#\w+/g) || []);
+  const textOnly = caption.replace(/#\w+/g, '').trim();
+  const hashtagSep = /\n#/.test(caption) ? '\n' : ' ';
+
+  let textVariants = [];
+
+  if (textOnly && (tokenplusClient || openaiClient)) {
+    try {
+      const needed = count - 1;
+      const prompt = sanitizeForApi(
+        `Buat ${needed} variasi teks caption berikut. Tiap variasi: pilih 1 kalimat, ubah dengan sinonim/parafrase (makna tetap sama), kalimat lain tetap persis sama. Return JSON array berisi ${needed} string. Tanpa hashtag. Tanpa penjelasan. Hanya JSON.\n\nCaption: "${textOnly}"`
+      );
+
+      const messages = [{ role: 'user', content: prompt }];
+      let raw = '';
+      try {
+        if (tokenplusClient) {
+          raw = await callOpenAICompat(tokenplusClient, env.tokenplusModel, messages, 'TokenPlus');
+        } else {
+          raw = await callOpenAICompat(openaiClient, env.openaiModel, messages, 'OpenAI');
+        }
+      } catch (aiErr) {
+        if (tokenplusClient && openaiClient) {
+          raw = await callOpenAICompat(openaiClient, env.openaiModel, messages, 'OpenAI');
+        } else {
+          throw aiErr;
+        }
+      }
+
+      const match = raw.match(/\[[\s\S]*?\]/);
+      if (match) textVariants = JSON.parse(match[0]).filter(Boolean);
+    } catch (err) {
+      log.warn({ err: err.message }, '[AI] generateCaptionVariations gagal — pakai teks asli');
+    }
+  }
+
+  const results = [caption];
+  for (let i = 0; i < count - 1; i++) {
+    const varText = (textVariants[i] || textOnly).trim();
+    const shuffled = shuffleArray(hashtags);
+    const varCaption = hashtags.length
+      ? varText + hashtagSep + shuffled.join(' ')
+      : varText;
+    results.push(varCaption.trim());
+  }
+  return results;
 }

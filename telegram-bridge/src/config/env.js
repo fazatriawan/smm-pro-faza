@@ -141,6 +141,10 @@ export const env = {
   publisher: publisherChoice,
   anthropicApiKey: optionalEnv('ANTHROPIC_API_KEY'),
   geminiApiKey: optionalEnv('GEMINI_API_KEY'),
+  tokenplusApiKey: optionalEnv('TOKENPLUS_API_KEY'),
+  tokenplusModel: optionalEnv('TOKENPLUS_MODEL') || 'gpt-5.6-luna',
+  openaiApiKey: optionalEnv('OPENAI_API_KEY'),
+  openaiModel: optionalEnv('OPENAI_MODEL') || 'gpt-4o-mini',
   /** Kosong = buat spreadsheet otomatis, ID disimpan di data/runtime.json */
   googleSpreadsheetId: optionalEnv('GOOGLE_SPREADSHEET_ID'),
   /** Parent bank konten (ID stabil). Bisa URL — di-parse otomatis. */
@@ -270,4 +274,13 @@ export const env = {
     1,
     Number(process.env.UNEXPECTED_POST_SCAN_DAYS || 2)
   ),
+  /**
+   * Bot peer — untuk /kirim command.
+   * Set PEER_BOT_ARI_TOKEN, PEER_BOT_ARI_CHAT_ID, dst. di .env
+   */
+  peerBots: ['ARI', 'ADAM', 'JUNDAN'].flatMap((n) => {
+    const token  = optionalEnv(`PEER_BOT_${n}_TOKEN`);
+    const chatId = optionalEnv(`PEER_BOT_${n}_CHAT_ID`);
+    return token && chatId ? [{ name: n.toLowerCase(), label: n[0] + n.slice(1).toLowerCase(), token, chatId }] : [];
+  }),
 };

@@ -202,6 +202,14 @@ function getPublishContext(postId) {
 }
 
 /**
+ * Kembalikan semua publish contexts untuk hari ini (dari memory + disk).
+ * @returns {Map<string, { postIds: string[], expectedAccountIds: string[], baseCaption: string, timestamp: string }>}
+ */
+export function getPublishContextsForToday() {
+  return new Map(publishContextByPostId);
+}
+
+/**
  * @param {string[]} postIds
  */
 async function fetchPostsFresh(postIds) {
@@ -285,6 +293,20 @@ function buildWideSheetFromAccounts(event) {
     : annotateAccountsWithDayAttempts(event.accounts || []);
   const enriched = enrichAccountsWithInstruction(annotated);
 
+  // Gabungkan instruksi yang publish di menit yang sama → satu kolom
+  // PostForme bisa buat banyak post ID untuk satu sesi publish,
+  // tapi user harapkan semua yang jam-nya sama = satu kolom.
+  const minuteBuckets = new Map(); // "2026-10-15T13:40" → instructionId pertama
+  for (const acc of enriched) {
+    if (!acc.instructionSort) continue;
+    const minute = new Date(acc.instructionSort).toISOString().slice(0, 16); // "YYYY-MM-DDTHH:MM"
+    if (!minuteBuckets.has(minute)) {
+      minuteBuckets.set(minute, acc.instructionId);
+    } else {
+      acc.instructionId = minuteBuckets.get(minute);
+    }
+  }
+
   /** @type {Map<string, { id: string, label: string, sort: number }>} */
   const instructionMap = new Map();
   for (const acc of enriched) {
@@ -304,7 +326,8 @@ function buildWideSheetFromAccounts(event) {
     .map((inst, idx) => {
       const keyForLabel =
         inst.idempotencyKey ||
-        (/^[a-f0-9]{64}$/i.test(inst.id) ? inst.id : '');
+        inst.id ||
+        '';
       return {
         ...inst,
         seq: idx + 1,
@@ -337,7 +360,18 @@ function buildWideSheetFromAccounts(event) {
       row.attemptToday = acc.attemptToday;
       row.isDuplicate = !!acc.isDuplicate;
     }
-    row.byInstruction.set(acc.instructionId, acc);
+    // Jangan turunkan status — live > failed > pending
+    const existing = row.byInstruction.get(acc.instructionId);
+    if (existing) {
+      const rank = { published: 3, failed: 2, pending: 1 };
+      const eRank = rank[existing.status] ?? 1;
+      const nRank = rank[acc.status] ?? 1;
+      if (nRank >= eRank) row.byInstruction.set(acc.instructionId, acc);
+      // Status sama tapi baru punya URL → pakai yang baru
+      else if (eRank === nRank && acc.url && !existing.url) row.byInstruction.set(acc.instructionId, acc);
+    } else {
+      row.byInstruction.set(acc.instructionId, acc);
+    }
   }
 
   const sortedRows = [...rowMap.values()].sort((a, b) => {
@@ -385,7 +419,30 @@ function buildWideSheetFromAccounts(event) {
     return cells;
   });
 
-  return { headerRow, dataRows, instructionCount: instructions.length };
+  // Hitung statistik per-network: published dihitung per LINK (bukan per akun unik)
+  // Akun yang posting 2× = 2 link published. Gagal/pending hanya dihitung jika akun tidak punya live sama sekali.
+  const netCounts = {};
+  for (const row of sortedRows) {
+    const net = row.network;
+    if (!netCounts[net]) netCounts[net] = { published: 0, failed: 0, pending: 0 };
+    let rowPublished = 0;
+    let rowFailed = 0;
+    let rowPending = 0;
+    for (const acc of row.byInstruction.values()) {
+      const st = (acc.status || 'pending').toLowerCase();
+      if (st === 'published') rowPublished += 1;
+      else if (st === 'failed') rowFailed += 1;
+      else rowPending += 1;
+    }
+    netCounts[net].published += rowPublished;
+    // Hitung gagal/pending hanya jika akun tidak punya satu pun link live
+    if (rowPublished === 0) {
+      if (rowFailed > 0) netCounts[net].failed += 1;
+      else netCounts[net].pending += 1;
+    }
+  }
+
+  return { headerRow, dataRows, instructionCount: instructions.length, netCounts };
 }
 
 /**
@@ -394,8 +451,9 @@ function buildWideSheetFromAccounts(event) {
  * supaya data pagi tidak hilang ketika API tidak tersedia saat publish malam.
  * @param {string} tabName
  * @param {Set<string>} excludeIds  post-ID instruksi baru yg tidak perlu dibaca ulang
+ * @param {Set<string>} [networksWithFreshData] network yang sudah punya data baru (baris dari network ini + postId match boleh di-skip); kalau null, skip semua postId match
  */
-async function readPriorAccountsFromWideSheet(tabName, excludeIds) {
+async function readPriorAccountsFromWideSheet(tabName, excludeIds, networksWithFreshData) {
   const { header, rows } = await readDailyTabHeaderAndRows(tabName);
   if (!isWideSheetHeader(header)) return [];
 
@@ -412,7 +470,7 @@ async function readPriorAccountsFromWideSheet(tabName, excludeIds) {
   const validInstructions = [];
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
-    const keyMatch = inst.prefix.match(/\(([a-f0-9]{8,})\)/i);
+    const keyMatch = inst.prefix.match(/\(([a-z0-9_|.-]{6,})\)/i);
     const key = keyMatch ? keyMatch[1].toLowerCase() : null;
     if (!key) continue; // ghost instruction, lewati
     if (seenKeys.has(key)) continue; // duplikat, lewati
@@ -443,7 +501,6 @@ async function readPriorAccountsFromWideSheet(tabName, excludeIds) {
       if (!rawPostId) continue;
 
       const cellPostIds = splitPostIds(rawPostId);
-      if (cellPostIds.some((id) => excludeIds.has(id))) continue;
 
       const statusCell = String(row[inst.statusIdx] || '').trim();
       const linkCell = String(row[inst.linkIdx] || '').trim();
@@ -454,6 +511,14 @@ async function readPriorAccountsFromWideSheet(tabName, excludeIds) {
           ? 'failed'
           : 'pending';
       const url = /^https?:\/\//i.test(linkCell) ? linkCell : '';
+
+      // Skip baris ini hanya jika post ID match DAN network-nya sudah ada di data baru.
+      // JANGAN skip akun yang sudah published — status live tidak boleh diturunkan kembali.
+      if (
+        cellPostIds.some((id) => excludeIds.has(id)) &&
+        status !== 'published' &&
+        (!networksWithFreshData || networksWithFreshData.has(network))
+      ) continue;
 
       accounts.push({
         network,
@@ -720,12 +785,30 @@ export async function rewriteDailyTabFromAccounts(event) {
     if (postIds.length > 0) {
       try {
         const freshIds = new Set(annotated.map((a) => a.postId).filter(Boolean));
-        const sheetFallback = await readPriorAccountsFromWideSheet(tabName, freshIds);
+        // Network yang sudah punya data baru — baris dari network lain (mis. IG yang belum
+        // dikembalikan PostForme) tetap diambil dari sheet meski post ID-nya sama.
+        const networksWithFreshData = new Set(
+          annotated.map((a) => (a.network || '').toLowerCase()).filter(Boolean)
+        );
+        const sheetFallback = await readPriorAccountsFromWideSheet(tabName, freshIds, networksWithFreshData);
         if (sheetFallback.length > 0) {
           log.info(
             { fresh: annotated.length, fallback: sheetFallback.length, tab: tabName },
             '[Sheets] rewriteDaily: merge dengan data sheet lama'
           );
+          // Enrich sheetFallback dengan accountId dari fresh data (match network+username)
+          // agar filter expected.has(accountId) di offerReplacementAccountsIfAny bisa bekerja
+          const freshById = new Map(
+            annotated.filter((a) => a.accountId)
+              .map((a) => [`${(a.network||'').toLowerCase()}:${(a.username||'').toLowerCase().replace(/^@/,'')}`, a.accountId])
+          );
+          for (const acc of sheetFallback) {
+            if (!acc.accountId) {
+              const key = `${(acc.network||'').toLowerCase()}:${(acc.username||'').toLowerCase().replace(/^@/,'')}`;
+              const id = freshById.get(key);
+              if (id) acc.accountId = id;
+            }
+          }
           accounts = [...annotated, ...sheetFallback];
         }
       } catch (err) {
@@ -748,7 +831,7 @@ export async function rewriteDailyTabFromAccounts(event) {
  */
 async function writeWideDailyTab(event) {
   const { spreadsheetId, tabName } = event;
-  const { headerRow, dataRows, instructionCount } = buildWideSheetFromAccounts(
+  const { headerRow, dataRows, instructionCount, netCounts } = buildWideSheetFromAccounts(
     event
   );
 
@@ -794,6 +877,8 @@ async function writeWideDailyTab(event) {
     duplicateAccounts: dupes.length,
     rowCount: allRows.length,
     instructionCount,
+    netCounts,
+    accounts: event.accounts,
   };
 }
 
@@ -805,6 +890,7 @@ export async function fetchPublishAccountStatuses({
   postIds,
   expectedAccountIds,
   baseCaption = '',
+  prebuiltPosts,
 }) {
   const ids = (postIds || []).filter(Boolean);
   if (!ids.length) {
@@ -818,7 +904,8 @@ export async function fetchPublishAccountStatuses({
       : ctx?.expectedAccountIds || [];
   const caption = baseCaption || ctx?.baseCaption || '';
 
-  const resolvedPosts = await fetchPostsFresh(ids);
+  // PostForme menghapus post setelah diproses — gunakan data pre-fetched jika ada
+  const resolvedPosts = prebuiltPosts?.length ? prebuiltPosts : await fetchPostsFresh(ids);
   const allAccounts = await listSocialAccounts();
 
   let accounts;
@@ -843,6 +930,7 @@ export async function fetchPublishAccountStatuses({
 
 export async function refreshPublishResultsInSheet({
   postIds,
+  posts,
   expectedAccountIds,
   baseCaption = '',
   timestamp,
@@ -869,6 +957,7 @@ export async function refreshPublishResultsInSheet({
     postIds: ids,
     expectedAccountIds,
     baseCaption,
+    prebuiltPosts: posts,
   });
   const accounts = reconcileSheetAccounts(rawAccounts);
   const postId = ids.join(', ');
@@ -928,7 +1017,10 @@ export function scheduleSheetRefresh(
   const ids = postIds.filter(Boolean);
   if (!ids.length) return;
 
-  registerPublishContext(ids, expectedAccountIds, baseCaption, undefined, meta);
+  registerPublishContext(ids, expectedAccountIds, baseCaption, meta.timestamp || undefined, meta);
+
+  // Jitter 0–3 menit: cegah tabrakan Google Sheets quota saat beberapa bot publish bersamaan
+  const jitterMs = Math.floor(Math.random() * 3 * 60_000);
 
   for (const delayMs of SHEET_BATCH_REFRESH_DELAYS_MS) {
     setTimeout(() => {
@@ -936,6 +1028,7 @@ export function scheduleSheetRefresh(
         postIds: ids,
         expectedAccountIds,
         baseCaption,
+        timestamp: meta.timestamp,
         folderName: meta.folderName,
         targetLabel: meta.targetLabel,
         contentLabel: meta.contentLabel,
@@ -946,7 +1039,7 @@ export function scheduleSheetRefresh(
           `[Sheets] batch refresh +${delayMs / 60000}m: ${err.message}`,
         );
       });
-    }, delayMs);
+    }, delayMs + jitterMs);
   }
 
   for (const delayMs of [15 * 60_000, 60 * 60_000]) {
@@ -957,7 +1050,7 @@ export function scheduleSheetRefresh(
           `[Sheets] today refresh +${delayMs / 60000}m: ${err.message}`,
         );
       });
-    }, delayMs);
+    }, delayMs + jitterMs);
   }
 }
 
@@ -1117,7 +1210,7 @@ export async function readPostIdsFromDailyTab(tabName) {
  * Logika:
  * - Baca SEMUA kolom instruksi (termasuk ghost yang tidak punya hex key)
  * - Hanya ambil baris yang punya URL di sel Link
- * - Deduplikasi by URL sehingga kolom duplikat tidak menghasilkan link ganda
+ * - Akun yang publish di beberapa sesi (URL sama/beda) dihitung semua
  * - Akun dengan sel Link kosong dilewati (tidak re-fetch dari API)
  */
 export async function readPublishedLinksFromDailyTab(tabName) {
@@ -1131,7 +1224,6 @@ export async function readPublishedLinksFromDailyTab(tabName) {
     Object.entries(PLATFORM_LABELS).map(([k, v]) => [v.toLowerCase(), k])
   );
 
-  const seenUrls = new Set();
   const accounts = [];
 
   for (const row of rows) {
@@ -1144,8 +1236,6 @@ export async function readPublishedLinksFromDailyTab(tabName) {
     for (const inst of instructions) {
       const linkCell = String(row[inst.linkIdx] || '').trim();
       if (!/^https?:\/\//i.test(linkCell)) continue; // kosong → skip
-      if (seenUrls.has(linkCell)) continue; // duplikat URL → skip
-      seenUrls.add(linkCell);
 
       const statusCell = String(row[inst.statusIdx] || '').trim();
       const status = statusCell.includes('✅')
@@ -1267,7 +1357,7 @@ export async function appendPublishEventRow(event) {
  */
 export async function recordPublishResultsToSheet({
   postIds,
-  posts: _posts,
+  posts,
   expectedAccountIds,
   timestamp,
   baseCaption,
@@ -1293,6 +1383,7 @@ export async function recordPublishResultsToSheet({
 
   return refreshPublishResultsInSheet({
     postIds: ids,
+    posts,
     expectedAccountIds,
     baseCaption,
     timestamp: ts,
@@ -1534,6 +1625,119 @@ export async function fixTikTokLinksInSheet(feedByUsername, tabName) {
   );
 
   return { updated: updates.length, notFound: [...notFoundSet], alreadyCorrect };
+}
+
+/**
+ * Domain identifier per platform untuk mendeteksi sel link di sheet.
+ * @param {string} net
+ * @returns {string[]}
+ */
+function platformDomains(net) {
+  switch ((net || '').toLowerCase()) {
+    case 'instagram': return ['instagram.com'];
+    case 'facebook': return ['facebook.com'];
+    case 'threads': return ['threads.com', 'threads.net'];
+    case 'tiktok': return ['tiktok.com'];
+    case 'youtube': return ['youtube.com', 'youtu.be'];
+    case 'x': case 'twitter': return ['x.com', 'twitter.com'];
+    case 'linkedin': return ['linkedin.com'];
+    case 'pinterest': return ['pinterest.com'];
+    case 'bluesky': return ['bsky.app', 'bsky.social'];
+    default: return [];
+  }
+}
+
+/**
+ * Update link posting di sheet untuk semua platform dari data feed.
+ * Mengisi sel link yang kosong dan memperbarui status pending ke "✅ Live".
+ * @param {Map<string, Map<string, string>>} feedByPlatformUsername - network → Map<username_lower, url>
+ * @param {string} [tabName]
+ * @returns {Promise<{ updated: number, notFound: string[], alreadyCorrect: number, byPlatform: Record<string, number> }>}
+ */
+export async function fixLinksInSheet(feedByPlatformUsername, tabName) {
+  const { header, rows, tab, spreadsheetId } = await readDailyTabHeaderAndRows(tabName);
+  if (!rows.length) return { updated: 0, notFound: [], alreadyCorrect: 0, byPlatform: {} };
+
+  const { instructions } = parseWideSheetHeader(header);
+  if (!instructions.length) return { updated: 0, notFound: [], alreadyCorrect: 0, byPlatform: {} };
+
+  const sheets = getSheetsClient();
+  const labelToNet = new Map(
+    Object.entries(PLATFORM_LABELS).map(([net, lbl]) => [lbl, net])
+  );
+
+  const updates = [];
+  let alreadyCorrect = 0;
+  const updatedByNet = {};
+  const notFoundByNet = {};
+
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    const row = rows[rowIdx];
+    const platformLabel = String(row[0] || '').trim();
+    const net = labelToNet.get(platformLabel);
+    if (!net) continue;
+
+    const feedForNet = feedByPlatformUsername.get(net);
+    if (!feedForNet?.size) continue;
+
+    const rawUsername = String(row[1] || '').replace(/^@/, '').trim().toLowerCase();
+    if (!rawUsername) continue;
+
+    const newUrl = feedForNet.get(rawUsername);
+    if (!newUrl) {
+      if (!notFoundByNet[net]) notFoundByNet[net] = new Set();
+      notFoundByNet[net].add(rawUsername);
+      continue;
+    }
+
+    const domains = platformDomains(net);
+    const sheetRow = rowIdx + 2;
+
+    for (const { linkIdx, statusIdx, postIdIdx } of instructions) {
+      const linkCell = String(row[linkIdx] ?? '');
+      const statusCell = String(row[statusIdx] ?? '');
+      const postIdCell = String(row[postIdIdx] ?? '');
+
+      // Skip instruction blocks tanpa data (tidak ada posting untuk instruksi ini)
+      if (!statusCell.trim() && !postIdCell.trim()) continue;
+
+      const isPending = /pending|⏳/i.test(statusCell) || statusCell.trim() === '';
+      const hasMatchDomain = domains.some((d) => linkCell.includes(d));
+      const isEmptyLink = !linkCell.trim();
+      const isWrongLink = hasMatchDomain && linkCell !== newUrl;
+
+      if (isEmptyLink || isWrongLink) {
+        updates.push({
+          range: `${quoteTab(tab)}!${columnLetterFromIndex(linkIdx + 1)}${sheetRow}`,
+          values: [[newUrl]],
+        });
+        if (isPending) {
+          updates.push({
+            range: `${quoteTab(tab)}!${columnLetterFromIndex(statusIdx + 1)}${sheetRow}`,
+            values: [['✅ Live']],
+          });
+        }
+        updatedByNet[net] = (updatedByNet[net] || 0) + 1;
+      } else if (hasMatchDomain && linkCell === newUrl) {
+        alreadyCorrect++;
+      }
+    }
+  }
+
+  if (updates.length) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'USER_ENTERED', data: updates },
+    });
+  }
+
+  log.info({ updated: updates.length, byPlatform: updatedByNet }, '[Sheets] fixLinksInSheet selesai');
+  return {
+    updated: updates.length,
+    notFound: Object.values(notFoundByNet).flatMap((s) => [...s]),
+    alreadyCorrect,
+    byPlatform: updatedByNet,
+  };
 }
 
 export async function recordWebhookToSheet(payload, notify) {

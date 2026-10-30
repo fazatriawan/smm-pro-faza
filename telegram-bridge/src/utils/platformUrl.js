@@ -321,12 +321,17 @@ export function buildLivePostUrl(
  * @param {string} username
  * @param {string|null} [pageId]
  */
-export function buildProfileUrl(network, username, pageId) {
+export function buildProfileUrl(network, username, pageId, handle) {
   const user = (username || '').replace(/^@/, '').trim();
   const net = (network || '').toLowerCase();
   switch (net) {
     case 'instagram': return user ? `https://www.instagram.com/${encodeURIComponent(user)}/` : '';
-    case 'tiktok': return user ? `https://www.tiktok.com/@${encodeURIComponent(user)}` : '';
+    case 'tiktok': {
+      // handle = username asli tanpa spasi; username bisa display name (ada spasi → tidak valid)
+      const tikHandle = (handle || '').replace(/^@/, '').trim();
+      const validUser = tikHandle || (user && !/\s/.test(user) ? user : '');
+      return validUser ? `https://www.tiktok.com/@${encodeURIComponent(validUser)}` : '';
+    }
     case 'threads': return user ? `https://www.threads.com/@${encodeURIComponent(user)}` : '';
     case 'twitter':
     case 'x': return user ? `https://x.com/${encodeURIComponent(user)}` : '';
@@ -334,7 +339,12 @@ export function buildProfileUrl(network, username, pageId) {
     case 'linkedin': return user ? `https://www.linkedin.com/in/${encodeURIComponent(user)}` : '';
     case 'facebook': {
       const page = String(pageId || '').trim();
-      if (page) return `https://www.facebook.com/${page}`;
+      if (page) {
+        // ID numerik → profile.php?id= lebih eksplisit dan selalu valid
+        return /^\d+$/.test(page)
+          ? `https://www.facebook.com/profile.php?id=${page}`
+          : `https://www.facebook.com/${encodeURIComponent(page)}`;
+      }
       // Hanya pakai username jika tidak ada spasi (berarti URL slug, bukan display name)
       if (user && !/\s/.test(user)) return `https://www.facebook.com/${encodeURIComponent(user)}`;
       return '';

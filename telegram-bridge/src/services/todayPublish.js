@@ -94,13 +94,14 @@ export async function getTodayAccountUsageCounts() {
 /**
  * @param {string[]} postIds
  */
-async function fetchAccountsForPostIds(postIds) {
+async function fetchAccountsForPostIds(postIds, options = {}) {
   /** @type {Array<object>} */
   const accounts = [];
 
   // PostForme: pakai batch query ke /v1/social-post-results — 1 request untuk semua postId
   // menghindari rate limit dari N request parallel
   if (getActivePublisher() === 'postforme') {
+    let batchRateLimited = false;
     try {
       const batchResults = await getPostResultsBatch(postIds);
       for (const [postId, socialAccounts] of batchResults) {
@@ -112,17 +113,38 @@ async function fetchAccountsForPostIds(postIds) {
         accounts.push(...sheetAccs);
       }
     } catch (err) {
-      log.warn({ err: err.message }, `[Today] getPostResultsBatch gagal: ${err.message}`);
+      const msg = String(err?.message || '');
+      if (msg.includes('rate_limited') || msg.includes('429') || msg.toLowerCase().includes('rate limit')) {
+        log.warn('[Today] PostForme batch rate limit — skip fallback per-post');
+        batchRateLimited = true;
+      } else {
+        log.warn({ err: msg }, `[Today] getPostResultsBatch gagal: ${msg}`);
+      }
     }
-    // Akun yang tidak ada di batch (postId lama tanpa results) — coba getPost satu per satu
-    const coveredPostIds = new Set(accounts.map((a) => a.postId).filter(Boolean));
-    const missing = postIds.filter((id) => !coveredPostIds.has(id));
-    for (const id of missing) {
-      const post = await getPost(id).catch((err) => {
-        log.warn({ postId: id, err: err.message }, `[Today] getPost ${id}: ${err.message}`);
-        return null;
-      });
-      if (post) accounts.push(...summarizePublishResults([post]).sheetAccounts);
+    if (batchRateLimited) return accounts;
+
+    // Jika batch kosong, coba individual getPost per-postId (lambat tapi reliable)
+    // Hanya jika caller butuh data lengkap (forceIndividual) — hindari lambatkan auto-refresh loop
+    if (!accounts.length && options?._forceIndividual) {
+      log.info({ count: postIds.length }, '[Today] batch kosong — fallback getPost per-post');
+      for (const postId of postIds) {
+        await new Promise((r) => setTimeout(r, 200));
+        try {
+          const post = await getPost(postId);
+          if (post?.socialAccounts?.length) {
+            const sheetAccs = summarizePublishResults([post]).sheetAccounts;
+            for (const a of sheetAccs) { if (!a.postId) a.postId = postId; }
+            accounts.push(...sheetAccs);
+          }
+        } catch (err) {
+          const status = err?.response?.status;
+          if (status === 429) {
+            log.warn('[Today] getPost fallback 429 — stop');
+            break;
+          }
+          // post tidak ada / error lain: lewati
+        }
+      }
     }
     return accounts;
   }
@@ -188,14 +210,27 @@ export async function collectTodayPublishLinks(options = {}) {
     }
   }
 
+  // PostForme: kalau API tidak kembalikan post (semua sudah diproses & dihapus),
+  // ambil post IDs dari sheet sebagai fallback agar /refresh tetap bisa update pending
+  let fromSheetFallback = [];
+  if (getActivePublisher() === 'postforme' && !fromApi.length) {
+    fromSheetFallback = await Promise.race([
+      readPostIdsFromDailyTab(tabName),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), FETCH_TIMEOUT_MS)),
+    ]).catch(() => []);
+    if (fromSheetFallback.length) {
+      log.info({ count: fromSheetFallback.length }, '[Today] PostForme API kosong — fallback ke post IDs dari sheet');
+    }
+  }
+
   const extra = (options.extraPostIds || []).filter(Boolean);
   if (extra.length) {
     log.info({ count: extra.length }, '[Today] extra post IDs dari arsip');
   }
 
-  const postIds = [...new Set([...fromSheet, ...fromApi, ...extra])];
+  const postIds = [...new Set([...fromSheet, ...fromApi, ...fromSheetFallback, ...extra])];
   log.info({ tabName, fromSheet: fromSheet.length, fromApi: fromApi.length, extra: extra.length, postIds }, '[Today] postIds final');
-  const rawAccounts = postIds.length ? await fetchAccountsForPostIds(postIds) : [];
+  const rawAccounts = postIds.length ? await fetchAccountsForPostIds(postIds, options) : [];
   const accounts = reconcileSheetAccounts(rawAccounts);
   const meta = summarizeSheetAccounts(accounts);
 
@@ -214,7 +249,9 @@ export async function refreshTodaySheetFromOutstand() {
  * Tulis / perbarui satu baris rekap hari ini di Google Sheets.
  */
 export async function syncTodayToSheet() {
-  const data = await collectTodayPublishLinks();
+  // _forceIndividual: aktifkan fallback per-post di fetchAccountsForPostIds
+  // hanya untuk manual /refresh — tidak untuk auto-refresh loop
+  const data = await collectTodayPublishLinks({ _forceIndividual: true });
 
   if (!data.postIds.length) {
     throw new Error(
@@ -225,6 +262,14 @@ export async function syncTodayToSheet() {
   if (!data.accounts.length) {
     throw new Error(
       `Publisher API tidak tersedia — status akun tidak bisa diambil. Sheets tidak diubah.`
+    );
+  }
+
+  // Guard: jangan timpa sheet jika akun < jumlah post (artinya rata2 < 1 akun/post — data pasti parsial)
+  const validAccounts = data.accounts.filter((a) => a.network && a.username);
+  if (data.postIds.length > 1 && validAccounts.length < data.postIds.length) {
+    throw new Error(
+      `Hanya ${validAccounts.length} akun valid dari ${data.postIds.length} post — kemungkinan API belum selesai. Sheets tidak diubah.`
     );
   }
 
