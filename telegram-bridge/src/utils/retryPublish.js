@@ -66,9 +66,9 @@ export function classifyRetryError(error) {
 
   if (/rate limit|429|throttl|spam|try again later/i.test(raw)) {
     return {
-      action: RETRY_ACTION.WAIT,
+      action: RETRY_ACTION.RETRY_NOW,
       hint:
-        'Rate limit — tunggu 30–60 menit, cek profil/platform, retry hanya jika belum live.',
+        'Rate limit sementara — cek profil dulu, retry hanya jika belum live.',
     };
   }
 

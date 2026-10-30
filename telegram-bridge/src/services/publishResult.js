@@ -102,7 +102,9 @@ export function mergeSheetAccounts(accounts) {
   const byKey = new Map();
 
   for (const acc of accounts) {
-    const key = `${(acc.network || '').toLowerCase()}:${(acc.username || acc.accountId || '').replace(/^@/, '')}`;
+    // Prioritas accountId agar dua akun dengan nama sama (misal "Lania Juni" x2)
+    // tidak di-overwrite satu sama lain. Fallback ke username kalau ID tidak ada.
+    const key = `${(acc.network || '').toLowerCase()}:${(acc.accountId || acc.username || '').replace(/^@/, '')}`;
     const cur = byKey.get(key);
     if (!cur) {
       byKey.set(key, acc);
@@ -279,6 +281,16 @@ export function buildSheetAccountsFromTargets(allAccounts, expectedIds, posts) {
   /** @type {Map<string, { network?: string, username?: string, status?: string, error?: string | null, platformPostId?: string | null }>} */
   const statusById = new Map();
 
+  // Per-account postId (lebih akurat dari postIdByNet)
+  /** @type {Map<string, string>} */
+  const postIdById = new Map();
+
+  // Fallback: jika API mengembalikan account_id dalam format berbeda dari spc_xxx,
+  // gunakan username+network sebagai secondary key lookup
+  /** @type {Map<string, { acct: object, postId: string }>} */
+  const statusByUsernameNet = new Map();
+
+  // Fallback postId per network (untuk akun yang benar-benar tidak ditemukan)
   /** @type {Map<string, string>} */
   const postIdByNet = new Map();
 
@@ -287,24 +299,42 @@ export function buildSheetAccountsFromTargets(allAccounts, expectedIds, posts) {
     for (const acct of post.socialAccounts ?? []) {
       if (acct.id) {
         statusById.set(acct.id, acct);
-        const n = (acct.network || '').toLowerCase();
-        if (n) postIdByNet.set(n, post.id);
+        postIdById.set(acct.id, post.id);
       }
+      const n = (acct.network || '').toLowerCase();
+      const u = (acct.username || '').replace(/^@/, '').toLowerCase();
+      if (n && u) {
+        const key = `${n}:${u}`;
+        if (!statusByUsernameNet.has(key)) {
+          statusByUsernameNet.set(key, { acct, postId: post.id });
+        }
+      }
+      if (n) postIdByNet.set(n, post.id);
     }
   }
 
   return expected.map((exp) => {
     const net = (exp.network || 'unknown').toLowerCase();
     const user = (exp.username || exp.id).replace(/^@/, '');
-    const acct = statusById.get(exp.id);
-    const postId = postIdByNet.get(net) || '';
+
+    // Lookup primer: by account ID
+    let acct = statusById.get(exp.id);
+    let postId = postIdById.get(exp.id) || '';
+
+    // Fallback: by username+network (handles API ID format mismatch)
+    if (!acct) {
+      const match = statusByUsernameNet.get(`${net}:${user.toLowerCase()}`);
+      if (match) { acct = match.acct; postId = match.postId; }
+    }
+
+    const resolvedPostId = postId || postIdByNet.get(net) || '';
 
     if (!acct) {
       return {
         network: net,
         username: user,
         accountId: exp.id,
-        postId,
+        postId: resolvedPostId,
         status: 'pending',
         platformPostId: undefined,
         error: undefined,
@@ -319,7 +349,7 @@ export function buildSheetAccountsFromTargets(allAccounts, expectedIds, posts) {
       network: net,
       username: (acct.username || user).replace(/^@/, ''),
       accountId: exp.id,
-      postId,
+      postId: resolvedPostId,
       pageId: acct.pageId ?? exp.pageId ?? undefined,
       platformPostId: acct.platformPostId ?? undefined,
       status,
